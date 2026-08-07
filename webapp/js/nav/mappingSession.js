@@ -52,6 +52,7 @@ export function createMappingSession(scene, store) {
   nameInput.type = "text";
   nameInput.className = "mapping-name mono";
   nameInput.placeholder = "map name";
+  nameInput.title = "Letters, digits, _ and - only";
   const hint = document.createElement("span");
   hint.className = "mapping-hint mono";
   const primaryBtn = document.createElement("button");
@@ -97,7 +98,9 @@ export function createMappingSession(scene, store) {
     nameInput.hidden = !naming;
     hint.hidden = !naming;
     primaryBtn.textContent = naming ? "Save" : "Finish";
+    primaryBtn.title = naming ? "Save the map and make it the active one" : "Stop recording and name the map";
     secondaryBtn.textContent = naming ? "Back" : "Discard";
+    secondaryBtn.title = naming ? "Return to recording" : "Throw away the recording and leave mapping mode";
     secondaryBtn.classList.toggle("danger", !naming);
     primaryBtn.disabled = !!s.busy || (naming && validName() === null);
     secondaryBtn.disabled = !!s.busy;

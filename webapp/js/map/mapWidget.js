@@ -201,6 +201,7 @@ export function createMap(root, opts = {}) {
   const stopBtn = makeButton(ICONS.stop, "Stop", "cancel navigation");
   stopBtn.title = CANCEL_NAVIGATION_SERVICE;
   const centerBtn = makeButton(ICONS.center, "Recenter", "follow the robot");
+  centerBtn.title = "Recenter the view on the robot (view only — no ROS call)";
   const controlsRow = document.createElement("div");
   controlsRow.className = "map-controls-row";
   for (const btn of [backBtn, locateBtn, autoBtn, manualBtn, goBtn, stopBtn, centerBtn]) controlsRow.appendChild(btn);
@@ -336,6 +337,42 @@ export function createMap(root, opts = {}) {
   memSearchCard.className = "mem-search-card";
   memSearchCard.hidden = true;
   root.appendChild(memSearchCard);
+
+  // Full-screen viewer for a remembered image — opened by clicking the
+  // popup's photo. On document.body (like the confirm dialogs) so it covers
+  // the whole app, not just the scene.
+  const memLightbox = document.createElement("div");
+  memLightbox.className = "mem-lightbox";
+  memLightbox.hidden = true;
+  const memLightboxImg = new Image();
+  memLightboxImg.className = "mem-lightbox-img";
+  memLightboxImg.alt = "remembered view";
+  const memLightboxCap = document.createElement("div");
+  memLightboxCap.className = "mem-lightbox-cap mono";
+  const memLightboxClose = document.createElement("button");
+  memLightboxClose.type = "button";
+  memLightboxClose.className = "mem-lightbox-close";
+  memLightboxClose.textContent = "✕";
+  memLightboxClose.title = "Close";
+  memLightbox.append(memLightboxImg, memLightboxCap, memLightboxClose);
+  memLightbox.addEventListener("click", (e) => {
+    // The backdrop and ✕ close; a click on the photo itself must not.
+    if (e.target === memLightbox || e.target === memLightboxClose) closeMemLightbox();
+  });
+  document.body.appendChild(memLightbox);
+
+  /** @param {import("./memories.js").Memory} m */
+  function openMemLightbox(m) {
+    if (!memState) return;
+    memLightboxImg.src = memoryImageUrl(memState.map, m);
+    memLightboxCap.textContent = `seen ${ageText(m.stamp)} · x ${m.x.toFixed(2)} m, y ${m.y.toFixed(2)} m`;
+    memLightbox.hidden = false;
+  }
+
+  function closeMemLightbox() {
+    memLightbox.hidden = true;
+    memLightboxImg.removeAttribute("src");
+  }
 
   /** @param {any} msg std_msgs/String — /brain/memory_positions */
   function onMemories(msg) {
@@ -474,6 +511,8 @@ export function createMap(root, opts = {}) {
     img.className = "mem-card-img mem-card-img-lg";
     img.alt = "remembered view";
     img.src = memoryImageUrl(memState.map, m);
+    img.title = "Click to enlarge";
+    img.addEventListener("click", () => openMemLightbox(m));
     const meta = document.createElement("div");
     meta.className = "mem-card-meta mono";
     meta.textContent = `seen ${ageText(m.stamp)} · x ${m.x.toFixed(2)} m, y ${m.y.toFixed(2)} m`;
@@ -525,12 +564,14 @@ export function createMap(root, opts = {}) {
       const chip = document.createElement("span");
       chip.className = "mem-search-chip mono";
       chip.textContent = `${verdict.latency_sec.toFixed(1)} s${verdict.cached ? " · cached ⚡" : ""}`;
+      chip.title = "Recall latency; cached = answered from the warm memory cache";
       head.appendChild(chip);
     }
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
     closeBtn.className = "mem-search-close";
     closeBtn.textContent = "×";
+    closeBtn.title = "Dismiss";
     closeBtn.setAttribute("aria-label", "dismiss");
     closeBtn.addEventListener("click", dismissMemSearch);
     head.appendChild(closeBtn);
@@ -1616,6 +1657,11 @@ export function createMap(root, opts = {}) {
   /** @param {KeyboardEvent} e */
   function onKeyDown(e) {
     if (e.key !== "Escape") return;
+    if (!memLightbox.hidden) {
+      // Layered dismissal: the viewer closes first, the popup under it stays.
+      closeMemLightbox();
+      return;
+    }
     closeMemPopup();
     dismissMemSearch();
   }
@@ -1758,6 +1804,7 @@ export function createMap(root, opts = {}) {
       memHoverCard.remove();
       memPopup.remove();
       memSearchCard.remove();
+      memLightbox.remove();
     },
   };
 }

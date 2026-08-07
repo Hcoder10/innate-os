@@ -137,6 +137,7 @@ export function createRunDetail(parent, ros, store, opts) {
     close.type = "button";
     close.className = "rd-close";
     close.textContent = "✕";
+    close.title = "Close details";
     close.setAttribute("aria-label", "Close details");
     close.addEventListener("click", opts.onClose);
     head.append(titleBox, close);
@@ -152,6 +153,7 @@ export function createRunDetail(parent, ros, store, opts) {
     statusRow.className = "rd-statusrow";
     const dot = document.createElement("span");
     dot.className = failed ? "run-dot s-failed" : `run-dot s-${run.status}`;
+    dot.title = statusText;
     const statusLbl = document.createElement("span");
     statusLbl.textContent = statusText;
     statusRow.append(dot, statusLbl);
@@ -159,6 +161,7 @@ export function createRunDetail(parent, ros, store, opts) {
       const ds = document.createElement("span");
       ds.className = "run-daemon";
       ds.textContent = run.daemon_state;
+      ds.title = "Raw orchestrator state — /training/job_statuses";
       statusRow.append(ds);
     }
     frag.appendChild(statusRow);
@@ -207,10 +210,14 @@ export function createRunDetail(parent, ros, store, opts) {
     const hyperRows = [];
     if (p.preset) hyperRows.push(["Preset", String(p.preset)]);
     if (p.gpu_type) hyperRows.push(["GPU", `${p.gpu_type}${p.min_gpus ? ` ×${p.min_gpus}` : ""}`]);
-    for (const [k, v] of Object.entries(env)) hyperRows.push([humanize(k), String(v)]);
+    for (const [k, v] of Object.entries(env)) hyperRows.push([humanize(k), String(v), k]);
     if (hyperRows.length) {
       frag.appendChild(section("Hyperparameters"));
-      for (const [k, v] of hyperRows) frag.appendChild(row(k, v));
+      for (const [k, v, raw] of hyperRows) {
+        const r = row(k, v);
+        if (raw) r.title = raw; // the wire-format env var the pretty label hides
+        frag.appendChild(r);
+      }
     }
 
     // ── actions ─────────────────────────────────────────────────────

@@ -80,6 +80,7 @@ function buildView(root) {
 
   const live = document.createElement("span");
   live.className = "prof-live";
+  live.title = INFERENCE_PROFILE_TOPIC;
   live.innerHTML = '<span class="prof-live-dot"></span><span class="prof-live-text">no signal</span>';
 
   const spacer = document.createElement("div");
@@ -88,9 +89,11 @@ function buildView(root) {
   const exportBtn = document.createElement("button");
   exportBtn.className = "prof-btn";
   exportBtn.textContent = "Export JSON";
+  exportBtn.title = "Copy the recorded profile as JSON (downloads a file if the clipboard is blocked)";
   const clearBtn = document.createElement("button");
   clearBtn.className = "prof-btn";
   clearBtn.textContent = "Clear";
+  clearBtn.title = "Discard the samples buffered in this page — nothing on the robot changes";
 
   // The whole rollout lifecycle (skill run + this chart window + robot-side
   // episode capture) hangs off one control; the page just lends it the buffer.

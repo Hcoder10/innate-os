@@ -35,6 +35,7 @@ export function renderRunningHero({ sk, run, eta, actions, onOpen }) {
   const titleRow = document.createElement("button");
   titleRow.type = "button";
   titleRow.className = "hero-title";
+  titleRow.title = "Open this run in the detail pane";
   const name = document.createElement("span");
   name.textContent = `${sk.skill_name} / run #${run.run_id}`;
   const badge = document.createElement("span");

@@ -31,6 +31,7 @@ export function createVideoStage(parent, session) {
   retry.className = "video-retry";
   retry.type = "button";
   retry.textContent = "Retry video";
+  retry.title = "Tear down and rebuild the WebRTC video link";
   retry.hidden = true;
   status.append(statusText, retry);
 

@@ -41,6 +41,7 @@ export function maybeShowAppPromo(root) {
   close.type = "button";
   close.className = "app-promo-close";
   close.textContent = "✕";
+  close.title = "Dismiss";
   close.setAttribute("aria-label", "Dismiss");
   close.addEventListener("click", dismiss);
 
@@ -68,6 +69,7 @@ export function maybeShowAppPromo(root) {
     cta.rel = "noopener noreferrer";
   }
   cta.textContent = platform === "ios" ? "Download for iOS" : "Download for Android";
+  cta.title = platform === "ios" ? "Opens TestFlight" : "Downloads the .apk";
   cta.addEventListener("click", dismiss); // they've got the message — don't ask again
 
   const stay = document.createElement("button");

@@ -46,14 +46,17 @@ export function createLogsModal(parent, skillDir, runId, opts) {
   title.textContent = live ? `Run #${runId} · live logs` : `Run #${runId} logs`;
   const fileSel = document.createElement("select");
   fileSel.className = "modal-select logs-filesel";
+  fileSel.title = "Result file to view";
   fileSel.addEventListener("change", () => showFile(fileSel.value));
   const liveBadge = document.createElement("span");
   liveBadge.className = "logs-live-badge";
   liveBadge.textContent = "● live";
+  liveBadge.title = "Tailing the orchestrator's log buffer";
   const close = document.createElement("button");
   close.type = "button";
   close.className = "modal-close";
   close.textContent = "✕";
+  close.title = "Close";
   close.addEventListener("click", () => opts.onClose());
   const copyBtn = document.createElement("button");
   copyBtn.type = "button";

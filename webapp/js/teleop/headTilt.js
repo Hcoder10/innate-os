@@ -35,6 +35,7 @@ export function createHeadTilt(parent, rosClient) {
 
   const track = document.createElement("div");
   track.className = "ht-track";
+  track.title = `drag to tilt the head — ${HEAD_SET_POSITION_TOPIC}`;
 
   const rail = document.createElement("div");
   rail.className = "ht-rail";
@@ -45,6 +46,7 @@ export function createHeadTilt(parent, rosClient) {
 
   const actual = document.createElement("div");
   actual.className = "ht-actual";
+  actual.title = `where the head actually is — ${HEAD_CURRENT_POSITION_TOPIC}`;
   actual.hidden = true;
 
   const thumb = document.createElement("div");

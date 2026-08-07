@@ -61,9 +61,11 @@ export function createRecordPanel(parent, ros, opts = {}) {
   const sel = document.createElement("select");
   sel.className = "record-skill";
   sel.setAttribute("aria-label", "Skill to record into");
+  sel.title = "The dataset new episodes are saved into";
 
   const count = document.createElement("span");
   count.className = "record-count mono";
+  count.title = "Episodes saved into this dataset";
 
   const link = document.createElement("a");
   link.className = "record-link";
@@ -77,9 +79,13 @@ export function createRecordPanel(parent, ros, opts = {}) {
   const controls = document.createElement("div");
   controls.className = "record-controls";
   const startBtn = button("record-start", "● Record");
+  startBtn.title = RECORDER_NEW_EPISODE_SERVICE;
   const stopBtn = button("record-stop", "■ Stop");
+  stopBtn.title = RECORDER_STOP_EPISODE_SERVICE;
   const saveBtn = button("record-save", "Save");
+  saveBtn.title = RECORDER_SAVE_EPISODE_SERVICE;
   const discardBtn = button("record-discard", "Discard");
+  discardBtn.title = RECORDER_CANCEL_EPISODE_SERVICE;
   controls.append(startBtn, stopBtn, saveBtn, discardBtn);
 
   const hint = document.createElement("p");
@@ -97,6 +103,7 @@ export function createRecordPanel(parent, ros, opts = {}) {
   const orphanMsg = document.createElement("span");
   orphanMsg.className = "record-orphan-msg";
   const orphanDiscard = button("record-orphan-discard", "Discard recording");
+  orphanDiscard.title = RECORDER_CANCEL_EPISODE_SERVICE;
   const orphanDismiss = button("record-orphan-dismiss", "✕");
   orphanDismiss.title = "Dismiss";
   orphanBar.append(orphanMsg, orphanDiscard, orphanDismiss);
@@ -293,6 +300,7 @@ export function createRecordPanel(parent, ros, opts = {}) {
     close.type = "button";
     close.className = "modal-close";
     close.textContent = "✕";
+    close.title = "Close";
     close.addEventListener("click", closeModal);
     head.append(title, close);
 
@@ -374,6 +382,7 @@ export function createRecordPanel(parent, ros, opts = {}) {
       submitBtn.type = "button";
       submitBtn.className = "modal-start";
       submitBtn.textContent = kind === "replay" ? "Set up recording" : "Create skill";
+      submitBtn.title = CREATE_PHYSICAL_SKILL_SERVICE;
       children.push(warn, submitBtn);
 
       function submit() {

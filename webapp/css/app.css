@@ -7100,6 +7100,56 @@ select.skill-input {
   min-width: 100%;
 }
 
+.mem-card-popup .mem-card-img {
+  cursor: zoom-in;
+}
+
+/* Full-screen viewer for a remembered image (the popup's photo opens it). */
+.mem-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  background: rgb(10 10 12 / 82%);
+  backdrop-filter: blur(6px);
+}
+
+.mem-lightbox-img {
+  max-width: min(90vw, 1400px);
+  max-height: 80vh;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 4%);
+}
+
+.mem-lightbox-cap {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mem-lightbox-close {
+  position: fixed;
+  top: 14px;
+  right: 18px;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  font-size: 15px;
+  color: var(--muted);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 50%;
+  background: var(--ctl-glass);
+}
+
+.mem-lightbox-close:hover {
+  color: var(--text);
+  border-color: rgb(255 255 255 / 30%);
+}
+
 .mem-card-actions {
   display: flex;
   gap: 8px;

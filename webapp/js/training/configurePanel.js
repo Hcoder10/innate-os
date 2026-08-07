@@ -6,7 +6,7 @@
 // the sync→create_run orchestration, then closes. So the run still gets created
 // even if this modal is dismissed mid-upload.
 
-import { GET_TASK_METADATA_SERVICE } from "../constants.js";
+import { GET_TASK_METADATA_SERVICE, START_TRAINING_SERVICE } from "../constants.js";
 
 const MIN_EPISODES = 5;
 
@@ -48,6 +48,7 @@ export function createConfigurePanel(parent, ros, store, opts) {
   close.type = "button";
   close.className = "modal-close";
   close.textContent = "✕";
+  close.title = "Close";
   close.addEventListener("click", () => opts.onClose());
   head.append(title, close);
 
@@ -58,6 +59,7 @@ export function createConfigurePanel(parent, ros, store, opts) {
   const skillRow = field("Skill");
   const skillSel = document.createElement("select");
   skillSel.className = "modal-select";
+  skillSel.title = "Only learned skills can be trained";
   for (const s of store.skills) {
     if (s.type !== "learned") continue;
     const o = document.createElement("option");
@@ -85,6 +87,7 @@ export function createConfigurePanel(parent, ros, store, opts) {
     const inp = document.createElement("input");
     inp.type = "text";
     inp.className = "modal-input";
+    inp.title = f.env;
     inp.value = f.def;
     inp.addEventListener("input", validate);
     inputs[f.key] = inp;
@@ -97,6 +100,7 @@ export function createConfigurePanel(parent, ros, store, opts) {
   successRow.className = "modal-check";
   const successChk = document.createElement("input");
   successChk.type = "checkbox";
+  successChk.title = "Sets TRAIN_ON_SUCCESS_ONLY — episodes labeled Unsuccessful are excluded";
   const successTxt = document.createElement("span");
   successTxt.textContent = "Train on successful episodes only";
   successRow.append(successChk, successTxt);
@@ -116,6 +120,7 @@ export function createConfigurePanel(parent, ros, store, opts) {
   startBtn.type = "button";
   startBtn.className = "modal-start";
   startBtn.textContent = "Start training run";
+  startBtn.title = START_TRAINING_SERVICE;
   startBtn.addEventListener("click", start);
 
   formEl.append(skillRow, epLine, hyperWrap, successRow, warn, note, startBtn);

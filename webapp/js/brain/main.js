@@ -303,13 +303,13 @@ function buildView(root) {
                 .join(" ") +
               ")"
             : "";
-        const title = esc(c.outcome || "");
+        const title = esc(c.outcome || `${c.name} — no outcome reported`);
         return `<span class="br-call ${bad ? "bad" : quiet ? "quiet" : "go"}" title="${title}">${esc(c.name)}${esc(trunc(args, 46))}</span>`;
       })
       .join("");
     div.innerHTML =
       `<div class="head"><b>turn ${d.turn}</b><span>${(d.calls || []).length ? "" : "observed"}</span>` +
-      `<span class="lat">${d.latency.toFixed(1)}s think</span></div>` +
+      `<span class="lat" title="Model inference latency for this turn">${d.latency.toFixed(1)}s think</span></div>` +
       (calls ? `<div class="calls">${calls}</div>` : "");
     prepend(".br-actions", div);
   }
@@ -333,6 +333,7 @@ function buildView(root) {
       if (skillRows.size > 40) skillRows.delete(/** @type {string} */ (skillRows.keys().next().value));
     }
     row.className = "br-skill-row " + d.status;
+    row.title = "/brain/skill_status_update";
     row.innerHTML =
       `<span class="st"></span><span>${esc(d.skill_name || d.primitive_name)}</span>` +
       (d.reason ? `<span class="reason">${esc(trunc(d.reason, 60))}</span>` : "") +
@@ -343,6 +344,7 @@ function buildView(root) {
   function addQueueCard(kind, text) {
     const div = document.createElement("div");
     div.className = "br-qcard " + (kind === "user" ? "user" : "");
+    div.title = "Queued for the next look — the model sees it next turn";
     div.innerHTML = `<div class="k">${kind}</div><div class="t"></div>`;
     /** @type {HTMLElement} */ (div.querySelector(".t")).textContent = trunc(text, 160);
     prepend(".br-queue", div, 20);
@@ -445,6 +447,7 @@ function buildView(root) {
       b.innerHTML = `<img alt=""><span></span>`;
       /** @type {HTMLImageElement} */ (b.querySelector("img")).src = "data:image/jpeg;base64," + fr.jpeg;
       /** @type {HTMLElement} */ (b.querySelector("span")).textContent = fr.label;
+      b.title = `${fr.label} — click to inspect`;
       b.addEventListener("click", () => showTurn(turn, i));
       film.append(b);
     });
@@ -796,33 +799,33 @@ function template() {
   <div class="br-head">
     <h1 class="page-title">Brain</h1>
     <div class="br-chips">
-      <div class="br-chip br-chip-active"><span class="led"></span><span>brain <b>—</b></span></div>
-      <div class="br-chip br-chip-directive"><span>directive</span><b>—</b></div>
-      <div class="br-chip br-chip-backend"><span>backend</span><b>—</b></div>
-      <div class="br-chip br-chip-model"><span>model</span><b>—</b></div>
-      <div class="br-chip br-chip-voice"><span class="led"></span><span>voice</span></div>
+      <div class="br-chip br-chip-active" title="/brain/agent_status"><span class="led"></span><span>brain <b>—</b></span></div>
+      <div class="br-chip br-chip-directive" title="current directive — /brain/agent_status"><span>directive</span><b>—</b></div>
+      <div class="br-chip br-chip-backend" title="inference backend — /brain/trace, falling back to /brain/websocket_status"><span>backend</span><b>—</b></div>
+      <div class="br-chip br-chip-model" title="model in use — /brain/trace"><span>model</span><b>—</b></div>
+      <div class="br-chip br-chip-voice" title="pulses while the robot speaks — /tts/is_playing"><span class="led"></span><span>voice</span></div>
     </div>
   </div>
   <div class="br-grid">
     <section class="br-panel br-panel-loop">
-      <h2>The agent loop <span class="sub br-tools"></span></h2>
+      <h2>The agent loop <span class="sub br-tools" title="Tools the model may call this turn"></span></h2>
       <svg class="br-loop-svg" viewBox="0 0 300 300">
         <circle class="br-ring-base" cx="150" cy="150" r="${RING_R}"/>
         <circle class="br-ring-count" cx="150" cy="150" r="${RING_R}"/>
         <circle class="br-trail t2" r="2.5"/>
         <circle class="br-trail t1" r="3.5"/>
         <circle class="br-comet" r="5"/>
-        <g class="br-node look"><circle r="27"/><text dy="4">LOOK</text></g>
-        <g class="br-node think"><circle r="27"/><text dy="4">THINK</text></g>
-        <g class="br-node act"><circle r="27"/><text dy="4">ACT</text></g>
+        <g class="br-node look"><title>Capture the camera frames sent to the model</title><circle r="27"/><text dy="4">LOOK</text></g>
+        <g class="br-node think"><title>Waiting on model inference</title><circle r="27"/><text dy="4">THINK</text></g>
+        <g class="br-node act"><title>Executing the tool calls the model returned</title><circle r="27"/><text dy="4">ACT</text></g>
         <g class="br-center">
           <text class="br-phase" x="150" y="130">OFFLINE</text>
-          <text class="br-timer" x="150" y="168">—</text>
+          <text class="br-timer" x="150" y="168"><title>seconds spent thinking, or the countdown to the next look</title>—</text>
           <text class="br-turn"  x="150" y="192">TURN 0</text>
         </g>
       </svg>
       <div class="br-loop-sub"></div>
-      <div class="br-streak"></div>
+      <div class="br-streak" title="Consecutive inference failures"></div>
     </section>
 
     <section class="br-panel br-panel-vision">
@@ -831,14 +834,14 @@ function template() {
         <img class="br-frame" alt="">
         <div class="br-stage-idle">NO SIGNAL</div>
         <div class="br-scan"></div>
-        <div class="br-motion-tag">◉ motion</div>
-        <div class="br-ping"><span class="ringA"></span><span class="ringB"></span><span class="cross"></span></div>
+        <div class="br-motion-tag" title="Motion woke the brain early — see the event queue">◉ motion</div>
+        <div class="br-ping" title="Where the model asked the robot to drive (go_to_point)"><span class="ringA"></span><span class="ringB"></span><span class="cross"></span></div>
       </div>
       <div class="br-film"></div>
       <div class="br-vision-cap">
         <span class="br-frame-cap"></span>
         <button class="br-inspect-btn" hidden title="Everything the model received and returned this turn">inspect turn</button>
-        <span class="br-pose-strip">
+        <span class="br-pose-strip" title="robot pose — /odom">
           <svg class="br-heading" viewBox="0 0 16 16"><polygon class="br-needle" points="8,1.5 11,12 8,9.5 5,12"/></svg>
           <span class="br-pose-txt">pose —</span>
         </span>
@@ -863,10 +866,10 @@ function template() {
     <section class="br-panel br-panel-vitals">
       <h2>Vitals <span class="sub">think latency · s</span></h2>
       <div class="br-tiles">
-        <div class="br-tile"><div class="v br-tile-turns">0</div><div class="l">turns</div></div>
-        <div class="br-tile"><div class="v br-tile-last">—</div><div class="l">last think</div></div>
-        <div class="br-tile"><div class="v br-tile-avg">—</div><div class="l">avg think</div></div>
-        <div class="br-tile"><div class="v br-tile-up">—</div><div class="l">uptime</div></div>
+        <div class="br-tile" title="Loop turns since the brain started"><div class="v br-tile-turns">0</div><div class="l">turns</div></div>
+        <div class="br-tile" title="Latest model inference latency"><div class="v br-tile-last">—</div><div class="l">last think</div></div>
+        <div class="br-tile" title="Average model inference latency this session"><div class="v br-tile-avg">—</div><div class="l">avg think</div></div>
+        <div class="br-tile" title="How long the brain loop has been running"><div class="v br-tile-up">—</div><div class="l">uptime</div></div>
       </div>
       <div class="br-spark-wrap">
         <svg class="br-spark" viewBox="0 0 400 88" preserveAspectRatio="none"></svg>
@@ -874,7 +877,7 @@ function template() {
       </div>
       <div class="br-gauge">
         <div class="bar"><div class="fill br-hist-fill"></div></div>
-        <div class="lab"><span>conversation history</span><span class="br-hist-txt">0 / ${HIST_MAX}</span></div>
+        <div class="lab" title="Entries in the rolling conversation history the model sees"><span>conversation history</span><span class="br-hist-txt">0 / ${HIST_MAX}</span></div>
       </div>
     </section>
   </div>
@@ -883,7 +886,7 @@ function template() {
     <div class="br-inspect-card">
       <div class="br-i-head">
         <b class="br-i-title">turn</b><span class="br-i-meta"></span>
-        <button class="br-i-close" aria-label="Close">✕</button>
+        <button class="br-i-close" aria-label="Close" title="Close">✕</button>
       </div>
       <div class="br-i-body">
         <h3>new images this turn</h3>

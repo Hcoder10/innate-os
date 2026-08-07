@@ -75,6 +75,7 @@ function buildView(root) {
   const fileStatus = document.createElement("span");
   fileStatus.className = "calib-file-status microlabel";
   fileStatus.textContent = "Calibration file: checking…";
+  fileStatus.title = `Inferred from ${MAIN_CAMERA_DEPTH_TOPIC} — depth frames only flow once a valid calibration is loaded`;
   head.append(title, fileStatus);
 
   // ---- grid: live feed | controls & feedback ---------------------------
@@ -141,14 +142,17 @@ function buildView(root) {
   startBtn.type = "button";
   startBtn.className = "calib-btn calib-btn-primary";
   startBtn.textContent = "Start Calibration";
+  startBtn.title = RUN_STEREO_CALIBRATION_ACTION;
   const captureBtn = document.createElement("button");
   captureBtn.type = "button";
   captureBtn.className = "calib-btn";
   captureBtn.textContent = "Capture";
+  captureBtn.title = STEREO_CALIB_CAPTURE_TOPIC;
   const stopBtn = document.createElement("button");
   stopBtn.type = "button";
   stopBtn.className = "calib-btn calib-btn-stop";
   stopBtn.textContent = "Stop";
+  stopBtn.title = "Cancel the calibration run";
   actionRow.append(startBtn, captureBtn, stopBtn);
 
   const statusLine = document.createElement("p");
@@ -412,9 +416,9 @@ function buildView(root) {
       };
       stats.append(
         stat("Images captured", String(r.imagesCaptured)),
-        stat("Left RMS", r.leftRms.toFixed(4)),
-        stat("Right RMS", r.rightRms.toFixed(4)),
-        stat("Stereo RMS", r.stereoRms.toFixed(4)),
+        Object.assign(stat("Left RMS", r.leftRms.toFixed(4)), { title: "Reprojection RMS error in pixels — lower is better" }),
+        Object.assign(stat("Right RMS", r.rightRms.toFixed(4)), { title: "Reprojection RMS error in pixels — lower is better" }),
+        Object.assign(stat("Stereo RMS", r.stereoRms.toFixed(4)), { title: "Stereo-pair reprojection RMS in pixels — lower is better" }),
       );
 
       if (r.quality) {

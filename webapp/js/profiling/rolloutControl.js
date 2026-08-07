@@ -40,21 +40,25 @@ export function buildRolloutControl(chartWindow, session) {
 
   const select = document.createElement("select");
   select.className = "prof-select";
+  select.title = `learned skills only — ${AVAILABLE_SKILLS_TOPIC}`;
   const placeholder = new Option("Select a learned skill…", "");
   select.add(placeholder);
   select.addEventListener("change", () => sync());
 
   const runBtn = document.createElement("button");
   runBtn.className = "prof-btn prof-btn-rec";
+  runBtn.title = `run the skill and record an evaluation episode — ${EXECUTE_SKILL_ACTION}`;
   const profileBtn = document.createElement("button");
   profileBtn.className = "prof-btn prof-btn-quiet";
   profileBtn.textContent = "Profile only";
+  profileBtn.title = "Run the skill and chart it without recording an episode";
 
   const autoLabel = document.createElement("label");
   autoLabel.className = "prof-auto microlabel";
   const autoBox = document.createElement("input");
   autoBox.type = "checkbox";
   autoLabel.append(autoBox, document.createTextNode("auto-continue"));
+  autoLabel.title = `After each judged rollout, start the next one automatically in ${AUTO_CONTINUE_DELAY_S}s`;
 
   el.append(select, runBtn, profileBtn, autoLabel);
 
@@ -85,12 +89,15 @@ export function buildRolloutControl(chartWindow, session) {
   const okBtn = document.createElement("button");
   okBtn.className = "prof-btn prof-btn-ok";
   okBtn.textContent = "✓ Success";
+  okBtn.title = "Save the episode and judge it a success";
   const failBtn = document.createElement("button");
   failBtn.className = "prof-btn prof-btn-fail";
   failBtn.textContent = "✗ Failure";
+  failBtn.title = "Save the episode and judge it a failure (pick failure tags above)";
   const discardBtn = document.createElement("button");
   discardBtn.className = "prof-btn";
   discardBtn.textContent = "Discard";
+  discardBtn.title = "Throw the recording away — nothing is saved";
 
   reviewEl.append(reviewText, tagRow, okBtn, failBtn, discardBtn);
 

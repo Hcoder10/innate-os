@@ -76,6 +76,7 @@ export function createEpisodeList(parent, ros, opts) {
   const sortBtn = document.createElement("button");
   sortBtn.type = "button";
   sortBtn.className = "episodes-tool";
+  sortBtn.title = "Order episodes by recording time";
   const refreshBtn = document.createElement("button");
   refreshBtn.type = "button";
   refreshBtn.className = "episodes-tool";
@@ -281,7 +282,7 @@ export function createEpisodeList(parent, ros, opts) {
       const preparingCount = n - readyCount;
       sub.append(
         document.createTextNode(`${n} episode${n === 1 ? "" : "s"} · `),
-        spanText(`${readyCount} ready`, "episodes-ready"),
+        Object.assign(spanText(`${readyCount} ready`, "episodes-ready"), { title: "Encoded to H.264 — click a row to replay" }),
       );
       if (preparingCount > 0) {
         sub.append(document.createTextNode(" · "), spanText(`${preparingCount} preparing`, "episodes-preparing"));
@@ -415,6 +416,7 @@ export function createEpisodeList(parent, ros, opts) {
     const recCol = document.createElement("span");
     recCol.className = "ep-recorded";
     recCol.textContent = formatRecorded(ep.start_time);
+    recCol.title = ep.start_time || "";
     const durCol = document.createElement("span");
     durCol.className = "ep-duration mono";
     durCol.textContent = formatDuration(ep, dataFreq);
@@ -518,6 +520,7 @@ export function createEpisodeList(parent, ros, opts) {
     const cell = document.createElement("div");
     cell.className = "ep-result";
     const sel = document.createElement("select");
+    sel.title = `Judge this rollout — ${SET_EPISODE_OUTCOME_SERVICE}`;
     const stateOfOutcome = () => (ep.outcome === "success" ? "is-success" : ep.outcome === "failure" ? "is-fail" : "is-unlabeled");
     const applyClass = () => (sel.className = `ep-label-select ${stateOfOutcome()}`);
     for (const [val, text] of [
@@ -565,6 +568,7 @@ export function createEpisodeList(parent, ros, opts) {
     const cell = document.createElement("div");
     cell.className = "ep-label";
     const sel = document.createElement("select");
+    sel.title = `Label this demonstration — ${SET_EPISODE_OUTCOME_SERVICE}`;
     const applyClass = (/** @type {boolean} */ fail) =>
       (sel.className = `ep-label-select ${fail ? "is-fail" : "is-success"}`);
     applyClass(ep.outcome === "failure");

@@ -46,6 +46,10 @@ export function createJoystick(parent, driveController) {
     })
   );
 
+  // SVG tooltips come from a <title> child, not the title attribute.
+  const tooltip = svgEl("title", {});
+  tooltip.textContent = "drag to drive — /joystick · press j to hide";
+  svg.appendChild(tooltip);
   svg.appendChild(svgEl("circle", { class: "joy-rim", cx: String(CENTER), cy: String(CENTER), r: String(OUTER_R) }));
 
   // Four faint cardinal ticks just inside the rim.

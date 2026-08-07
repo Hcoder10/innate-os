@@ -96,6 +96,7 @@ export function createChallengePanel(container, session) {
       item.className = "challenge-item";
       const dot = document.createElement("span");
       dot.className = `challenge-dot${c.passed ? " passed" : ""}`;
+      dot.title = c.passed ? "Passed at least once" : "Not passed yet";
       const text = document.createElement("div");
       text.className = "challenge-item-text";
       const name = document.createElement("div");
@@ -137,6 +138,7 @@ export function createChallengePanel(container, session) {
     timerEl = document.createElement("span");
     timerEl.className = `challenge-timer${active.state !== "running" ? " final" : ""}`;
     timerEl.textContent = timerText(active);
+    timerEl.title = active.state === "running" ? "Time remaining before the challenge fails" : "Final run time";
     titleRow.append(name, timerEl);
     wrap.append(titleRow);
 
@@ -170,11 +172,11 @@ export function createChallengePanel(container, session) {
     const actions = document.createElement("div");
     actions.className = "challenge-actions";
     if (active.state === "running") {
-      actions.append(actionButton("Abort", () => session.abortChallenge()));
+      actions.append(actionButton("Abort", () => session.abortChallenge(), "Stop the run and return to the challenge list"));
     } else {
       actions.append(
-        actionButton("Retry", () => session.startChallenge(active.id)),
-        actionButton("Done", () => session.abortChallenge()),
+        actionButton("Retry", () => session.startChallenge(active.id), "Start the same challenge again"),
+        actionButton("Done", () => session.abortChallenge(), "Dismiss the result and return to the list"),
       );
     }
     wrap.append(actions);
@@ -184,12 +186,14 @@ export function createChallengePanel(container, session) {
   /**
    * @param {string} label
    * @param {() => void} onClick
+   * @param {string} [title]
    */
-  function actionButton(label, onClick) {
+  function actionButton(label, onClick, title = "") {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "challenge-action";
     btn.textContent = label;
+    if (title) btn.title = title;
     btn.addEventListener("click", onClick);
     return btn;
   }
