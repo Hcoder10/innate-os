@@ -208,6 +208,33 @@ def map_preview_response(request: web.Request) -> web.Response:
     return web.Response(status=200, body=data, headers={"Content-Type": "image/png", "Cache-Control": "no-cache"})
 
 
+# The robot's per-map spatial memory (brain_client/memory): one JPEG per
+# remembered viewpoint, written by the brain node.
+MEMORY_DIR = (Path(_INNATE_OS_ROOT) / "data" / "spatial_memory").resolve()
+
+
+@threaded
+def memory_image_response(request: web.Request) -> web.Response:
+    """GET /memory/image?map=<base or file.yaml>&id=<n> → the remembered JPEG of
+    one spatial-memory viewpoint. A refresh overwrites the file in place, so
+    clients append the memory's stamp as ?v= and this can be cached hard."""
+    qs = parse_qs(request.query_string)
+    name = (qs.get("map") or [""])[0]
+    if name.endswith(".yaml"):
+        name = name[:-5]
+    memory_id = (qs.get("id") or [""])[0]
+    # The map-name charset and a numeric id make the joined path traversal-proof.
+    if not _MAP_NAME_RE.match(name) or not memory_id.isdigit():
+        return _plain(404, "Not Found", "no such memory")
+    try:
+        data = (MEMORY_DIR / name / f"{int(memory_id)}.jpg").read_bytes()
+    except OSError:
+        return _plain(404, "Not Found", "no such memory")
+    return web.Response(
+        status=200, body=data, headers={"Content-Type": "image/jpeg", "Cache-Control": "max-age=86400, immutable"}
+    )
+
+
 @threaded
 def joints_response(request: web.Request) -> web.Response:
     """GET /episode/joints?dir=<skill_dir>&id=<n> → qpos/qvel/timestamps JSON,

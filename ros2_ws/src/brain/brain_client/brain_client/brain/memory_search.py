@@ -91,10 +91,22 @@ class MemorySearch:
         self._cache_unsupported = False
         self._failed_revision: int | None = None  # cache creation failed for exactly this content; don't hammer
         self._flight = threading.Lock()  # one network operation at a time (a search or a warm)
+        # UI mirror, set by the composition root: every finished search's verdict
+        # as a JSON-able dict (query, found, pose, explanation, latency, cached).
+        self.on_result: Callable[[dict], None] | None = None
 
     @property
     def frame_count(self) -> int:
         return len(self._store.snapshot().memories)
+
+    def cache_state(self) -> str:
+        """How the next search will run: warm | cold | inline | unsupported."""
+        if self._cache_unsupported:
+            return "unsupported"
+        snapshot = self._store.snapshot()
+        if len(snapshot.memories) < _MIN_FRAMES_TO_CACHE:
+            return "inline"  # under the cache floor — always answered inline, still quick
+        return "warm" if self._cache_matches(snapshot) else "cold"
 
     def begin_search(self, query: str, on_done: Callable[[str, bytes | None], None]) -> None:
         """Run a search on a daemon thread; the outcome (text, matched jpeg) hits ``on_done``."""
@@ -104,6 +116,7 @@ class MemorySearch:
                 text, image = self.search(query)
             except Exception as error:  # noqa: BLE001 — a failed search must report back, not vanish
                 self._logger.error(f"[Memory] search failed: {error!r}")
+                self._report({"query": query, "found": False, "error": str(error)})
                 text, image = f'Memory search for "{query}" failed: {error}', None
             on_done(text, image)
 
@@ -112,6 +125,7 @@ class MemorySearch:
     def search(self, query: str) -> tuple[str, bytes | None]:
         """Blocking: ask Gemini which remembered frame serves the query."""
         with self._flight:
+            started = time.monotonic()
             snapshot = self._store.snapshot()
             if not snapshot.memories:
                 return (
@@ -127,7 +141,7 @@ class MemorySearch:
                 }
                 try:
                     response = self._rest.post(GENERATE_PATH.format(model=self._model), body)
-                    return self._conclude(query, response, cache.memories)
+                    return self._conclude(query, response, cache.memories, started, cached=True)
                 except GeminiHttpError as error:
                     if error.status >= 500:
                         raise
@@ -142,7 +156,7 @@ class MemorySearch:
                 "generationConfig": _GENERATION_CONFIG,
             }
             response = self._rest.post(GENERATE_PATH.format(model=self._model), body)
-            return self._conclude(query, response, tuple(memory for memory, _ in frames))
+            return self._conclude(query, response, tuple(memory for memory, _ in frames), started, cached=False)
 
     def warm(self) -> None:
         """Refresh the context cache in the background once the memory has settled.
@@ -238,15 +252,36 @@ class MemorySearch:
         return self._cache
 
     # --- request assembly / response handling ---
-    def _conclude(self, query: str, response: dict, memories: tuple[Memory, ...]) -> tuple[str, bytes | None]:
+    def _conclude(
+        self, query: str, response: dict, memories: tuple[Memory, ...], started: float, *, cached: bool
+    ) -> tuple[str, bytes | None]:
+        latency = round(time.monotonic() - started, 2)
         verdict = _parse_verdict(response)
         if verdict is None:
+            self._report({"query": query, "found": False, "error": "unreadable answer"})
             return f'Memory search for "{query}" returned an unreadable answer — try again.', None
         found, frame, explanation = verdict
         if not found or not 1 <= frame <= len(memories):
+            self._report(
+                {"query": query, "found": False, "explanation": explanation, "latency_sec": latency, "cached": cached}
+            )
             return f'Memory search for "{query}": nothing in the remembered views matches. {explanation}', None
         memory = memories[frame - 1]
         jpeg = self._read_image(memory)
+        self._report(
+            {
+                "query": query,
+                "found": True,
+                "id": memory.id,
+                "x": round(memory.x, 3),
+                "y": round(memory.y, 3),
+                "theta": round(memory.theta, 4),
+                "seen_stamp": memory.stamp,
+                "explanation": explanation,
+                "latency_sec": latency,
+                "cached": cached,
+            }
+        )
         return (
             f'Memory search for "{query}": found a match, recorded {_age_text(time.time() - memory.stamp)} ago at '
             f"map position x={memory.x:.2f}m y={memory.y:.2f}m heading={math.degrees(memory.theta):.0f}°. "
@@ -256,6 +291,15 @@ class MemorySearch:
             f"theta_degrees={math.degrees(memory.theta):.0f}, local_frame=false).",
             jpeg,
         )
+
+    def _report(self, payload: dict) -> None:
+        """Mirror a search verdict to the UI; best-effort — it must never break a search."""
+        if self.on_result is None:
+            return
+        try:
+            self.on_result({**payload, "stamp": time.time()})
+        except Exception as error:  # noqa: BLE001 — the UI mirror must not break the search
+            self._logger.warn(f"[Memory] search result mirror failed: {error!r}")
 
     def _load_frames(self, memories: tuple[Memory, ...]) -> list[tuple[Memory, bytes]]:
         frames = []

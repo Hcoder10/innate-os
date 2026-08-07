@@ -22,6 +22,8 @@ import {
   COMMANDED_GOAL_TOPIC,
   GLOBAL_COSTMAP_TOPIC,
   LOCAL_COSTMAP_TOPIC,
+  MEMORY_POSITIONS_TOPIC,
+  MEMORY_SEARCH_TOPIC,
   ODOM_TOPIC,
   PLAN_TOPICS,
   SCAN_TOPIC,
@@ -30,6 +32,7 @@ import { createMap, MAP_COLORS } from "../map/mapWidget.js";
 import { createNavStore } from "./navStore.js";
 import { createMapsPanel } from "./mapsPanel.js";
 import { createMappingSession } from "./mappingSession.js";
+import { createMemoriesPanel } from "./memoriesPanel.js";
 import { createNavPanels } from "./panels.js";
 import { createNavPlots } from "./plots.js";
 import { createDriveKit } from "./driveKit.js";
@@ -46,6 +49,7 @@ const LAYERS = [
   { key: "costmap", label: "Global costmap", on: true, topic: GLOBAL_COSTMAP_TOPIC },
   { key: "local", label: "Local costmap", on: false, topic: LOCAL_COSTMAP_TOPIC },
   { key: "trail", label: "Path traveled", on: true, topic: ODOM_TOPIC },
+  { key: "memories", label: "Memories", on: true, topic: MEMORY_POSITIONS_TOPIC },
 ];
 
 /** @param {HTMLElement} stage */
@@ -170,6 +174,7 @@ function buildView(root) {
       forceLayer("scan", true);
       forceLayer("costmap", false);
       forceLayer("trail", false);
+      forceLayer("memories", false); // memory marks are frames of the finished map
       createDriveKit(scene).then((kit) => {
         if (gen !== kitGen) kit.destroy(); // mapping ended while mounting
         else driveKit = kit;
@@ -209,12 +214,14 @@ function buildView(root) {
   // rolling plots. Each in its own host so no module's teardown can clear
   // another's DOM.
   const mapsHost = document.createElement("div");
+  const memoriesHost = document.createElement("div");
   const readoutHost = document.createElement("div");
   const plotHost = document.createElement("div");
-  side.append(mapsHost, readoutHost, plotHost);
+  side.append(mapsHost, memoriesHost, readoutHost, plotHost);
 
   const parts = [
     createMapsPanel(mapsHost, store),
+    createMemoriesPanel(memoriesHost, map),
     createMappingSession(scene, store),
     createNavPanels(readoutHost, store),
     createNavPlots(plotHost),
@@ -270,6 +277,7 @@ function createLegend(scene, chipEls) {
   row(null, line(MAP_COLORS.route), "planned path", PLAN_TOPICS.join(" · "));
   row(["scan"], dot(MAP_COLORS.scan), "lidar", SCAN_TOPIC);
   row(["trail"], line(MAP_COLORS.trail), "path traveled", ODOM_TOPIC);
+  row(["memories"], dot(MAP_COLORS.memory), "remembered view", `${MEMORY_POSITIONS_TOPIC} · ${MEMORY_SEARCH_TOPIC}`);
   row(["costmap", "local"], '<span class="legend-swatch legend-cost"></span>', "cost low → lethal", `${GLOBAL_COSTMAP_TOPIC} · ${LOCAL_COSTMAP_TOPIC}`);
 
   function sync() {
