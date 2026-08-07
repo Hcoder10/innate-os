@@ -133,6 +133,7 @@ export const MAPPING_POSE_TOPIC = "/mapping_pose";
 // the JPEG behind each entry is served same-origin by the front door at
 // /memory/image?map=…&id=… (webapp/proxy/media_routes.py).
 export const MEMORY_POSITIONS_TOPIC = "/brain/memory_positions";
+export const CLEAR_MEMORIES_SERVICE = "/brain/clear_memories";
 // One latched message per finished memory search (std_msgs/String JSON:
 // {query, found, id?, x?, y?, theta?, seen_stamp?, explanation?, error?,
 // latency_sec?, cached?, stamp}). Latched so a page opened just after the

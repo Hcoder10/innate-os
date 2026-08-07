@@ -7265,6 +7265,27 @@ select.skill-input {
   border-color: rgb(232 163 61 / 40%);
 }
 
+.mem-panel-clear {
+  padding: 2px 8px;
+  font-size: 10px;
+  color: var(--muted);
+  cursor: pointer;
+  background: none;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+
+.mem-panel-clear:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: rgb(217 106 90 / 45%);
+}
+
+.mem-panel-clear:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .mem-panel-empty {
   font-size: 12px;
   line-height: 1.5;

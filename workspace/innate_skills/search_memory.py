@@ -8,9 +8,10 @@ class SearchMemory(Skill):
     or thing ('the kitchen', 'a banana', 'the door out of this room', 'where you saw my airpods');
     a vision model reviews every remembered view and returns the best match — its image, map
     coordinates, and when it was seen. When asked to find or go to something not in the current
-    camera view, search first and drive to the match with navigate_to_position
-    (local_frame=false) — don't wander. If the search finds nothing, say so and only then
-    explore."""
+    camera view, or whether you've seen something, search first and drive to the match with
+    navigate_to_position (local_frame=false) — don't wander. Never claim you haven't seen or
+    don't remember something without searching first. If the search finds nothing, say so and
+    only then explore."""
 
     memory: SpatialMemory
 

@@ -7,7 +7,12 @@ memories too, so the recorder owns its own lightweight subscriptions instead
 of borrowing the brain's activation-gated sensors. One rule governs capture —
 record only what a well-localized robot saw: AMCL's covariance must hold below
 the webapp's "confident" thresholds for a few seconds straight, then the
-admission policy (memory/selection.py) decides novelty, refresh, and eviction.
+admission policy (memory/selection.py) decides novelty, refresh, and eviction —
+a kept viewpoint's picture refreshes only from a frame aimed the same way with
+a clear sight line between the capture points, so an oblique, mid-turn, or
+behind-a-wall frame never overwrites a straight-on view. Every stored
+frame must first pass the quality gates (memory/quality.py); a bad frame never
+clobbers a good view.
 
 Also republishes the memory positions at 1 Hz on ``/brain/memory_positions``
 (the topic the mobile app's map overlay watches) and nudges the search's
@@ -21,11 +26,15 @@ import time
 from typing import TYPE_CHECKING
 
 from geometry_msgs.msg import PoseWithCovarianceStamped
+from nav_msgs.msg import OccupancyGrid
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
 
+from brain_client.common.geometry import quaternion_to_yaw
+from brain_client.memory.quality import frame_worth_keeping
 from brain_client.memory.selection import plan_admission
+from brain_client.state.map import Map
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -70,13 +79,15 @@ class MemoryRecorder:
         self._covariance: tuple[float, float, float] | None = None  # (var x, var y, var yaw)
         self._head_pitch = 0.0
         self._confident_since: float | None = None
+        self._grid: Map | None = None  # sight-line truth for same-view refreshes
 
         image_qos = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT, history=QoSHistoryPolicy.KEEP_LAST, depth=1
         )
-        # The forked AMCL latches its pose; matching TRANSIENT_LOCAL hands a
-        # late-joining recorder the last covariance instead of silence.
-        amcl_qos = QoSProfile(
+        # The forked AMCL latches its pose (and map_server its grid); matching
+        # TRANSIENT_LOCAL hands a late-joining recorder the last message
+        # instead of silence.
+        latched_qos = QoSProfile(
             reliability=QoSReliabilityPolicy.RELIABLE,
             history=QoSHistoryPolicy.KEEP_LAST,
             depth=1,
@@ -85,7 +96,8 @@ class MemoryRecorder:
         node.create_subscription(CompressedImage, config.image_topic, self._on_image, image_qos)
         node.create_subscription(String, config.current_nav_mode_topic, self._on_nav_mode, 10)
         node.create_subscription(String, config.current_map_topic, self._on_current_map, 10)
-        node.create_subscription(PoseWithCovarianceStamped, config.amcl_pose_topic, self._on_amcl_pose, amcl_qos)
+        node.create_subscription(PoseWithCovarianceStamped, config.amcl_pose_topic, self._on_amcl_pose, latched_qos)
+        node.create_subscription(OccupancyGrid, "/map", self._on_map, latched_qos)
         node.create_subscription(String, "/mars/head/current_position", self._on_head, 10)
         node.create_timer(_TICK_SEC, self.tick)
 
@@ -103,6 +115,17 @@ class MemoryRecorder:
     def _on_amcl_pose(self, msg: PoseWithCovarianceStamped) -> None:
         covariance = msg.pose.covariance
         self._covariance = (covariance[0], covariance[7], covariance[35])
+
+    def _on_map(self, msg: OccupancyGrid) -> None:
+        self._grid = Map(
+            resolution=msg.info.resolution,
+            width=msg.info.width,
+            height=msg.info.height,
+            origin_x=msg.info.origin.position.x,
+            origin_y=msg.info.origin.position.y,
+            origin_theta=quaternion_to_yaw(msg.info.origin.orientation),
+            raw_source=msg,
+        )
 
     def _on_head(self, msg: String) -> None:
         try:
@@ -152,8 +175,8 @@ class MemoryRecorder:
         return frame[1]
 
     def _record(self, x: float, y: float, theta: float, jpeg: bytes) -> None:
-        plan = plan_admission(self._store.snapshot().memories, x, y, theta, time.time())
-        if not plan.record:
+        plan = plan_admission(self._store.snapshot().memories, x, y, theta, time.time(), self._grid)
+        if not plan.record or not frame_worth_keeping(jpeg):
             return
         if plan.replace is not None:
             self._store.replace(plan.replace, x, y, theta, time.time(), jpeg)
