@@ -56,6 +56,7 @@ _TTL_SEC = 12 * 3600  # ~20k-token cache: 12h of storage costs ~$0.24, cheap ins
 _TTL_SAFETY_SEC = 120  # treat the cache as gone this long before Gemini actually expires it
 _MIN_FRAMES_TO_CACHE = 6  # fewer frames sit under the API's minimum cache size (and upload fast anyway)
 _WARM_AFTER_QUIET_SEC = 30.0  # let a recording burst settle before rebuilding the cache
+_MAX_STALE_FRAMES = 10  # a delta this big rides every search — rebuild even mid-burst
 
 _SYSTEM = (
     "You are the spatial memory of a small home robot. You hold snapshots the robot remembered "
@@ -222,8 +223,11 @@ class MemorySearch:
         snapshot = self._store.snapshot()
         if not self._should_warm(snapshot):
             return
-        if time.monotonic() - self._store.last_change_monotonic < _WARM_AFTER_QUIET_SEC:
-            return
+        if (
+            time.monotonic() - self._store.last_change_monotonic < _WARM_AFTER_QUIET_SEC
+            and self._staleness(snapshot) < _MAX_STALE_FRAMES
+        ):
+            return  # let the burst settle — unless the delta already rides every search too heavy
         if not self._warming.acquire(blocking=False):
             return  # a rebuild is already on the wire
 
@@ -254,6 +258,15 @@ class MemorySearch:
         if cache is None or cache.map_name != snapshot.map_name:
             return None
         return cache if time.monotonic() < cache.expires_monotonic else None
+
+    def _staleness(self, snapshot: MemorySnapshot) -> int:
+        """How many frames the next search's delta must carry (0 = fresh, or no
+        cache to be stale against)."""
+        cache = self._usable_cache(snapshot)
+        if cache is None:
+            return 0
+        cached = {memory.id: memory.stamp for memory in cache.memories}
+        return sum(1 for memory in snapshot.memories if cached.get(memory.id) != memory.stamp)
 
     def _should_warm(self, snapshot: MemorySnapshot) -> bool:
         if self._cache_unsupported or len(snapshot.memories) < _MIN_FRAMES_TO_CACHE:
@@ -298,6 +311,14 @@ class MemorySearch:
         if not name:
             self._failed_revision = snapshot.revision
             return None
+        expires = started + _TTL_SEC - _TTL_SAFETY_SEC
+        # A cache built from fileData must not outlive the uploads it embeds
+        # (Gemini deletes them at 48 h): cap its life at the earliest
+        # referenced file's usable deadline, so warm() rebuilds in time.
+        for memory in included:
+            until = self._files.usable_until(memory)
+            if until is not None:
+                expires = min(expires, started + (until - time.time()) - _TTL_SAFETY_SEC)
         old, self._cache = (
             self._cache,
             _CacheHandle(
@@ -305,7 +326,7 @@ class MemorySearch:
                 revision=snapshot.revision,
                 map_name=snapshot.map_name,
                 memories=included,
-                expires_monotonic=started + _TTL_SEC - _TTL_SAFETY_SEC,
+                expires_monotonic=expires,
             ),
         )
         if old is not None:

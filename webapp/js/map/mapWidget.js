@@ -271,7 +271,7 @@ export function createMap(root, opts = {}) {
   let localGrid = null;
   /** @type {Array<{ x: number, y: number }>} map-frame breadcrumb trail */
   const trail = [];
-  /** @type {Partial<Record<"scan" | "costmap" | "local" | "tf" | "memories" | "memsearch", () => void>>} live layer subscriptions */
+  /** @type {Partial<Record<"scan" | "costmap" | "local" | "tf" | "memsearch", () => void>>} live layer subscriptions */
   const layerUnsubs = {};
 
   // ---- spatial-memory layer state -----------------------------------------
@@ -317,11 +317,15 @@ export function createMap(root, opts = {}) {
       memKnown = new Set(next.memories.map((m) => m.id));
       memPulses.clear();
       closeMemPopup();
+      // A recall verdict belongs to the map it was answered on — a switch
+      // must not leave its glow pointing into the new map's frame.
+      memSearch = null;
+      hideMemSearchCard();
     } else {
       for (const m of next.memories) {
         if (memKnown.has(m.id)) continue;
         memKnown.add(m.id);
-        memPulses.set(m.id, performance.now());
+        if (layers.memories) memPulses.set(m.id, performance.now());
       }
     }
     memState = next;
@@ -331,11 +335,18 @@ export function createMap(root, opts = {}) {
     draw();
   }
 
+  // The first memsearch message after subscribing is the latched replay:
+  // history, shown only while fresh. Later arrivals are live news — never
+  // gated on the stamp, because the robot's wall clock can disagree with the
+  // browser's (no RTC before NTP settles) by more than the freshness window.
+  let memSearchSeen = false;
   /** @param {any} msg std_msgs/String — /brain/memory_search (latched) */
   function onMemorySearch(msg) {
     const verdict = parseSearch(msg);
     if (!verdict) return;
-    if (Date.now() / 1000 - verdict.stamp > MEM_SEARCH_FRESH_S) return; // stale latched replay
+    const replay = !memSearchSeen;
+    memSearchSeen = true;
+    if (replay && Date.now() / 1000 - verdict.stamp > MEM_SEARCH_FRESH_S) return; // stale latched replay
     memSearch = verdict;
     memSearchUntil = performance.now() + (verdict.found ? MEM_SEARCH_GLOW_MS : 0);
     showMemSearchCard(verdict);
@@ -611,16 +622,14 @@ export function createMap(root, opts = {}) {
       delete layerUnsubs.local;
       localGrid = null;
     }
-    if (layers.memories && !layerUnsubs.memories) {
-      layerUnsubs.memories = ros.subscribe(MEMORY_POSITIONS_TOPIC, onMemories, 0, "std_msgs/msg/String");
+    if (layers.memories && !layerUnsubs.memsearch) {
       layerUnsubs.memsearch = ros.subscribe(MEMORY_SEARCH_TOPIC, onMemorySearch, 0, "std_msgs/msg/String");
-    } else if (!layers.memories && layerUnsubs.memories) {
-      layerUnsubs.memories();
-      layerUnsubs.memsearch?.();
-      delete layerUnsubs.memories;
+    } else if (!layers.memories && layerUnsubs.memsearch) {
+      layerUnsubs.memsearch();
       delete layerUnsubs.memsearch;
-      memState = null;
-      memKnown = null;
+      // memState/memKnown stay: the positions feed is always on (it also
+      // drives the sidebar reel's highlight/focus) — only the marks hide.
+      memSearchSeen = false;
       memPulses.clear();
       memSearch = null;
       setMemHover(null);
@@ -1296,10 +1305,13 @@ export function createMap(root, opts = {}) {
       const clicked = !panDrag.moved;
       panDrag = null;
       render(); // restore the cursor, surface Recenter
-      // A plain click (no pan) opens the memory under the cursor — or lets an
-      // open popup go when the click landed on empty map.
+      // A plain click (no pan) opens the memory under the pointer — or lets an
+      // open popup go when the click landed on empty map. Hit-test here, not
+      // via memHover: touch has no hover phase before the tap.
       if (clicked) {
-        if (memHover) openMemPopup(memHover);
+        const { px, py } = eventToCanvas(e);
+        const hit = hitMemory(px, py);
+        if (hit) openMemPopup(hit);
         else closeMemPopup();
       }
       return;
@@ -1414,6 +1426,9 @@ export function createMap(root, opts = {}) {
   const unsubAmcl = ros.subscribe(AMCL_POSE_TOPIC, onAmcl, 0, "geometry_msgs/msg/PoseWithCovarianceStamped");
   const unsubPlans = PLAN_TOPICS.map((topic) => ros.subscribe(topic, (msg) => onPlan(topic, msg), 250, "nav_msgs/msg/Path"));
   const unsubGoal = ros.subscribe(COMMANDED_GOAL_TOPIC, onCommandedGoal, 0, "geometry_msgs/msg/PoseStamped");
+  // Always on (a tiny 1 Hz JSON), not layer-gated: highlightMemory/focusMemory
+  // must keep working from the sidebar reel while the layer chip is off.
+  const unsubMemories = ros.subscribe(MEMORY_POSITIONS_TOPIC, onMemories, 0, "std_msgs/msg/String");
 
   return {
     /** Swap to a saved zoom (e.g. when this widget reparents between thumbnail and full stage). */
@@ -1499,6 +1514,7 @@ export function createMap(root, opts = {}) {
     },
     /** Gallery click: centre the view on a memory and open its popup. @param {number} id */
     focusMemory(id) {
+      if (mappingMode) return; // the coordinates belong to the finished map, and Go-here mid-mapping is wrong
       const m = memState?.memories.find((mem) => mem.id === id);
       if (!m) return;
       panCenter = { x: m.x, y: m.y };
@@ -1526,6 +1542,7 @@ export function createMap(root, opts = {}) {
       unsubAmcl();
       for (const unsub of unsubPlans) unsub();
       unsubGoal();
+      unsubMemories();
       unsubMappingPose?.();
       for (const unsub of Object.values(layerUnsubs)) unsub();
       canvas.remove();

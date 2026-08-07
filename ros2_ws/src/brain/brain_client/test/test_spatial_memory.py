@@ -510,6 +510,21 @@ def test_warm_waits_for_recording_to_settle(data_dir):
     assert fake.creates == []
 
 
+def test_warm_rebuilds_mid_burst_once_the_delta_grows_too_big(data_dir):
+    # The quiet window must not let the stale-cache delta grow without bound
+    # during a long recording tour — past the threshold, rebuild anyway.
+    search, fake, store = make_search(data_dir, frames=6)
+    build_cache(search)
+    for i in range(10):
+        store.add(40.0 + i, 0.0, 0.0, 3000.0 + i, b"jpg-burst")
+    assert time.monotonic() - store.last_change_monotonic < 1.0  # mid-burst
+    search.warm()
+    deadline = time.time() + 2.0
+    while len(fake.creates) < 2 and time.time() < deadline:
+        time.sleep(0.01)
+    assert len(fake.creates) == 2
+
+
 def test_search_mirrors_verdicts_to_the_ui(data_dir):
     search, fake, _ = make_search(data_dir, frames=6, verdict={"found": True, "frame": 2, "explanation": "kitchen"})
     build_cache(search)
@@ -634,6 +649,35 @@ def test_a_transient_upload_failure_retries_next_round(data_dir):
     fake.upload_error = None
     upload_frames(search)
     assert len(fake.uploads) == 3
+
+
+def test_a_failed_round_backs_off_before_retrying(data_dir):
+    # The 1 Hz tick must not re-POST a full frame every second against a
+    # broken endpoint — a failed round arms a cooldown that maintain() honors.
+    search, fake, _ = make_search(data_dir, frames=3)
+    fake.upload_error = GeminiHttpError(500, "hiccup")
+    upload_frames(search)  # fails, arms the cooldown
+    fake.upload_error = None
+    search._files.maintain()  # inside the cooldown: returns before spawning
+    assert fake.uploads == []
+    search._files._retry_at = 0.0  # cooldown over
+    upload_frames(search)
+    assert len(fake.uploads) == 3
+
+
+def test_a_cache_built_from_references_expires_with_its_files(data_dir):
+    # A cache embedding fileData must not outlive the uploads it references —
+    # its expiry is capped by the oldest file, not the 12 h cache TTL.
+    search, fake, _ = make_search(data_dir, frames=6)
+    upload_frames(search)
+    files = search._files
+    with files._lock:
+        files._records = {i: replace(r, uploaded_at=r.uploaded_at - 46 * 3600) for i, r in files._records.items()}
+    build_cache(search)
+    cache = search._cache
+    assert cache is not None
+    remaining = cache.expires_monotonic - time.monotonic()
+    assert 0 < remaining < 3600  # ~1 h of file life left, minus the safety margin
 
 
 def test_the_cache_builds_from_file_references(data_dir):
