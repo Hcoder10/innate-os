@@ -72,6 +72,10 @@ class MemoryStore:
         if map_name == self._map_name and stat_sig == self._stat_sig:
             return
         fingerprint = _map_fingerprint(self._maps_dir, map_name) if map_name else ""
+        if map_name is not None and not fingerprint:
+            # The map file is unreadable this tick (being rewritten, transient
+            # IO error). "Can't verify" must never wipe — retry next tick.
+            return
         with self._lock:
             self._stat_sig = stat_sig
             if map_name == self._map_name and fingerprint == self._fingerprint:
@@ -173,7 +177,7 @@ class MemoryStore:
         """The map was re-made (or the index is unreadable): the coordinates lie."""
         assert self._dir is not None
         if self._dir.is_dir():
-            for stale in self._dir.glob("*.jpg"):
+            for stale in self._dir.glob("*.jpg*"):  # images and any crash-orphaned .jpg.tmp
                 stale.unlink(missing_ok=True)
             (self._dir / "index.json").unlink(missing_ok=True)
             (self._dir / "files.json").unlink(missing_ok=True)
@@ -181,9 +185,13 @@ class MemoryStore:
         self._next_id = 1
 
     def _write_image_locked(self, memory_id: int, jpeg: bytes) -> None:
+        # tmp + replace like the index: the proxy and upload threads read these
+        # files without the lock and must never see a torn frame.
         assert self._dir is not None
         self._dir.mkdir(parents=True, exist_ok=True)
-        (self._dir / f"{memory_id}.jpg").write_bytes(jpeg)
+        tmp = self._dir / f"{memory_id}.jpg.tmp"
+        tmp.write_bytes(jpeg)
+        os.replace(tmp, self._dir / f"{memory_id}.jpg")
 
     def _commit_locked(self) -> None:
         assert self._dir is not None

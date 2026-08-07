@@ -17,6 +17,7 @@ without the upload endpoint latches the tier off for the process.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import threading
@@ -78,6 +79,23 @@ class FrameFiles:
         if time.time() - record.uploaded_at > _USABLE_FOR_SEC:
             return None
         return record
+
+    def purge(self) -> None:
+        """Forget every registered upload and best-effort delete the server-side
+        copies — the store's wipe already removed the sidecar; without this the
+        forgotten frames would linger on Gemini until their 48 h expiry."""
+        with self._lock:
+            self._sync_map_locked()
+            records, self._records = dict(self._records), {}
+        if not records:
+            return
+
+        def run() -> None:
+            for record in records.values():
+                with contextlib.suppress(Exception):  # a 404 must not stop the rest
+                    self._rest.delete("/v1beta/files/" + record.uri.rsplit("/", 1)[-1])
+
+        threading.Thread(target=run, name="memory-file-purge", daemon=True).start()
 
     def maintain(self) -> None:
         """Upload new/refreshed/aging frames in the background; returns immediately."""
@@ -188,8 +206,8 @@ class FrameFiles:
                 )
                 for memory_id, entry in data.get("files", {}).items()
             }
-        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
-            return {}  # unreadable registry = nothing uploaded; the chore rebuilds it
+        except (OSError, json.JSONDecodeError, AttributeError, KeyError, TypeError, ValueError):
+            return {}  # unreadable or wrong-shaped registry = nothing uploaded; the chore rebuilds it
 
     def _save_locked(self) -> None:
         path = self._store.files_index_path()

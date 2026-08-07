@@ -10,7 +10,7 @@
 
 import { ros } from "../rosClient.js";
 import { CLEAR_MEMORIES_SERVICE, MEMORY_POSITIONS_TOPIC, MEMORY_SEARCH_TOPIC } from "../constants.js";
-import { SEARCH_REPLAY_FRESH_S, ageText, cacheLabel, memoryImageUrl, parseMemories, parseSearch } from "../map/memories.js";
+import { SEARCH_REPLAY_FRESH_S, ageText, cacheLabel, clockSkew, memoryImageUrl, parseMemories, parseSearch } from "../map/memories.js";
 
 // Age labels ("5 min ago") drift while nothing else changes — refresh slowly.
 const AGE_REFRESH_MS = 30_000;
@@ -80,6 +80,8 @@ export function createMemoriesPanel(root, map) {
   root.appendChild(section);
 
   let signature = ""; // map + ids + stamps of the rendered reel; rebuild only on change
+  let skew = 0; // robot clock − browser clock; stamps are robot time
+  const robotNowS = () => Date.now() / 1000 + skew;
 
   /** @param {import("../map/memories.js").MemoryState} state */
   function renderReel(state) {
@@ -99,7 +101,7 @@ export function createMemoriesPanel(root, map) {
       const age = document.createElement("span");
       age.className = "mem-thumb-age mono";
       age.dataset.stamp = String(m.stamp);
-      age.textContent = ageText(m.stamp);
+      age.textContent = ageText(m.stamp, robotNowS());
       thumb.append(img, age);
       thumb.addEventListener("mouseenter", () => map.highlightMemory(m.id));
       thumb.addEventListener("mouseleave", () => map.highlightMemory(null));
@@ -111,7 +113,7 @@ export function createMemoriesPanel(root, map) {
   function refreshAges() {
     for (const el of section.querySelectorAll(".mem-thumb-age")) {
       const stamp = Number(/** @type {HTMLElement} */ (el).dataset.stamp);
-      if (stamp) el.textContent = ageText(stamp);
+      if (stamp) el.textContent = ageText(stamp, robotNowS());
     }
   }
   const ageTimer = setInterval(refreshAges, AGE_REFRESH_MS);
@@ -121,6 +123,7 @@ export function createMemoriesPanel(root, map) {
     (msg) => {
       const state = parseMemories(msg);
       if (!state) return;
+      skew = clockSkew(state);
       count.textContent = String(state.memories.length);
       const cache = cacheLabel(state.cache);
       chip.hidden = state.memories.length === 0;
@@ -150,7 +153,7 @@ export function createMemoriesPanel(root, map) {
       if (!verdict) return;
       const replay = !searchSeen;
       searchSeen = true;
-      if (replay && Date.now() / 1000 - verdict.stamp > SEARCH_REPLAY_FRESH_S) return;
+      if (replay && robotNowS() - verdict.stamp > SEARCH_REPLAY_FRESH_S) return;
       lastSearch.hidden = false;
       const outcome = verdict.found ? "found" : verdict.error ? "failed" : "no match";
       lastSearch.textContent = `last recall · “${verdict.query}” → ${outcome}`;

@@ -58,6 +58,11 @@ _TTL_SAFETY_SEC = 120  # treat the cache as gone this long before Gemini actuall
 _MIN_FRAMES_TO_CACHE = 6  # fewer frames sit under the API's minimum cache size (and upload fast anyway)
 _WARM_AFTER_QUIET_SEC = 30.0  # let a recording burst settle before rebuilding the cache
 _MAX_STALE_FRAMES = 10  # a delta this big rides every search — rebuild even mid-burst
+_WARM_RETRY_SEC = 30.0  # after a transient cache-build failure — warm() rides a 1 Hz tick
+# How long a new search waits for the lock. An abandoned goal (the skill's
+# timeout fired; cancels are rejected) can hold it for the transport's full
+# timeout — parking every executor thread behind it would wedge the server.
+_BUSY_WAIT_SEC = 5.0
 
 _SYSTEM = (
     "You are the spatial memory of a small home robot. You hold snapshots the robot remembered "
@@ -124,7 +129,8 @@ class MemorySearch:
         self._files = FrameFiles(store, rest, logger)
         self._cache: _CacheHandle | None = None
         self._cache_unsupported = False
-        self._failed_revision: int | None = None  # cache creation failed for exactly this content; don't hammer
+        self._failed_revision: int | None = None  # the backend refused exactly this content (4xx); don't hammer
+        self._retry_at = 0.0  # monotonic; transient build failures back off until then
         self._flight = threading.Lock()  # searches run one at a time
         # Maintenance never holds _flight: a search must proceed mid-rebuild
         # (it rides the old handle — the swap is a single reference write).
@@ -152,13 +158,17 @@ class MemorySearch:
         Never raises — failures come back as an ``error`` verdict every
         consumer (action result, webapp card) can render.
         """
-        with self._flight:
+        if not self._flight.acquire(timeout=_BUSY_WAIT_SEC):
+            verdict = SearchVerdict(query=query, found=False, error="another memory search is still running")
+        else:
             started = time.monotonic()
             try:
                 verdict = self._search_locked(query, started)
             except Exception as error:  # noqa: BLE001 — transport failures become a typed error verdict
                 self._logger.error(f"[Memory] search failed: {error!r}")
                 verdict = SearchVerdict(query=query, found=False, error=str(error))
+            finally:
+                self._flight.release()
         self._report(verdict)
         return verdict
 
@@ -221,13 +231,29 @@ class MemorySearch:
 
         def run() -> None:
             try:
-                self._ensure_cache(self._store.snapshot())
-            except Exception as error:  # noqa: BLE001 — warming is opportunistic; the search path degrades
-                self._logger.warn(f"[Memory] cache warm failed: {error!r}")
+                fresh = self._store.snapshot()
+                if self._should_warm(fresh):
+                    self._create_cache(fresh)
             finally:
                 self._warming.release()
 
         threading.Thread(target=run, name="memory-warm", daemon=True).start()
+
+    def forget(self) -> None:
+        """The user forgot this map's memories: drop the cache handle and the
+        uploaded frames so the forgotten views stop being served — server-side
+        deletion is best effort, in the background."""
+        cache, self._cache = self._cache, None
+        self._failed_revision = None
+        self._files.purge()
+        if cache is None:
+            return
+
+        def run() -> None:
+            with contextlib.suppress(Exception):
+                self._rest.delete(f"/v1beta/{cache.name}")
+
+        threading.Thread(target=run, name="memory-cache-forget", daemon=True).start()
 
     # --- cache management (under _flight, except the read-only probes) ---
     def _cache_matches(self, snapshot: MemorySnapshot) -> bool:
@@ -257,20 +283,13 @@ class MemorySearch:
         return sum(1 for memory in snapshot.memories if cached.get(memory.id) != memory.stamp)
 
     def _should_warm(self, snapshot: MemorySnapshot) -> bool:
+        """The one gate for cache rebuilds — warm() checks it before spawning
+        the thread and again on the fresh snapshot inside it."""
         if self._cache_unsupported or len(snapshot.memories) < _MIN_FRAMES_TO_CACHE:
             return False
-        if self._failed_revision == snapshot.revision:
+        if self._failed_revision == snapshot.revision or time.monotonic() < self._retry_at:
             return False
         return not self._cache_matches(snapshot)
-
-    def _ensure_cache(self, snapshot: MemorySnapshot) -> _CacheHandle | None:
-        if self._cache_unsupported or len(snapshot.memories) < _MIN_FRAMES_TO_CACHE:
-            return None
-        if self._cache_matches(snapshot):
-            return self._cache
-        if self._failed_revision == snapshot.revision:
-            return None
-        return self._create_cache(snapshot)
 
     def _create_cache(self, snapshot: MemorySnapshot) -> _CacheHandle | None:
         started = time.monotonic()
@@ -304,9 +323,20 @@ class MemorySearch:
                 self._logger.warn(
                     f"[Memory] backend has no context-cache endpoint (HTTP {error.status}); searches run uncached"
                 )
-            else:
+            elif error.status < 500:
+                # The backend refused this content — identical retries can't
+                # succeed; wait for the memory to change.
                 self._failed_revision = snapshot.revision
                 self._logger.warn(f"[Memory] context cache creation failed: {error}")
+            else:
+                self._retry_at = time.monotonic() + _WARM_RETRY_SEC
+                self._logger.warn(
+                    f"[Memory] context cache creation failed ({error}); retrying in {_WARM_RETRY_SEC:.0f}s"
+                )
+            return None
+        except Exception as error:  # noqa: BLE001 — network trouble backs off; warm() rides a 1 Hz tick
+            self._retry_at = time.monotonic() + _WARM_RETRY_SEC
+            self._logger.warn(f"[Memory] context cache creation failed ({error!r}); retrying in {_WARM_RETRY_SEC:.0f}s")
             return None
         if not name:
             self._failed_revision = snapshot.revision
