@@ -22,6 +22,23 @@ same rule: one tight paragraph of contract — no Args/Returns lists that restat
 self-explanatory parameter names, no prose repeating the signature. If a comment is needed to
 make code understandable, first try renaming or restructuring so it isn't.
 
+## Code style
+
+Code reads like prose; the best part is no part. In brief — the full rules and a worked
+before/after live in [AGENTS.md](AGENTS.md#code-style):
+
+- **Shape:** early returns and merged conditions over nesting; do-everything functions split
+  into named steps; one concern per module, pure functions in a `utils.py` beside the caller.
+- **Types:** every signature typed; collaborators under `TYPE_CHECKING`. Frozen dataclasses
+  for internal objects, `TypedDict` only for wire-format dicts, StrEnums
+  (`brain_client/common/enums.py`) for closed string vocabularies — wire values never change.
+  `basedpyright` stays at 0 errors, fixed at the root, never `# type: ignore`.
+- **try/except:** an invariant at a boundary (loop crash reporter, ROS callbacks, user code),
+  not insurance. Narrow types for parses; per-item catches in loops; broad catches carry
+  their justification.
+- **Done means verified:** ruff check + format, the unit suite, and basedpyright — all clean
+  before reporting completion.
+
 ## Writing skills
 
 ### Never `time.sleep` — always `self.sleep`
