@@ -184,6 +184,7 @@ def make_recorder(data_dir, published: list | None = None):
         store=store,
         pose_tracker=SimpleNamespace(map_pose_xyt=lambda: (1.0, 2.0, 0.5)),
         warm_search=None,
+        cache_state=lambda: "warm",
         positions_pub=SimpleNamespace(publish=(published if published is not None else []).append),
     )
     return recorder, store
@@ -265,7 +266,7 @@ def test_a_stale_frame_blocks_capture(data_dir, clock):
     assert store.snapshot().memories == ()
 
 
-def test_positions_mirror_publishes_map_and_poses(data_dir, clock):
+def test_positions_mirror_publishes_map_poses_and_cache_state(data_dir, clock):
     published: list = []
     recorder, store = make_recorder(data_dir, published)
     see_confident_world(recorder, clock)
@@ -274,8 +275,10 @@ def test_positions_mirror_publishes_map_and_poses(data_dir, clock):
     recorder._on_image(SimpleNamespace(data=b"live-frame"))
     recorder.tick()
     payload = json.loads(published[-1].data)
-    assert payload["map"] == "A.yaml"
-    assert payload["positions"] == [{"x": 1.0, "y": 2.0, "theta": 0.5}]
+    assert payload["map"] == "A.yaml" and payload["cache"] == "warm"
+    (position,) = payload["positions"]
+    assert position["id"] == 1 and position["x"] == 1.0 and position["y"] == 2.0 and position["theta"] == 0.5
+    assert position["stamp"] > 0
 
 
 # ================= memory search =================
@@ -423,3 +426,53 @@ def test_warm_waits_for_recording_to_settle(data_dir):
     search.warm()
     time.sleep(0.05)
     assert fake.creates == []
+
+
+def test_search_mirrors_verdicts_to_the_ui(data_dir):
+    search, fake, _ = make_search(data_dir, frames=6, verdict={"found": True, "frame": 2, "explanation": "kitchen"})
+    reports: list[dict] = []
+    search.on_result = reports.append
+    search.search("the kitchen")
+    (report,) = reports
+    assert report["found"] and report["id"] == 2 and report["x"] == 3.0 and report["cached"]
+    assert report["query"] == "the kitchen" and report["explanation"] == "kitchen"
+    assert report["latency_sec"] >= 0 and report["stamp"] > 0 and report["seen_stamp"] == 1001.0
+
+    fake.verdict = {"found": False, "frame": 0, "explanation": "no such view"}
+    search.search("a unicorn")
+    assert reports[-1] == {
+        "query": "a unicorn",
+        "found": False,
+        "explanation": "no such view",
+        "latency_sec": reports[-1]["latency_sec"],
+        "cached": True,
+        "stamp": reports[-1]["stamp"],
+    }
+
+
+def test_a_broken_ui_mirror_does_not_break_the_search(data_dir):
+    search, fake, _ = make_search(data_dir, frames=3)
+
+    def explode(payload: dict) -> None:
+        raise RuntimeError("publisher gone")
+
+    search.on_result = explode
+    text, image = search.search("anything")
+    assert image == b"jpg-1"  # the search itself still succeeded
+
+
+def test_cache_state_reflects_the_lifecycle(data_dir):
+    search, fake, store = make_search(data_dir, frames=6)
+    assert search.cache_state() == "cold"
+    search.search("first")
+    assert search.cache_state() == "warm"
+    store.add(30.0, 0.0, 0.0, 2000.0, b"jpg-late")
+    assert search.cache_state() == "cold"
+
+    small, _, _ = make_search(data_dir / "small", frames=0)
+    assert small.cache_state() == "inline"
+
+    unsupported, fake2, _ = make_search(data_dir / "unsup", frames=6)
+    fake2.create_error = GeminiHttpError(404, "no endpoint")
+    unsupported.search("first")
+    assert unsupported.cache_state() == "unsupported"

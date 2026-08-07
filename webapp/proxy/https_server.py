@@ -47,6 +47,7 @@ from media_routes import (
     episode_response,
     joints_response,
     map_preview_response,
+    memory_image_response,
     profile_response,
     run_info_response,
     run_log_response,
@@ -371,6 +372,7 @@ def build_app() -> web.Application:
     app.router.add_get("/episode/profile", profile_response)
     app.router.add_get("/episode/thumb", thumb_response)
     app.router.add_get("/map/preview", map_preview_response)
+    app.router.add_get("/memory/image", memory_image_response)
     app.router.add_get("/run/info", run_info_response)
     app.router.add_get("/run/log", run_log_response)
     app.router.add_get("/settings.json", settings_get)

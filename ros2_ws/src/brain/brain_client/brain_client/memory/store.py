@@ -85,9 +85,9 @@ class MemoryStore:
             return MemorySnapshot(self._map_name, self._revision, tuple(self._memories))
 
     def positions(self) -> list[dict]:
-        """The webapp mirror payload: one ``{x, y, theta}`` per memory."""
+        """The webapp mirror payload: one ``{id, x, y, theta, stamp}`` per memory."""
         with self._lock:
-            return [{"x": m.x, "y": m.y, "theta": m.theta} for m in self._memories]
+            return [{"id": m.id, "x": m.x, "y": m.y, "theta": m.theta, "stamp": m.stamp} for m in self._memories]
 
     def image_path(self, memory_id: int) -> Path | None:
         with self._lock:
