@@ -31,15 +31,9 @@ from typing import TYPE_CHECKING
 from brain_client.brain import grounding
 from brain_client.brain.context import Decision, GeminiContext, ToolCall
 from brain_client.brain.loop import LoopThread
+from brain_client.brain.memory_search import verdict_text
 from brain_client.brain.prompt import build_system_prompt
-from brain_client.brain.tools import (
-    GO_TO_POINT_IN_VIEW,
-    SEARCH_MEMORY,
-    STOP_SKILL,
-    WAIT,
-    assign_tool_names,
-    build_tools,
-)
+from brain_client.brain.tools import GO_TO_POINT_IN_VIEW, STOP_SKILL, WAIT, assign_tool_names, build_tools
 from brain_client.brain.transport import pick_transport
 from brain_client.brain.utils import (
     Event,
@@ -60,7 +54,7 @@ if TYPE_CHECKING:
 
     from rclpy.node import Node
 
-    from brain_client.brain.memory_search import MemorySearch
+    from brain_client.brain.memory_search import MemorySearch, SearchVerdict
     from brain_client.core.config import BrainConfig
     from brain_client.core.state import BrainState, RunningSkill
     from brain_client.perception.camera import CameraCapture
@@ -74,6 +68,7 @@ if TYPE_CHECKING:
     from innate_proxy import ProxyClient
 
 _NAV_TO_POSITION = "innate-os/navigate_to_position"
+_SEARCH_MEMORY = "innate-os/search_memory"
 _FRESH_FRAME_SEC = 3.0  # an older camera frame means the feed is broken; don't think blind
 _MAX_EVENTS_QUEUED = 30  # the oldest beyond this are dropped as stale stimuli
 _MAX_EVENT_IMAGES = 4  # newest event images sent per turn; older ones arrive as text only
@@ -448,12 +443,7 @@ class BrainAgent:
         # the name the model calls always resolves to the skill it was declared for.
         named = assign_tool_names(skills)
         self._tool_map = {name: meta["id"] for name, meta in named}
-        return build_tools(
-            named,
-            None,
-            can_go_to_point_in_view=_NAV_TO_POSITION in active_ids,
-            can_search_memory=self._memory is not None and self._memory.frame_count > 0,
-        )
+        return build_tools(named, None, can_go_to_point_in_view=_NAV_TO_POSITION in active_ids)
 
     # ================= act =================
     def _act(self, decision: Decision, speaker: SpeechStreamer, context: GeminiContext) -> list[tuple[ToolCall, str]]:
@@ -510,17 +500,19 @@ class BrainAgent:
             # (a goal that slips through anyway is cancelled by the runner's
             # generation bump, but this keeps the robot from twitching first).
             return "rejected — the brain is deactivating"
-        if call.name == SEARCH_MEMORY:
-            return self._search_memory(call.args)
-        if self._state.primitive_running is not None:
-            return "rejected — another skill is already running; stop it first"
-        if call.name == GO_TO_POINT_IN_VIEW:
-            return self._go_to_point_in_view(call.args)
         # Only names declared this turn resolve: falling back to the full
         # registry would let a hallucinated call bypass the active-skill allowlist.
         # The map can outlive a roster change (it isn't rebuilt while a skill
         # runs), so the resolved id is re-checked against the live active set.
         skill_id = self._tool_map.get(call.name)
+        if skill_id == _SEARCH_MEMORY and skill_id in self._roster.active_skill_ids():
+            # Recall is a query, not an act: it occupies no skill slot, so it
+            # resolves before the one-skill-at-a-time gate.
+            return self._search_memory(call.args)
+        if self._state.primitive_running is not None:
+            return "rejected — another skill is already running; stop it first"
+        if call.name == GO_TO_POINT_IN_VIEW:
+            return self._go_to_point_in_view(call.args)
         if skill_id is None:
             return f"unknown skill '{call.name}'"
         if skill_id not in self._roster.active_skill_ids():
@@ -578,18 +570,25 @@ class BrainAgent:
         )
 
     def _search_memory(self, args: dict) -> str:
-        """Fire a spatial-memory search; the loop must not block, so the result is an event."""
-        if self._memory is None or self._memory.frame_count == 0:
-            return "rejected — no places remembered on this map yet"
+        """Fire a spatial-memory search; the loop must not block, so the verdict is an event.
+
+        The brain hosts MemorySearch itself, so its own calls skip the
+        /brain/search_memory action the skill rides — same search, same cache,
+        one less hop.
+        """
+        if self._memory is None:
+            return "rejected — memory search is unavailable (no Gemini access)"
         query = str(args.get("query") or "").strip()
         if not query:
             return "rejected — give a query describing what to find"
-        self._memory.begin_search(query, self._on_memory_result)
+        if self._memory.frame_count == 0:
+            return "rejected — no places remembered on this map yet"
+        self._memory.begin_search(query, self._on_memory_verdict)
         return "searching memory — the result arrives as an event"
 
-    def _on_memory_result(self, text: str, image: bytes | None) -> None:
-        """Search thread: the result (and the matched frame) becomes the next turn's event."""
-        self.add_event(text, image=image, kind=EventKind.MEMORY)
+    def _on_memory_verdict(self, verdict: SearchVerdict) -> None:
+        """Search thread: the verdict (and its matched frame) becomes the next turn's event."""
+        self.add_event(verdict_text(verdict), image=verdict.image, kind=EventKind.MEMORY)
 
     def _start_skill(self, skill_id: str, inputs: dict) -> None:
         self._gaze.pause()
@@ -630,11 +629,13 @@ class BrainAgent:
         device = data.get("input_device", "unknown")
         self.add_event(f"Input from {device}: {json.dumps(data)}")
 
-    def on_skill_event(self, status: str, skill_name: str, detail: str | None = None) -> None:
+    def on_skill_event(
+        self, status: str, skill_name: str, detail: str | None = None, image: bytes | None = None
+    ) -> None:
         line = f"Skill {skill_name} {status}"
         if detail:
             line += f": {detail}"
-        self.add_event(line)
+        self.add_event(line, image=image)
 
     def on_skill_feedback(self, skill_name: str, feedback: str, image: bytes | None = None) -> None:
         self.add_event(f"Update from running skill {skill_name}: {feedback}", image=image)
