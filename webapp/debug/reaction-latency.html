@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brain reaction latency — preemptible turns A/B</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --ring: rgba(11, 11, 11, 0.10);
+    --baseline: #2a78d6;   /* series 1 — old behavior */
+    --preempt: #eb6834;    /* series 2 — new behavior */
+    --wait: #d6d5cd;       /* dead time: neutral, not a series */
+    --delta-good: #006300;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --ring: rgba(255, 255, 255, 0.10);
+      --baseline: #3987e5;
+      --preempt: #d95926;
+      --wait: #3a3a37;
+      --delta-good: #0ca30c;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --ring: rgba(255, 255, 255, 0.10);
+    --baseline: #3987e5;
+    --preempt: #d95926;
+    --wait: #3a3a37;
+    --delta-good: #0ca30c;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --ring: rgba(11, 11, 11, 0.10);
+    --baseline: #2a78d6;
+    --preempt: #eb6834;
+    --wait: #d6d5cd;
+    --delta-good: #006300;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 40px 24px 72px; }
+
+  .mono { font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace; }
+
+  header h1 {
+    font-size: 1.7rem; font-weight: 650; letter-spacing: -0.015em;
+    margin: 0 0 6px; text-wrap: balance;
+  }
+  header .sub { color: var(--ink-2); max-width: 62ch; margin: 0 0 14px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    font-size: 0.72rem; letter-spacing: 0.02em;
+    color: var(--ink-2); background: var(--surface);
+    border: 1px solid var(--ring); border-radius: 4px; padding: 3px 9px;
+  }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin: 28px 0; }
+  .tile {
+    background: var(--surface); border: 1px solid var(--ring); border-radius: 6px;
+    padding: 16px 18px 14px;
+  }
+  .tile .label {
+    font-size: 0.7rem; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 8px;
+  }
+  .tile .value { font-size: 1.9rem; font-weight: 650; letter-spacing: -0.02em; line-height: 1.15; }
+  .tile .value .from { color: var(--muted); font-size: 1.15rem; font-weight: 500; text-decoration: line-through; margin-right: 8px; }
+  .tile .note { color: var(--ink-2); font-size: 0.82rem; margin-top: 6px; }
+  .tile .good { color: var(--delta-good); font-weight: 600; }
+
+  section { margin-top: 40px; }
+  section > h2 { font-size: 1.05rem; font-weight: 650; margin: 0 0 4px; letter-spacing: -0.01em; }
+  section > .desc { color: var(--ink-2); margin: 0 0 16px; max-width: 68ch; }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--ring); border-radius: 6px;
+    padding: 20px; overflow-x: auto;
+  }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; margin-bottom: 14px; font-size: 0.82rem; color: var(--ink-2); }
+  .legend .key { display: inline-flex; align-items: center; gap: 7px; }
+  .legend .swatch { width: 11px; height: 11px; border-radius: 3px; }
+
+  /* ---- grouped/stacked bar chart ---- */
+  .chart { min-width: 640px; }
+  .plot { position: relative; height: 300px; }
+  .gridline { position: absolute; left: 34px; right: 0; height: 1px; background: var(--grid); }
+  .gridline.zero { background: var(--axis); }
+  .gtick {
+    position: absolute; left: 0; width: 28px; text-align: right;
+    transform: translateY(-50%);
+    font-size: 0.72rem; color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  .pairs {
+    position: absolute; left: 34px; right: 0; top: 0; bottom: 0;
+    display: grid; grid-template-columns: repeat(8, 1fr); align-items: end;
+  }
+  .pair { display: flex; justify-content: center; align-items: flex-end; gap: 6px; height: 100%; }
+  .bar {
+    width: 26px; display: flex; flex-direction: column-reverse; gap: 2px;
+    cursor: default;
+  }
+  .seg { width: 100%; }
+  .seg.think { border-radius: 4px 4px 0 0; }
+  .seg.wait { border-radius: 4px 4px 0 0; }
+  .bar:hover .seg { filter: brightness(1.08); }
+  .xlabels {
+    margin-left: 34px; display: grid; grid-template-columns: repeat(8, 1fr);
+    text-align: center; font-size: 0.72rem; color: var(--muted); padding-top: 8px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  .tooltip {
+    position: fixed; z-index: 10; pointer-events: none;
+    background: var(--surface); border: 1px solid var(--ring); border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.14);
+    padding: 9px 12px; font-size: 0.8rem; line-height: 1.5;
+    color: var(--ink-2); max-width: 260px; display: none;
+  }
+  .tooltip b { color: var(--ink); }
+  .tooltip .num { font-family: ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+
+  /* ---- swimlane ---- */
+  .lanes { display: grid; gap: 22px; min-width: 640px; }
+  .lane .lane-title { font-size: 0.82rem; font-weight: 600; color: var(--ink-2); margin-bottom: 7px; }
+  .lane .track { display: flex; align-items: center; gap: 2px; height: 34px; }
+  .lane .segbar {
+    height: 100%; border-radius: 4px; position: relative;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.74rem; font-weight: 600; color: var(--ink-2); white-space: nowrap;
+  }
+  .lane .segbar span {
+    background: color-mix(in srgb, var(--surface) 82%, transparent);
+    padding: 1px 7px; border-radius: 3px;
+  }
+  .lane .endcap {
+    font-size: 0.8rem; font-weight: 650; color: var(--ink); margin-left: 10px;
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .timescale {
+    position: relative; margin-top: 4px; height: 22px; min-width: 640px;
+  }
+  .timescale .tick {
+    position: absolute; top: 0; font-size: 0.72rem; color: var(--muted);
+    transform: translateX(-50%);
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums;
+  }
+  .speak-note { color: var(--ink-2); font-size: 0.82rem; margin-top: 14px; max-width: 68ch; }
+
+  /* ---- thinking-level bars ---- */
+  .levels { display: grid; gap: 14px; min-width: 560px; }
+  .lvl { display: grid; grid-template-columns: 150px 1fr; align-items: center; gap: 14px; }
+  .lvl .name { font-size: 0.84rem; color: var(--ink-2); text-align: right; }
+  .lvl .name b { color: var(--ink); }
+  .lvl .name .shipped {
+    display: inline-block; font-size: 0.64rem; font-weight: 650; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--delta-good);
+    border: 1px solid currentColor; border-radius: 3px; padding: 0 5px; margin-left: 6px;
+  }
+  .lvl .barrow { display: flex; align-items: center; gap: 10px; }
+  .lvl .hbar { height: 20px; border-radius: 0 4px 4px 0; background: var(--baseline); }
+  .lvl .val {
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums;
+    font-size: 0.82rem; color: var(--ink); font-weight: 650; white-space: nowrap;
+  }
+  .lvl .pass { font-size: 0.74rem; color: var(--muted); white-space: nowrap; }
+
+  /* ---- table ---- */
+  details summary {
+    cursor: pointer; font-weight: 600; font-size: 0.92rem; color: var(--ink);
+    padding: 4px 0; user-select: none;
+  }
+  details summary:focus-visible { outline: 2px solid var(--baseline); outline-offset: 3px; border-radius: 3px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 12px; font-size: 0.84rem; }
+  th {
+    text-align: left; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted); font-weight: 600; padding: 6px 12px 8px; border-bottom: 1px solid var(--axis);
+  }
+  td { padding: 6px 12px; border-bottom: 1px solid var(--grid); color: var(--ink-2); }
+  td.num, th.num { text-align: right; font-family: ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+  td .mark { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 7px; vertical-align: 0; }
+  td.speech { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .method { color: var(--ink-2); font-size: 0.9rem; max-width: 72ch; }
+  .method p { margin: 0 0 10px; }
+  .method code {
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.83em;
+    background: var(--surface); border: 1px solid var(--ring); border-radius: 3px; padding: 1px 5px;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .bar .seg { transition: filter 120ms ease; }
+  }
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+  <header>
+    <h1>Brain reaction latency: preemptible turns A/B</h1>
+    <p class="sub">
+      Two changes, measured on the robot over the production inference path: user speech now
+      cancels an in-flight housekeeping turn instead of waiting behind it, and the model's
+      thinking level drops to <span class="mono">minimal</span>. Together: median reaction
+      4.13&nbsp;s → 1.07&nbsp;s.
+    </p>
+    <div class="chips">
+      <span class="chip">gemini-3.6-flash</span>
+      <span class="chip">thinking=minimal</span>
+      <span class="chip">innate-proxy</span>
+      <span class="chip">Jetson Orin Nano · on-robot</span>
+      <span class="chip">branch feat/local-gemini-brain</span>
+      <span class="chip">2026-08-04</span>
+    </div>
+  </header>
+
+  <div class="tiles">
+    <div class="tile">
+      <div class="label">Reaction — speak → robot decides (median)</div>
+      <div class="value"><span class="from">4.13 s</span>1.07 s</div>
+      <div class="note"><span class="good">−74%.</span> Preemption took it to 3.02 s; thinking=minimal took the rest. What remains is a single fast inference.</div>
+    </div>
+    <div class="tile">
+      <div class="label">Dispatch — speak → request on the wire</div>
+      <div class="value"><span class="from">1.23 s</span>1 ms</div>
+      <div class="note"><span class="good">~1200× faster.</span> The request leaves the moment the user finishes speaking, not when the heartbeat turn finishes thinking.</div>
+    </div>
+    <div class="tile">
+      <div class="label">Turn think time — median inference</div>
+      <div class="value"><span class="from">3.08 s</span>0.96 s</div>
+      <div class="note"><span class="good">3× faster</span> at <span class="mono">thinkingLevel=minimal</span>, with instruction-discipline probes unchanged (see below).</div>
+    </div>
+  </div>
+
+  <section>
+    <h2>Preemption A/B — where the time goes, per trial</h2>
+    <p class="desc">
+      Each pair is one A/B round, measured at the <em>default</em> thinking level to isolate
+      preemption. Reaction time splits into dead wait for the in-flight heartbeat turn (gray) and
+      inference on the user's own request (color). Preemption removes the gray segment entirely —
+      the colored think time is the same work in both arms.
+    </p>
+    <div class="panel">
+      <div class="legend">
+        <span class="key"><span class="swatch" style="background: var(--wait); border: 1px solid var(--ring);"></span>Waiting out the heartbeat turn</span>
+        <span class="key"><span class="swatch" style="background: var(--baseline);"></span>Baseline — think on user request</span>
+        <span class="key"><span class="swatch" style="background: var(--preempt);"></span>Preempt — think on user request</span>
+      </div>
+      <div class="chart">
+        <div class="plot" id="plot"></div>
+        <div class="xlabels" id="xlabels"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The mechanism, at median pace</h2>
+    <p class="desc">
+      t = 0 is the user finishing a sentence while the robot's idle heartbeat turn is mid-think.
+      Before: the loop is sequential, so the reply waits out the heartbeat and its speech is then
+      suppressed as stale — pure dead time. After: the heartbeat turn is cancelled (transactionally,
+      nothing consumed) and rerun with the user's message included.
+    </p>
+    <div class="panel">
+      <div class="lanes" id="lanes"></div>
+      <div class="timescale" id="timescale"></div>
+      <p class="speak-note">
+        The cancelled turn costs nothing: events are only consumed when a turn commits, so the rerun
+        sees everything the heartbeat saw, plus the user's message. Turns that began <em>on</em> a user
+        event are never preempted — a correction queues instead, so rapid back-to-back speech can't
+        starve the loop.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Shrinking the think</h2>
+    <p class="desc">
+      gemini-3.6-flash won't run with thinking fully off (<span class="mono">thinkingBudget: 0</span>
+      and <span class="mono">thinkingLevel: "none"</span> are rejected with HTTP 400); the accepted
+      ladder is minimal / low / medium / high. Median turn latency on a realistic brain turn
+      (image + tools + system prompt), with instruction-discipline probes at each level:
+    </p>
+    <div class="panel">
+      <div class="levels" id="levels"></div>
+      <p class="speak-note">
+        Probes, 3 reps each: stay quiet on an idle turn, ignore an STT fragment, pick the right
+        skill tool, answer while supervising a running skill, ground “go to the red ball” into
+        floor coordinates. The one failure — going silent while supervising a skill — occurs at
+        <em>every</em> level including the old default (1/3 there, 0/3 elsewhere), so it's a
+        system-prompt issue, not a thinking regression. Grounding coordinates were pixel-identical
+        across levels.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>All trials</h2>
+    <div class="panel">
+      <details open>
+        <summary>Trial table — 24 rows</summary>
+        <div style="overflow-x: auto;">
+          <table id="trialtable">
+            <thead>
+              <tr>
+                <th class="num">#</th><th>Arm</th><th>Thinking</th>
+                <th class="num">Dispatch (s)</th><th class="num">Think (s)</th><th class="num">Reaction (s)</th>
+                <th>First reply</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <section>
+    <h2>Method &amp; caveats</h2>
+    <div class="method">
+      <p>
+        Harness: the real <code>BrainAgent</code> with production transport (Innate proxy → Gemini),
+        production system prompt and tool declarations (2 skills + go-to-point + wait), and a synthetic
+        640×480 camera frame. Camera, runner, and chat collaborators are stubs; timing is stamped at the
+        transport boundary and the <code>/brain/trace</code> sink. Baseline arm restores the old
+        sequential flow on the same build; arms alternate to neutralize network drift.
+      </p>
+      <p>
+        Reaction = injection → commit of the turn carrying the user's message (through decision + tool
+        outcomes, speech stubbed). The 1.2&nbsp;s injection offset is an <em>average</em> case: heartbeat
+        thinks ran 2.1–2.8&nbsp;s, so baseline waits of 0.9–1.6&nbsp;s. Speech landing earlier in a longer
+        turn pays proportionally more; preemption caps dispatch at ~1&nbsp;ms regardless.
+      </p>
+      <p>
+        Thinking level: probes are single-turn, 3 reps per scenario per level; grounding accuracy
+        judged against known scene geometry. An earlier model's <code>low</code> hurt
+        <em>multi-turn</em> discipline (skill re-runs, chatter) — that regression class isn't covered
+        by these probes, so <code>gemini_thinking_level</code> in <code>core/config.py</code>
+        documents the revert path back to <code>""</code>. All 24 preemption-bench injections landed
+        mid-think; 53 unit tests pass.
+      </p>
+      <p>
+        Remaining levers: streaming the response into TTS sentence-by-sentence, and killing the
+        speaker on user barge-in. Changes: <code>_preemptible_turn</code> in
+        <code>brain_client/brain/agent.py</code>; <code>gemini_thinking_level</code> default in
+        <code>brain_client/core/config.py</code>.
+      </p>
+    </div>
+  </section>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+  const TRIALS = [
+    { arm: "preempt",  dispatch: 0.002, think: 5.84, reaction: 5.84,  speech: null },
+    { arm: "baseline", dispatch: 1.278, think: 2.85, reaction: 4.124, speech: "I see a red ball on the floor and a doorway to the right." },
+    { arm: "preempt",  dispatch: 0.001, think: 3.09, reaction: 3.088, speech: "I see a red ball on the floor in front of a gray wall." },
+    { arm: "baseline", dispatch: 1.534, think: 2.61, reaction: 4.139, speech: "I see a red ball on the floor and a doorway in the background." },
+    { arm: "preempt",  dispatch: 0.001, think: 3.79, reaction: 3.79,  speech: null },
+    { arm: "baseline", dispatch: 1.630, think: 4.21, reaction: 5.837, speech: "I see a red ball on the floor near a doorway." },
+    { arm: "preempt",  dispatch: 0.001, think: 2.70, reaction: 2.70,  speech: "I see a red ball sitting on the floor." },
+    { arm: "baseline", dispatch: 1.184, think: 3.14, reaction: 4.324, speech: "I see a red ball on the floor and a grey doorway in the background." },
+    { arm: "preempt",  dispatch: 0.001, think: 4.66, reaction: 4.664, speech: null },
+    { arm: "baseline", dispatch: 1.334, think: 2.95, reaction: 4.279, speech: "I see a red ball on the floor and a doorway to the right." },
+    { arm: "preempt",  dispatch: 0.001, think: 2.92, reaction: 2.924, speech: null },
+    { arm: "baseline", dispatch: 1.151, think: 2.95, reaction: 4.104, speech: "I see a red ball on the floor and a door in the background." },
+    { arm: "preempt",  dispatch: 0.002, think: 2.58, reaction: 2.582, speech: "I see a red ball on the floor and a doorway in the background." },
+    { arm: "baseline", dispatch: 0.991, think: 2.34, reaction: 3.327, speech: "I see a red ball on the floor in front of a wall and doorway." },
+    { arm: "preempt",  dispatch: 0.001, think: 2.96, reaction: 2.961, speech: null },
+    { arm: "baseline", dispatch: 0.926, think: 2.78, reaction: 3.705, speech: "I see a red ball on the floor and a door to the right." },
+  ];
+
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const YMAX = 6; // seconds
+  const plot = document.getElementById("plot");
+  const tooltip = document.getElementById("tooltip");
+
+  // gridlines + ticks
+  for (let s = 0; s <= YMAX; s++) {
+    const y = (s / YMAX) * 100;
+    const line = document.createElement("div");
+    line.className = "gridline" + (s === 0 ? " zero" : "");
+    line.style.bottom = y + "%";
+    plot.appendChild(line);
+    const tick = document.createElement("div");
+    tick.className = "gtick";
+    tick.style.bottom = "calc(" + y + "% )";
+    tick.textContent = s + "s";
+    plot.appendChild(tick);
+  }
+
+  // pairs of stacked bars
+  const pairsEl = document.createElement("div");
+  pairsEl.className = "pairs";
+  plot.appendChild(pairsEl);
+  const armName = { baseline: "Baseline", preempt: "Preempt" };
+
+  for (let p = 0; p < 8; p++) {
+    const pairEl = document.createElement("div");
+    pairEl.className = "pair";
+    // within each round the baseline bar renders first for before→after reading
+    const round = [TRIALS[p * 2], TRIALS[p * 2 + 1]].sort((a) => (a.arm === "baseline" ? -1 : 1));
+    for (const t of round) {
+      const bar = document.createElement("div");
+      bar.className = "bar";
+      bar.tabIndex = 0;
+      const waitPct = (t.dispatch / YMAX) * 100;
+      const thinkPct = (t.think / YMAX) * 100;
+      if (t.dispatch >= 0.05) {
+        const wait = document.createElement("div");
+        wait.className = "seg wait";
+        wait.style.height = waitPct + "%";
+        wait.style.background = "var(--wait)";
+        bar.appendChild(wait);
+      }
+      const think = document.createElement("div");
+      think.className = "seg think";
+      think.style.height = thinkPct + "%";
+      think.style.background = t.arm === "baseline" ? "var(--baseline)" : "var(--preempt)";
+      bar.appendChild(think);
+
+      const show = (x, y) => {
+        tooltip.innerHTML =
+          "<b>Round " + (p + 1) + " · " + armName[t.arm] + "</b><br>" +
+          "Wait for heartbeat: <span class='num'>" + (t.dispatch >= 0.05 ? t.dispatch.toFixed(2) + " s" : "~1 ms") + "</span><br>" +
+          "Think on request: <span class='num'>" + t.think.toFixed(2) + " s</span><br>" +
+          "Reaction: <b class='num'>" + t.reaction.toFixed(2) + " s</b>" +
+          (t.speech ? "<br><i>“" + t.speech + "”</i>" : "");
+        tooltip.style.display = "block";
+        const r = tooltip.getBoundingClientRect();
+        tooltip.style.left = Math.min(x + 14, window.innerWidth - r.width - 10) + "px";
+        tooltip.style.top = Math.max(10, y - r.height - 10) + "px";
+      };
+      bar.addEventListener("mousemove", (e) => show(e.clientX, e.clientY));
+      bar.addEventListener("mouseleave", () => (tooltip.style.display = "none"));
+      bar.addEventListener("focus", () => {
+        const r = bar.getBoundingClientRect();
+        show(r.left, r.top);
+      });
+      bar.addEventListener("blur", () => (tooltip.style.display = "none"));
+      pairEl.appendChild(bar);
+    }
+    pairsEl.appendChild(pairEl);
+  }
+
+  const xl = document.getElementById("xlabels");
+  for (let p = 0; p < 8; p++) {
+    const d = document.createElement("div");
+    d.textContent = "R" + (p + 1);
+    xl.appendChild(d);
+  }
+
+  // ---- swimlanes (medians) ----
+  const LANE_MAX = 5; // seconds of track width
+  const lanes = document.getElementById("lanes");
+  const laneData = [
+    {
+      title: "Before — reply queues behind the heartbeat turn",
+      segs: [
+        { label: "wait 1.23 s", secs: 1.23, color: "var(--wait)" },
+        { label: "think 2.90 s", secs: 2.90, color: "var(--baseline)" },
+      ],
+      total: "4.13 s",
+    },
+    {
+      title: "After preemption — heartbeat turn cancelled, rerun immediately",
+      segs: [{ label: "think 3.03 s", secs: 3.03, color: "var(--preempt)" }],
+      total: "3.02 s",
+    },
+    {
+      title: "After preemption + thinking=minimal — shipped configuration",
+      segs: [{ label: "think 1.07 s", secs: 1.07, color: "var(--preempt)" }],
+      total: "1.07 s",
+    },
+  ];
+  for (const lane of laneData) {
+    const el = document.createElement("div");
+    el.className = "lane";
+    const title = document.createElement("div");
+    title.className = "lane-title";
+    title.textContent = lane.title;
+    el.appendChild(title);
+    const track = document.createElement("div");
+    track.className = "track";
+    for (const seg of lane.segs) {
+      const s = document.createElement("div");
+      s.className = "segbar";
+      s.style.width = (seg.secs / LANE_MAX) * 100 + "%";
+      s.style.background = seg.color;
+      s.innerHTML = "<span>" + seg.label + "</span>";
+      track.appendChild(s);
+    }
+    const cap = document.createElement("div");
+    cap.className = "endcap";
+    cap.textContent = "→ " + lane.total;
+    track.appendChild(cap);
+    el.appendChild(track);
+    lanes.appendChild(el);
+  }
+  const ts = document.getElementById("timescale");
+  for (let s = 0; s <= LANE_MAX; s++) {
+    const tick = document.createElement("div");
+    tick.className = "tick";
+    tick.style.left = (s / LANE_MAX) * 100 + "%";
+    tick.textContent = s === 0 ? "0 (user speaks)" : s + "s";
+    if (s === 0) tick.style.transform = "none";
+    ts.appendChild(tick);
+  }
+
+  // ---- thinking-level comparison ----
+  const LEVELS = [
+    { name: "default", secs: 3.08, pass: "13/15 probes" },
+    { name: "low", secs: 2.64, pass: "12/15 probes" },
+    { name: "minimal", secs: 0.96, pass: "12/15 probes", shipped: true },
+  ];
+  const LVL_MAX = 3.5;
+  const levelsEl = document.getElementById("levels");
+  for (const l of LEVELS) {
+    const row = document.createElement("div");
+    row.className = "lvl";
+    row.innerHTML =
+      "<div class='name'><b>" + l.name + "</b>" + (l.shipped ? "<span class='shipped'>shipped</span>" : "") + "</div>" +
+      "<div class='barrow'><div class='hbar' style='width:" + (l.secs / LVL_MAX) * 100 + "%'></div>" +
+      "<span class='val'>" + l.secs.toFixed(2) + " s</span>" +
+      "<span class='pass'>" + l.pass + "</span></div>";
+    levelsEl.appendChild(row);
+  }
+
+  // ---- table ----
+  const MINIMAL_TRIALS = [
+    { arm: "preempt", dispatch: 0.002, think: 1.95, reaction: 1.95,  speech: "I see a red ball on the floor in front of a gray wall and door." },
+    { arm: "preempt", dispatch: 0.001, think: 1.04, reaction: 1.041, speech: "I see a red ball on the floor in front of a gray wall with a doorway on the right." },
+    { arm: "preempt", dispatch: 0.002, think: 1.06, reaction: 1.064, speech: "I see a red ball on the floor in front of a gray wall with a doorway." },
+    { arm: "preempt", dispatch: 0.002, think: 0.99, reaction: 0.989, speech: null },
+    { arm: "preempt", dispatch: 0.001, think: 2.01, reaction: 2.007, speech: "I see a red ball on the floor in front of a gray wall with a doorway on the right." },
+    { arm: "preempt", dispatch: 0.001, think: 1.07, reaction: 1.07,  speech: null },
+    { arm: "preempt", dispatch: 0.001, think: 1.07, reaction: 1.074, speech: "I see a red ball on the floor in front of a gray wall with a doorway on the right." },
+    { arm: "preempt", dispatch: 0.001, think: 1.39, reaction: 1.386, speech: null },
+  ];
+  const tbody = document.querySelector("#trialtable tbody");
+  const allTrials = TRIALS.map((t) => ({ ...t, thinking: "default" })).concat(
+    MINIMAL_TRIALS.map((t) => ({ ...t, thinking: "minimal" }))
+  );
+  allTrials.forEach((t, i) => {
+    const tr = document.createElement("tr");
+    const armColor = t.arm === "baseline" ? "var(--baseline)" : "var(--preempt)";
+    tr.innerHTML =
+      "<td class='num'>" + (i + 1) + "</td>" +
+      "<td><span class='mark' style='background:" + armColor + "'></span>" + armName[t.arm] + "</td>" +
+      "<td>" + t.thinking + "</td>" +
+      "<td class='num'>" + t.dispatch.toFixed(3) + "</td>" +
+      "<td class='num'>" + t.think.toFixed(2) + "</td>" +
+      "<td class='num'>" + t.reaction.toFixed(2) + "</td>" +
+      "<td class='speech'>" + (t.speech ? "“" + t.speech + "”" : "<span style='color: var(--muted)'>wait (no speech)</span>") + "</td>";
+    tbody.appendChild(tr);
+  });
+</script>
+
+</body>
+</html>
