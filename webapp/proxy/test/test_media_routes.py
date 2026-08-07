@@ -156,6 +156,25 @@ async def test_map_preview(tmp_path, monkeypatch):
 
 
 @sync
+async def test_memory_image_serves_and_fences(tmp_path, monkeypatch):
+    memories = tmp_path / "spatial_memory"
+    (memories / "Home").mkdir(parents=True)
+    (memories / "Home" / "3.jpg").write_bytes(b"\xff\xd8\xff\xe0jpegbytes")
+    monkeypatch.setattr(media_routes, "MEMORY_DIR", memories.resolve())
+    root = make_app_root(tmp_path)
+    async with serve(ROOT=root) as (s, base):
+        r = await s.get(base + "/memory/image", params={"map": "Home", "id": "3"})
+        assert r.status == 200 and r.headers["Content-Type"] == "image/jpeg"
+        assert await r.read() == b"\xff\xd8\xff\xe0jpegbytes"
+        # the map name may arrive as the yaml filename the topic publishes
+        assert (await s.get(base + "/memory/image", params={"map": "Home.yaml", "id": "3"})).status == 200
+        # traversal-shaped names and non-numeric ids -> 404
+        assert (await s.get(base + "/memory/image", params={"map": "../etc", "id": "3"})).status == 404
+        assert (await s.get(base + "/memory/image", params={"map": "Home", "id": "../3"})).status == 404
+        assert (await s.get(base + "/memory/image", params={"map": "Home", "id": "9"})).status == 404
+
+
+@sync
 async def test_thumb(tmp_path, monkeypatch):
     cv2 = pytest.importorskip("cv2")
     import numpy as np

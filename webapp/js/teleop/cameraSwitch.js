@@ -148,6 +148,9 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
           mapZoom[mapMode] = m;
           saveMapZoom();
         },
+        // Memories pulse in live while you drive — the tour builds the
+        // robot's spatial memory, and this is where you watch it happen.
+        layers: { memories: true },
       });
     } else if (!mapOn && mapWidget) {
       mapWidget.destroy();

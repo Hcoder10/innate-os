@@ -54,12 +54,14 @@ class MemoryRecorder:
         store: MemoryStore,
         pose_tracker: PoseTracker,
         warm_search: Callable[[], None] | None,
+        cache_state: Callable[[], str] | None,
         positions_pub: Publisher,
     ):
         self._logger = node.get_logger()
         self._store = store
         self._pose = pose_tracker
         self._warm_search = warm_search
+        self._cache_state = cache_state
         self._positions_pub = positions_pub
 
         self._frame: tuple[float, bytes] | None = None  # (monotonic arrival, jpeg)
@@ -162,5 +164,9 @@ class MemoryRecorder:
             self._logger.info(f"[Memory] recorded viewpoint {memory.id} at ({x:.2f}, {y:.2f}){evicted}")
 
     def _publish_positions(self) -> None:
-        payload = {"map": self._map_name, "positions": self._store.positions()}
+        payload = {
+            "map": self._map_name,
+            "cache": self._cache_state() if self._cache_state is not None else "off",
+            "positions": self._store.positions(),
+        }
         self._positions_pub.publish(String(data=json.dumps(payload)))

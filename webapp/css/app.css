@@ -6963,6 +6963,267 @@ select.skill-input {
   opacity: 0.45;
 }
 
+/* ---- Spatial memory (map layer cards + sidebar reel) ----------------------
+   The layer's violet (#b48cff) is deliberately distinct from every other map
+   mark; the cards share the scene's glass language (legend, status). */
+
+.mem-card {
+  position: absolute;
+  z-index: 5;
+  padding: 6px;
+  background: rgb(10 10 12 / 88%);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 45%);
+}
+
+/* The hover thumbnail is read-only — it must never steal the canvas's cursor. */
+.mem-card-hover {
+  pointer-events: none;
+}
+
+.mem-card-img {
+  display: block;
+  width: 180px;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 4%);
+}
+
+.mem-card-img-lg {
+  width: 248px;
+}
+
+.mem-card-meta {
+  padding-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.mem-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.mem-card-btn {
+  flex: 1;
+  padding: 6px 12px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ctl-text);
+  background: var(--ctl-glass);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+
+.mem-card-btn:hover {
+  color: var(--text);
+  border-color: rgb(255 255 255 / 30%);
+}
+
+.mem-card-btn-go {
+  color: #cbaefc;
+  border-color: rgb(180 140 255 / 45%);
+}
+
+.mem-card-btn-go:hover {
+  color: #e2d2ff;
+  border-color: rgb(180 140 255 / 80%);
+}
+
+/* The recall verdict — floats in from the top of the scene, dismisses itself. */
+.mem-search-card {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  z-index: 6;
+  width: min(430px, calc(100% - 24px));
+  padding: 10px 12px;
+  background: rgb(10 10 12 / 90%);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgb(0 0 0 / 50%);
+  opacity: 0;
+  transform: translate(-50%, -10px);
+  transition: opacity 260ms ease, transform 260ms ease;
+}
+
+.mem-search-card.is-in {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.mem-search-card.is-found {
+  border-color: rgb(180 140 255 / 45%);
+  box-shadow: 0 8px 30px rgb(0 0 0 / 50%), 0 0 26px rgb(180 140 255 / 14%);
+}
+
+.mem-search-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mem-search-head .microlabel {
+  margin: 0;
+  flex: none;
+  color: #cbaefc;
+}
+
+.mem-search-query {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mem-search-chip {
+  flex: none;
+  padding: 2px 8px;
+  font-size: 10px;
+  color: #cbaefc;
+  background: rgb(180 140 255 / 12%);
+  border: 1px solid rgb(180 140 255 / 35%);
+  border-radius: 999px;
+}
+
+.mem-search-close {
+  flex: none;
+  margin-left: auto;
+  padding: 0 4px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--muted);
+  background: none;
+  border: none;
+}
+
+.mem-search-close:hover {
+  color: var(--text);
+}
+
+.mem-search-body {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 8px;
+}
+
+.mem-search-img {
+  flex: none;
+  width: 132px;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 4%);
+}
+
+.mem-search-text {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+/* Sidebar panel: count + cache chip + the reel of remembered views. */
+.mem-panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.mem-panel-head .microlabel {
+  margin-bottom: 8px;
+}
+
+.mem-panel-count {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.mem-panel-chip {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  color: var(--muted);
+}
+
+.mem-panel-chip[data-kind="ok"] {
+  color: var(--ok);
+  border-color: rgb(86 194 140 / 40%);
+}
+
+.mem-panel-chip[data-kind="warn"] {
+  color: var(--ctl-accent);
+  border-color: rgb(232 163 61 / 40%);
+}
+
+.mem-panel-empty {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.mem-reel {
+  display: flex;
+  gap: 8px;
+  padding-bottom: 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.mem-thumb {
+  position: relative;
+  flex: none;
+  padding: 0;
+  overflow: hidden;
+  background: none;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  transition: border-color 150ms ease, transform 150ms ease;
+}
+
+.mem-thumb:hover {
+  border-color: rgb(180 140 255 / 70%);
+  transform: translateY(-1px);
+}
+
+.mem-thumb-img {
+  display: block;
+  width: 96px;
+  height: 72px;
+  object-fit: cover;
+}
+
+.mem-thumb-age {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 2px 5px;
+  font-size: 9px;
+  color: #ddd;
+  text-align: left;
+  background: linear-gradient(transparent, rgb(0 0 0 / 78%));
+}
+
+.mem-panel-search {
+  margin-top: 8px;
+  overflow: hidden;
+  font-size: 10px;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Phones: scene on top, telemetry scrolling beneath it. */
 @media (max-width: 700px) {
   .nav-grid {

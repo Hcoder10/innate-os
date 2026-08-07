@@ -154,8 +154,16 @@ class BrainClientNode(Node):
             store=self.memory_store,
             pose_tracker=self.pose_tracker,
             warm_search=self.memory_search.warm if self.memory_search is not None else None,
+            cache_state=self.memory_search.cache_state if self.memory_search is not None else None,
             positions_pub=self.create_publisher(String, "/brain/memory_positions", 10),
         )
+        # Search verdicts for the webapp's map (latched: a page opened after the
+        # search still sees the last one; clients gate on the payload's stamp).
+        self.memory_search_pub = self.create_publisher(String, "/brain/memory_search", LATCHED_QOS)
+        if self.memory_search is not None:
+            self.memory_search.on_result = lambda payload: self.memory_search_pub.publish(
+                String(data=json.dumps(payload))
+            )
         self.gaze = GazeController(self, state)
         self.runner = PrimitiveRunner(
             self,
