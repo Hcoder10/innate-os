@@ -24,6 +24,7 @@ class BrainLifecycle:
         brain,
         camera,
         pose_tracker,
+        footprint,
         runner,
         gaze,
         chat,
@@ -37,6 +38,7 @@ class BrainLifecycle:
         self._brain = brain
         self._camera = camera
         self._pose = pose_tracker
+        self._footprint = footprint
         self._runner = runner
         self._gaze = gaze
         self._chat = chat
@@ -53,6 +55,7 @@ class BrainLifecycle:
         self._state.is_brain_active = True
         self._camera.start()
         self._pose.start()
+        self._footprint.start()
         self._gaze.update()
         if not self._brain.start():
             # The loop refused to spawn (the previous one is stuck unwinding).
@@ -62,6 +65,7 @@ class BrainLifecycle:
             self._state.is_brain_active = False
             self._camera.stop()
             self._pose.stop()
+            self._footprint.stop()
             self._gaze.stop()
             self._publish_status()
             return
@@ -77,6 +81,7 @@ class BrainLifecycle:
         self._brain.stop()
         self._camera.stop()
         self._pose.stop()
+        self._footprint.stop()
         self._runner.interrupt_for_deactivation()
         self._gaze.stop()
         self._active_inputs_pub.publish(String(data=json.dumps({"inputs": []})))

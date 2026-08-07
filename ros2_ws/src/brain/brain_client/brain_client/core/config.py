@@ -25,6 +25,7 @@ class BrainConfig:
     odom_topic: str
     current_nav_mode_topic: str
     scan_topic: str
+    footprint_topic: str
 
     # --- Feature flags ---
     send_arm_camera_image: bool
@@ -35,6 +36,7 @@ class BrainConfig:
     vertical_fov: float  # degrees
     x_cam: float  # camera forward offset from base_link (m)
     height_cam: float  # camera height above the floor (m)
+    x_laser: float  # lidar forward offset from base_link (m)
 
     # --- Local brain (Gemini) ---
     gemini_model: str
@@ -83,6 +85,7 @@ _PARAM_DEFAULTS: dict[str, str | bool | int | float] = {
     "odom_topic": "/odom",
     "current_nav_mode_topic": "/nav/current_mode",
     "scan_topic": "/scan",
+    "footprint_topic": "/footprint",
     # --- Feature flags ---
     "send_arm_camera_image": True,
     "log_everything": False,
@@ -91,6 +94,8 @@ _PARAM_DEFAULTS: dict[str, str | bool | int | float] = {
     "vertical_fov": 80.0,
     "x_cam": 0.0197,
     "height_cam": 0.19663,
+    # base_laser joint origin in the URDF (mars_sim/urdf/mars.urdf), un-rotated.
+    "x_laser": -0.0764,
     # --- Local brain (Gemini) ---
     "gemini_model": "gemini-3.6-flash",
     # "minimal" | "low" | "medium" | "high"; "" = model default.

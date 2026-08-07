@@ -1,38 +1,67 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""LiDAR scan health: detects when laser scans stop arriving (e.g. lidar unplugged).
+"""LiDAR scan access: health (scans stopped arriving) and the latest returns.
 
-Keeps an always-on subscription to the scan topic and records when the last
-message arrived. The brain agent polls :meth:`stale_problem` from its loop tick to
-surface a clear error instead of failing silently when the lidar is
-disconnected (no scans -> AMCL never localizes -> no pose -> agent skips every
-loop with nothing reaching the app).
+Keeps an always-on subscription to the scan topic. The brain agent polls
+:meth:`stale_problem` from its loop tick to surface a clear error instead of
+failing silently when the lidar is disconnected (no scans -> AMCL never
+localizes -> no pose -> agent skips every loop with nothing reaching the app),
+and reads :meth:`obstacle_points` when grounding a go_to_point_in_view goal —
+the lidar decides how close the approach may get (see brain/grounding.py).
 """
 
 from __future__ import annotations
 
+import math
 import time
 
 # Scans arrive at ~6 Hz; this long without one means the lidar is gone, not slow.
 SCAN_STALE_AFTER_SEC = 10.0
 
+# For obstacle points, a scan older than this may predate a whole robot motion;
+# better to fall back to the blind standoff than trust it.
+SCAN_FRESH_SEC = 1.5
+
 
 class ScanHealthMonitor:
-    def __init__(self, node, *, scan_topic: str, stale_after_sec: float = SCAN_STALE_AFTER_SEC):
+    def __init__(self, node, *, scan_topic: str, laser_x: float, stale_after_sec: float = SCAN_STALE_AFTER_SEC):
         # ROS imports deferred so the module stays importable without rclpy
         # (the reporter below is pure and the agent imports it).
         from rclpy.qos import qos_profile_sensor_data
         from sensor_msgs.msg import LaserScan
 
+        self._laser_x = laser_x  # lidar forward offset from base_link (m)
         self._stale_after_sec = stale_after_sec
         self._started_at = time.monotonic()
         self._last_scan_at: float | None = None
+        self._last_scan = None  # (monotonic arrival, LaserScan); single ref, GIL-atomic
         # Sensor-data QoS (best effort) matches the lidar driver and also
         # accepts reliable publishers (e.g. the throttle relay).
         self._scan_sub = node.create_subscription(LaserScan, scan_topic, self._on_scan, qos_profile_sensor_data)
 
-    def _on_scan(self, _msg) -> None:
+    def _on_scan(self, msg) -> None:
         self._last_scan_at = time.monotonic()
+        self._last_scan = (self._last_scan_at, msg)
+
+    def obstacle_points(self, max_age_sec: float = SCAN_FRESH_SEC) -> list[tuple[float, float]] | None:
+        """Latest scan returns as base_link (x forward, y left); None when stale.
+
+        base_laser is mounted un-rotated ``laser_x`` from base_link (URDF), so
+        the transform is a bare offset. The scan plane sits at ~17 cm — walls
+        and furniture are visible, anything shorter is not, same blind spot
+        the costmaps have.
+        """
+        last = self._last_scan
+        if last is None or time.monotonic() - last[0] > max_age_sec:
+            return None
+        scan = last[1]
+        points = []
+        for i, r in enumerate(scan.ranges):
+            if not (scan.range_min < r < scan.range_max) or not math.isfinite(r):
+                continue
+            angle = scan.angle_min + i * scan.angle_increment
+            points.append((r * math.cos(angle) + self._laser_x, r * math.sin(angle)))
+        return points
 
     def stale_problem(self) -> str | None:
         """Describe why scans are stale, or None when healthy.

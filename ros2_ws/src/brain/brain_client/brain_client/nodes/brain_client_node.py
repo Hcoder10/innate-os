@@ -30,6 +30,7 @@ from brain_client.core.config import BrainConfig
 from brain_client.core.lifecycle import BrainLifecycle
 from brain_client.core.state import BrainState
 from brain_client.perception.camera import CameraCapture
+from brain_client.perception.footprint import FootprintTracker
 from brain_client.perception.gaze_control import GazeController
 from brain_client.perception.pose_tracking import PoseTracker
 from brain_client.perception.scan_health import ScanHealthMonitor
@@ -133,7 +134,10 @@ class BrainClientNode(Node):
         self.chat = ChatManager(self.get_logger(), self.chat_out_pub, self.task_status_pub, self._tts_handler)
         self.camera = CameraCapture(self, cfg)
         self.pose_tracker = PoseTracker(self, odom_topic=cfg.odom_topic, nav_mode_topic=cfg.current_nav_mode_topic)
-        self.scan_health = ScanHealthMonitor(self, scan_topic=cfg.scan_topic, stale_after_sec=cfg.scan_stale_after_sec)
+        self.footprint = FootprintTracker(self, footprint_topic=cfg.footprint_topic)
+        self.scan_health = ScanHealthMonitor(
+            self, scan_topic=cfg.scan_topic, laser_x=cfg.x_laser, stale_after_sec=cfg.scan_stale_after_sec
+        )
         self.gaze = GazeController(self, state)
         self.runner = PrimitiveRunner(
             self,
@@ -149,6 +153,7 @@ class BrainClientNode(Node):
             cfg,
             camera=self.camera,
             pose_tracker=self.pose_tracker,
+            footprint=self.footprint,
             runner=self.runner,
             roster=self.roster,
             chat=self.chat,
@@ -176,6 +181,7 @@ class BrainClientNode(Node):
             brain=self.brain,
             camera=self.camera,
             pose_tracker=self.pose_tracker,
+            footprint=self.footprint,
             runner=self.runner,
             gaze=self.gaze,
             chat=self.chat,

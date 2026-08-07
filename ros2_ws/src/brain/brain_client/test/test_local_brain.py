@@ -432,15 +432,60 @@ def test_near_horizon_pixel_is_range_capped():
 
 
 def test_approach_goal_stops_short_and_faces_the_point():
-    goal = grounding.approach_goal(2.0, 0.0)
-    assert abs(goal["x"] - (2.0 - grounding.STANDOFF_M)) < 1e-6
+    goal = grounding.approach_goal(2.0, 0.0, 0.25)
+    assert abs(goal["x"] - (2.0 - grounding.standoff(0.25))) < 1e-6
     assert goal["y"] == 0.0
     assert goal["theta_degrees"] == 0.0
     assert goal["local_frame"] is True
     # Point already inside the standoff: no travel, just turn to face it.
-    close = grounding.approach_goal(0.0, 0.2)
+    close = grounding.approach_goal(0.0, 0.2, 0.25)
     assert close["x"] == 0.0 and close["y"] == 0.0
     assert abs(close["theta_degrees"] - 90.0) < 1e-6
+
+
+def test_standoff_covers_the_reach_goal_tolerance_and_clearance():
+    # The gripper must not be able to occupy the pointed-at spot: standoff
+    # exceeds forward reach even after nav2 settles a goal-tolerance short.
+    assert grounding.standoff(0.327) > 0.327 + grounding.GOAL_XY_TOL_M
+    # No footprint feed (sim, node down) falls back to the worst-case reach —
+    # stopping early, never driving too far.
+    assert grounding.standoff(None) == grounding.standoff(grounding.FALLBACK_FRONT_M)
+    assert grounding.standoff(None) > grounding.standoff(0.25)
+
+
+def test_clear_floor_approaches_to_the_target_standoff():
+    # With a scan showing an empty corridor the robot gets close: the spot
+    # ends TARGET_STANDOFF_M from base_link, in the gripper's working range.
+    goal = grounding.approach_goal(2.0, 0.0, 0.25, obstacles=[], half_width=0.13)
+    assert abs(goal["x"] - (2.0 - grounding.TARGET_STANDOFF_M)) < 1e-6
+
+
+def test_wall_in_the_corridor_clamps_the_travel():
+    # A return at the spot: travel stops front + tolerance + clearance short
+    # of it, regardless of the closer target standoff.
+    wall = [(1.5, 0.0)]
+    goal = grounding.approach_goal(1.5, 0.0, 0.25, obstacles=wall, half_width=0.13)
+    expected = 1.5 - 0.25 - grounding.GOAL_XY_TOL_M - grounding.CLEARANCE_M
+    assert abs(goal["x"] - expected) < 1e-6
+
+
+def test_corridor_guard_ignores_self_hits_side_passes_and_behind():
+    # The arm crossing the scan plane, a chair leg beside the drive line, and
+    # returns behind the robot must not clamp the approach.
+    obstacles = [
+        (0.28, 0.0),  # inside front + SELF_HIT_PAD: the arm
+        (1.0, 0.5),  # lateral 0.5 > half_width + pad: passes beside
+        (-0.5, 0.0),  # behind
+    ]
+    goal = grounding.approach_goal(2.0, 0.0, 0.25, obstacles=obstacles, half_width=0.13)
+    assert abs(goal["x"] - (2.0 - grounding.TARGET_STANDOFF_M)) < 1e-6
+
+
+def test_no_scan_falls_back_to_the_blind_standoff():
+    # Lidar dead or stale: the guard can't see, so the conservative standoff
+    # applies — stopping early, never driving into an unseen wall.
+    goal = grounding.approach_goal(2.0, 0.0, 0.25, obstacles=None)
+    assert abs(goal["x"] - (2.0 - grounding.standoff(0.25))) < 1e-6
 
 
 # ---------- agent loop (fake node, no network) ----------
@@ -483,6 +528,7 @@ def agent_factory(monkeypatch):
             motion_peak=lambda: 0.0,
         )
         pose = SimpleNamespace(current_pose_xyt=lambda: None, is_mapfree=False)
+        footprint = SimpleNamespace(front_extent=lambda: 0.25, half_width=lambda: 0.13)
         spoken = []
         chat = SimpleNamespace(
             emit_system=lambda *a, **k: None,
@@ -498,6 +544,7 @@ def agent_factory(monkeypatch):
             config,
             camera=camera,
             pose_tracker=pose,
+            footprint=footprint,
             runner=SimpleNamespace(),
             roster=SimpleNamespace(active_skill_ids=lambda: []),
             chat=chat,

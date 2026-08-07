@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from brain_client.core.config import BrainConfig
     from brain_client.core.state import BrainState, RunningSkill
     from brain_client.perception.camera import CameraCapture
+    from brain_client.perception.footprint import FootprintTracker
     from brain_client.perception.gaze_control import GazeController
     from brain_client.perception.pose import Pose
     from brain_client.perception.pose_tracking import PoseTracker
@@ -80,6 +81,7 @@ class BrainAgent:
         *,
         camera: CameraCapture,
         pose_tracker: PoseTracker,
+        footprint: FootprintTracker,
         runner: PrimitiveRunner,
         roster: SkillRoster,
         chat: ChatManager,
@@ -93,11 +95,13 @@ class BrainAgent:
         self._config = config
         self._camera = camera
         self._pose = pose_tracker
+        self._footprint = footprint
         self._runner = runner
         self._roster = roster
         self._chat = chat
         self._gaze = gaze
         self._trace_sink = trace  # publishes one JSON string per event on /brain/trace
+        self._scan_health = scan_health  # also feeds the approach guard, not just health
         self._lidar = ScanHealthReporter(
             scan_health, pose_tracker, chat, self._logger, enabled=not config.simulator_mode
         )
@@ -527,15 +531,21 @@ class BrainAgent:
         )
         if floor is None:
             return "rejected — that point is at or above the horizon; point at the floor"
-        inputs = self._adjust_nav_goal(_NAV_TO_POSITION, grounding.approach_goal(*floor))
+        front = self._footprint.front_extent()
+        obstacles = self._scan_health.obstacle_points() if self._scan_health is not None else None
+        goal = grounding.approach_goal(*floor, front, obstacles=obstacles, half_width=self._footprint.half_width())
+        inputs = self._adjust_nav_goal(_NAV_TO_POSITION, goal)
+        distance = math.hypot(*floor)
+        remaining = distance - math.hypot(goal["x"], goal["y"])
         self._logger.info(
             f"[Brain] go_to_point_in_view ({v_norm:.0f},{u_norm:.0f}) -> floor ({floor[0]:.2f}, {floor[1]:.2f})m, "
             f"goal ({inputs['x']:.2f}, {inputs['y']:.2f}, {inputs['theta_degrees']:.0f}°) "
-            f"pitch={self._pitch_at_capture:.0f}°"
+            f"pitch={self._pitch_at_capture:.0f}° front={front if front is None else round(front, 3)} "
+            f"scan={'none' if obstacles is None else len(obstacles)}"
         )
         self._start_skill(_NAV_TO_POSITION, inputs)
         return (
-            f"driving to the floor point {math.hypot(*floor):.1f}m away (stopping ~{grounding.STANDOFF_M}m short) "
+            f"driving to the floor point {distance:.1f}m away (stopping ~{remaining:.1f}m short) "
             "— you will get an event when it finishes"
         )
 
