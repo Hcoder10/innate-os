@@ -36,7 +36,9 @@ _RAY_COUNT = 96
 # Paint this old no longer vouches for the scene: a stale area reads as
 # unpainted, so a revisit records anew — from whatever angle the robot happens
 # to look — while the old straight-on shot keeps its slot until eviction.
-PAINT_FRESH_SEC = 300.0
+# Must stay above selection's _REFRESH_AGE_SEC: an aligned dwell then renews
+# its stamp in place before its own paint expires, instead of minting twins.
+PAINT_FRESH_SEC = 20.0
 
 
 @dataclass(frozen=True)
