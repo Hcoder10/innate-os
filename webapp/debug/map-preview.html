@@ -1,0 +1,133 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- Copyright (c) 2026 Innate Inc -->
+<!-- Nav page preview — the whole navigation view (map widget, chips, legend,
+     maps roster, plots) rendered against synthetic data, no robot needed.
+     For iterating on map styling: serve the webapp directory
+     (`python3 -m http.server -d webapp 8123`) and open /debug/map-preview.html.
+     The rosClient singleton is stubbed before the page mounts, then a fake
+     apartment map, driving robot, plan, scan, costmap, and memories are fed
+     straight into the subscribers' callbacks. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>nav preview</title>
+  <link rel="stylesheet" href="/css/app.css" />
+  <style>
+    body { display: block; }
+    .preview-stage { position: fixed; inset: 0; }
+  </style>
+</head>
+<body>
+  <main class="stage preview-stage" id="stage"></main>
+  <script type="module">
+    import { ros } from "/js/rosClient.js";
+
+    // ---- stub the shared client before anything subscribes ------------------
+    const subs = new Map(); // topic -> Set<cb>
+    ros.subscribe = (topic, cb) => {
+      if (!subs.has(topic)) subs.set(topic, new Set());
+      subs.get(topic).add(cb);
+      return () => subs.get(topic)?.delete(cb);
+    };
+    const publish = (topic, msg) => {
+      for (const cb of subs.get(topic) ?? []) cb(msg);
+    };
+    ros.callService = async () => ({ success: true, message: "ok (stubbed)" });
+    ros.sendActionGoal = () => ({ promise: new Promise(() => {}) });
+    ros.connect = () => {};
+    ros.onStateChange = (cb) => {
+      cb("connected", "preview");
+      return () => {};
+    };
+
+    const { mount } = await import("/js/nav/main.js");
+    mount(document.getElementById("stage"));
+
+    // ?empty previews the waiting-for-map state: mount the page, feed nothing.
+    if (new URLSearchParams(location.search).has("empty")) throw new Error("preview: empty state, publishing skipped");
+
+    // ---- synthetic apartment grid: -1 unknown, 0 free, 100 wall -------------
+    const W = 260, H = 200, RES = 0.05, OX = -6, OY = -5;
+    const cells = new Int8Array(W * H).fill(-1);
+    const rect = (c0, r0, c1, r1, v) => {
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) cells[r * W + c] = v;
+    };
+    rect(20, 20, 240, 180, 0);                       // floor
+    rect(20, 20, 240, 22, 100); rect(20, 178, 240, 180, 100);   // outer walls
+    rect(20, 20, 22, 180, 100); rect(238, 20, 240, 180, 100);
+    rect(120, 20, 122, 100, 100); rect(120, 130, 122, 180, 100); // wall + door
+    rect(120, 100, 190, 102, 100); rect(214, 100, 240, 102, 100);
+    rect(60, 120, 80, 140, 100);                     // an island (sofa)
+    rect(170, 40, 185, 55, 100);                     // a table
+    const gridMsg = {
+      info: { width: W, height: H, resolution: RES, origin: { position: { x: OX, y: OY } } },
+      data: Array.from(cells),
+    };
+
+    // Costmap: walls lethal, one-cell ring inscribed, soft inflation beyond.
+    const cost = new Int8Array(W * H).fill(0);
+    for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
+      if (cells[r * W + c] !== 100) continue;
+      for (let dr = -6; dr <= 6; dr++) for (let dc = -6; dc <= 6; dc++) {
+        const rr = r + dr, cc = c + dc;
+        if (rr < 0 || rr >= H || cc < 0 || cc >= W || cells[rr * W + cc] !== 0) continue;
+        const d = Math.hypot(dr, dc);
+        const v = d <= 1.5 ? 100 : d <= 3 ? 99 : Math.max(0, Math.round(98 * (1 - (d - 3) / 4)));
+        const i = rr * W + cc;
+        if (v > cost[i]) cost[i] = v;
+      }
+    }
+    const costMsg = {
+      info: { width: W, height: H, resolution: RES, origin: { position: { x: OX, y: OY } } },
+      data: Array.from(cost),
+    };
+
+    const quat = (yaw) => ({ x: 0, y: 0, z: Math.sin(yaw / 2), w: Math.cos(yaw / 2) });
+    const odom = (x, y, yaw) => ({ pose: { pose: { position: { x, y }, orientation: quat(yaw) } } });
+
+    publish("/nav/current_mode", { data: "navigation" });
+    publish("/nav/current_map", { data: "apartment.yaml" });
+    publish("/nav/available_maps", { data: JSON.stringify({ available_maps: ["apartment.yaml", "office.yaml", "warehouse.yaml"] }) });
+    publish("/map", gridMsg);
+    publish("/navigation/global_costmap/costmap", costMsg);
+    publish("/brain/memory_positions", {
+      data: JSON.stringify({
+        map: "apartment", fingerprint: "f1", cache: "warm",
+        positions: [
+          { id: 1, x: -3.2, y: 2.4, theta: 0.7, stamp: Date.now() / 1000 - 300 },
+          { id: 2, x: 3.6, y: -2.2, theta: 2.6, stamp: Date.now() / 1000 - 5000 },
+        ],
+      }),
+    });
+
+    // Robot drives a slow loop; the goal + plan point at the far room.
+    const goal = { x: 4.1, y: 2.9, yaw: 0.9 };
+    publish("/nav/commanded_goal", {
+      header: { frame_id: "map" },
+      pose: { position: { x: goal.x, y: goal.y }, orientation: quat(goal.yaw) },
+    });
+    let t = 0;
+    setInterval(() => {
+      t += 0.05;
+      const x = -1.5 + Math.cos(t * 0.4) * 1.6;
+      const y = -0.5 + Math.sin(t * 0.4) * 1.2;
+      const yaw = t * 0.4 + Math.PI / 2;
+      publish("/odom", odom(x, y, yaw));
+      if (t < 0.1) publish("/amcl_pose", odom(x, y, yaw));
+      const pts = [];
+      for (let i = 0; i <= 24; i++) {
+        const u = i / 24;
+        pts.push({ pose: { position: { x: x + (goal.x - x) * u, y: y + (goal.y - y) * u + Math.sin(u * Math.PI) * 1.1 }, orientation: quat(goal.yaw) } });
+      }
+      publish("/navigation/plan", { poses: pts });
+      const ranges = [];
+      const n = 360;
+      for (let i = 0; i < n; i++) ranges.push(2.2 + Math.sin(i * 0.15 + t) * 0.5 + Math.random() * 0.05);
+      publish("/scan", { ranges, angle_min: -Math.PI, angle_increment: (2 * Math.PI) / n, range_min: 0.1, range_max: 8 });
+    }, 100);
+  </script>
+</body>
+</html>

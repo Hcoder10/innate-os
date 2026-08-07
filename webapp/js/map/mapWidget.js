@@ -47,6 +47,22 @@ export const MAP_COLORS = {
 // in costmap.yaml), so the dot covers what the robot covers at every zoom.
 const ROBOT_RADIUS_M = 0.18;
 
+// The mobile app's destination pin (CrosshairIcon) as a canvas path — the
+// goal marker here is the same mark "Go To" plants on the phone. Tip at
+// (12,22) of the 24×24 box; the hole is punched in the page background color.
+const PIN_PATH = new Path2D("M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z");
+const PIN_TIP_X = 12;
+const PIN_TIP_Y = 22;
+const PIN_HOLE_Y = 9;
+const PIN_HOLE_R = 2.5;
+const PIN_SCALE_CSS = 1.2; // 24-unit glyph → ~29 css px tall, screen-sized at any zoom
+
+// Occupancy colormap — dark like the rest of the app (and the mobile app's
+// map): explored floor is a dark slab, walls are bright, unknown stays
+// transparent so the dotted backdrop reads as "nowhere".
+const GRID_FREE_RGB = [21, 21, 26];
+const GRID_WALL_RGB = [223, 225, 234];
+
 // /localize scan-matches for up to ~30 s before answering.
 const LOCALIZE_TIMEOUT_MS = 40_000;
 
@@ -719,12 +735,12 @@ export function createMap(root, opts = {}) {
   /** @param {any} msg nav_msgs/OccupancyGrid */
   function onMap(msg) {
     const g = rasterizeGrid(msg, off, offCtx, (v, px, di) => {
-      // Unknown = translucent gray; occupancy shades white (free) → black (wall).
-      const shade = v < 0 ? 105 : 255 - Math.round((Math.max(0, Math.min(100, v)) / 100) * 255);
-      px[di] = shade;
-      px[di + 1] = shade;
-      px[di + 2] = shade;
-      px[di + 3] = v < 0 ? 200 : 255;
+      if (v < 0) return; // unknown stays transparent — the backdrop shows through
+      const t = Math.max(0, Math.min(100, v)) / 100;
+      px[di] = GRID_FREE_RGB[0] + Math.round((GRID_WALL_RGB[0] - GRID_FREE_RGB[0]) * t);
+      px[di + 1] = GRID_FREE_RGB[1] + Math.round((GRID_WALL_RGB[1] - GRID_FREE_RGB[1]) * t);
+      px[di + 2] = GRID_FREE_RGB[2] + Math.round((GRID_WALL_RGB[2] - GRID_FREE_RGB[2]) * t);
+      px[di + 3] = 255;
     });
     if (!g) return;
     grid = g;
@@ -840,16 +856,98 @@ export function createMap(root, opts = {}) {
     draw();
   }
 
+  // Faint dot lattice behind (and around) the grid — gives the void a surface
+  // so the dark map reads as a slab floating on it. Cached per dpr as a
+  // repeating pattern tile: one fillRect per frame, not thousands of arcs.
+  /** @type {CanvasPattern | null} */
+  let dotPattern = null;
+  let dotPatternDpr = 0;
+  function backdropPattern() {
+    const d = dpr();
+    if (dotPattern && dotPatternDpr === d) return dotPattern;
+    const tile = document.createElement("canvas");
+    const step = Math.max(8, Math.round(22 * d));
+    tile.width = step;
+    tile.height = step;
+    const tctx = tile.getContext("2d");
+    if (!tctx || !ctx) return null;
+    tctx.fillStyle = "rgb(255 255 255 / 5%)";
+    tctx.beginPath();
+    tctx.arc(step / 2, step / 2, Math.max(1, 0.8 * d), 0, Math.PI * 2);
+    tctx.fill();
+    dotPattern = ctx.createPattern(tile, "repeat");
+    dotPatternDpr = d;
+    return dotPattern;
+  }
+
+  /** The mobile app's destination pin, tip anchored at (px, py).
+   * @param {number} px @param {number} py @param {string} color @param {number} [alpha] */
+  function drawPin(px, py, color, alpha = 1) {
+    if (!ctx) return;
+    const s = PIN_SCALE_CSS * dpr();
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(px - PIN_TIP_X * s, py - PIN_TIP_Y * s);
+    ctx.scale(s, s);
+    ctx.strokeStyle = "rgb(10 10 12 / 55%)"; // seats the pin on bright walls
+    ctx.lineWidth = 1.5 / s;
+    ctx.stroke(PIN_PATH);
+    ctx.fillStyle = color;
+    ctx.fill(PIN_PATH);
+    ctx.fillStyle = "#0a0a0c";
+    ctx.beginPath();
+    ctx.arc(PIN_TIP_X, PIN_HOLE_Y, PIN_HOLE_R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** A short heading arrow out of (px, py) — shaft plus a filled tip.
+   * @param {number} px @param {number} py @param {number} yaw @param {string} color */
+  function drawHeading(px, py, yaw, color) {
+    if (!ctx) return;
+    const d = dpr();
+    const cos = Math.cos(yaw);
+    const sin = Math.sin(yaw);
+    const from = 8 * d;
+    const to = 22 * d;
+    const tipX = px + cos * to;
+    const tipY = py - sin * to;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2 * d;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(px + cos * from, py - sin * from);
+    ctx.lineTo(tipX, tipY);
+    ctx.stroke();
+    const w = 3.5 * d;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(px + cos * (to + 5 * d), py - sin * (to + 5 * d));
+    ctx.lineTo(tipX + Math.cos(yaw + Math.PI / 2) * w, tipY - Math.sin(yaw + Math.PI / 2) * w);
+    ctx.lineTo(tipX + Math.cos(yaw - Math.PI / 2) * w, tipY - Math.sin(yaw - Math.PI / 2) * w);
+    ctx.closePath();
+    ctx.fill();
+  }
+
   function draw() {
     if (!ctx) return;
     ctx.fillStyle = "#0a0a0c";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const pat = backdropPattern();
+    if (pat) {
+      ctx.fillStyle = pat;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
 
     if (!grid) {
+      const d = dpr();
+      const cx = canvas.width / 2;
+      const cy = canvas.height / 2;
+      drawPin(cx, cy + 4 * d, "rgb(138 138 147 / 55%)");
       ctx.fillStyle = "#8a8a93";
-      ctx.font = `${14 * dpr()}px ui-monospace, monospace`;
+      ctx.font = `${13 * d}px ui-monospace, monospace`;
       ctx.textAlign = "center";
-      ctx.fillText("waiting for /map…", canvas.width / 2, canvas.height / 2);
+      ctx.fillText("waiting for /map…", cx, cy + 26 * d);
       return;
     }
 
@@ -864,6 +962,12 @@ export function createMap(root, opts = {}) {
       // Fit-the-whole-grid scale (no zoom set, or before the first pose).
       const pad = 16 * dpr();
       scale = Math.min((canvas.width - 2 * pad) / grid.width, (canvas.height - 2 * pad) / grid.height);
+    }
+    if (scale <= 0) {
+      // Degenerate container (mid-layout, collapsed PiP host): nothing fits,
+      // and a negative scale poisons every radius downstream (IndexSizeError).
+      view = null;
+      return;
     }
     if (center) {
       const col = (center.x - grid.originX) / grid.resolution;
@@ -922,6 +1026,7 @@ export function createMap(root, opts = {}) {
       ctx.strokeStyle = MAP_COLORS.trail;
       ctx.lineWidth = 1.5 * dpr();
       ctx.lineJoin = "round";
+      ctx.lineCap = "round";
       ctx.beginPath();
       trail.forEach((p, i) => {
         const { px, py } = worldToCanvas(p.x, p.y);
@@ -932,16 +1037,21 @@ export function createMap(root, opts = {}) {
     }
 
     if (plan && plan.length >= 2) {
-      ctx.strokeStyle = MAP_COLORS.route;
-      ctx.lineWidth = 2 * dpr();
-      ctx.lineJoin = "round";
-      ctx.beginPath();
+      const path = new Path2D();
       plan.forEach((p, i) => {
         const { px, py } = worldToCanvas(p.x, p.y);
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
+        if (i === 0) path.moveTo(px, py);
+        else path.lineTo(px, py);
       });
-      ctx.stroke();
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      // A soft underglow beneath the crisp line — the route reads as lit.
+      ctx.strokeStyle = withAlpha(MAP_COLORS.route, 0.22);
+      ctx.lineWidth = 6 * dpr();
+      ctx.stroke(path);
+      ctx.strokeStyle = MAP_COLORS.route;
+      ctx.lineWidth = 2 * dpr();
+      ctx.stroke(path);
     }
 
     // Laser scan, projected from the composed robot pose + the static laser
@@ -966,38 +1076,40 @@ export function createMap(root, opts = {}) {
 
     drawMemorySearch();
 
-    // Ghost dot under the cursor while manual/goto is armed, until the press
-    // starts the real drag.
+    // Ghost under the cursor while manual/goto is armed, until the press
+    // starts the real drag: a translucent pin (goto) or robot dot (manual).
     if (hoverPt && !goalDrag && (ui === "manual" || ui === "goto")) {
       const { px, py } = worldToCanvas(hoverPt.x, hoverPt.y);
-      const r = Math.max(4, 6 * dpr());
-      ctx.globalAlpha = 0.45;
-      ctx.fillStyle = ui === "manual" ? MAP_COLORS.robot : MAP_COLORS.goal;
-      ctx.beginPath();
-      ctx.arc(px, py, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
+      if (ui === "goto") {
+        drawPin(px, py, MAP_COLORS.goal, 0.5);
+      } else {
+        const r = Math.max(4, 6 * dpr());
+        ctx.globalAlpha = 0.45;
+        ctx.fillStyle = MAP_COLORS.robot;
+        ctx.beginPath();
+        ctx.arc(px, py, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
     }
 
-    // Goal dot + heading arrow; a manual-locate drag places the robot, not a
-    // goal — draw it in the robot's color.
+    // The goal: the mobile app's destination pin plus a heading arrow. A
+    // manual-locate drag places the robot, not a goal — that one stays a dot
+    // in the robot's color.
     const goalAt = goalDrag ? { x: goalDrag.start.x, y: goalDrag.start.y } : goalMarker;
     if (goalAt) {
-      const color = goalDrag && ui === "manual" ? MAP_COLORS.robot : MAP_COLORS.goal;
       const { px, py } = worldToCanvas(goalAt.x, goalAt.y);
-      const r = Math.max(4, 6 * dpr());
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(px, py, r, 0, Math.PI * 2);
-      ctx.fill();
       const yaw = goalDrag ? Math.atan2(goalDrag.cur.y - goalDrag.start.y, goalDrag.cur.x - goalDrag.start.x) : goalMarker?.yaw;
-      if (typeof yaw === "number") {
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 2 * dpr();
+      if (goalDrag && ui === "manual") {
+        const r = Math.max(4, 6 * dpr());
+        ctx.fillStyle = MAP_COLORS.robot;
         ctx.beginPath();
-        ctx.moveTo(px, py);
-        ctx.lineTo(px + Math.cos(yaw) * r * 2.4, py - Math.sin(yaw) * r * 2.4);
-        ctx.stroke();
+        ctx.arc(px, py, r, 0, Math.PI * 2);
+        ctx.fill();
+        if (typeof yaw === "number") drawHeading(px, py, yaw, MAP_COLORS.robot);
+      } else {
+        if (typeof yaw === "number") drawHeading(px, py, yaw, MAP_COLORS.goal);
+        drawPin(px, py, MAP_COLORS.goal);
       }
     }
 
@@ -1006,15 +1118,32 @@ export function createMap(root, opts = {}) {
       // World-sized, not screen-sized: the dot covers the same floor area at
       // every zoom (scale is px per map cell). Floored so it never vanishes.
       const rad = Math.max(3 * dpr(), (ROBOT_RADIUS_M / grid.resolution) * scale);
+      const d = dpr();
+      const glow = ctx.createRadialGradient(px, py, rad * 0.4, px, py, rad * 3);
+      glow.addColorStop(0, withAlpha(MAP_COLORS.robot, 0.28));
+      glow.addColorStop(1, withAlpha(MAP_COLORS.robot, 0));
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(px, py, rad * 3, 0, Math.PI * 2);
+      ctx.fill();
+      // Heading wedge under the dot — a filled pointer, not a bare line.
+      const tipX = px + Math.cos(pose.yaw) * rad * 2.3;
+      const tipY = py - Math.sin(pose.yaw) * rad * 2.3;
+      const w = Math.max(2 * d, rad * 0.55);
       ctx.fillStyle = MAP_COLORS.robot;
+      ctx.beginPath();
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(px + Math.cos(pose.yaw + Math.PI / 2) * w, py - Math.sin(pose.yaw + Math.PI / 2) * w);
+      ctx.lineTo(px + Math.cos(pose.yaw - Math.PI / 2) * w, py - Math.sin(pose.yaw - Math.PI / 2) * w);
+      ctx.closePath();
+      ctx.fill();
       ctx.beginPath();
       ctx.arc(px, py, rad, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = MAP_COLORS.robot;
-      ctx.lineWidth = 2 * dpr();
+      ctx.strokeStyle = "rgb(255 255 255 / 92%)";
+      ctx.lineWidth = Math.max(1, 1.2 * d);
       ctx.beginPath();
-      ctx.moveTo(px, py);
-      ctx.lineTo(px + Math.cos(pose.yaw) * rad * 2.4, py - Math.sin(pose.yaw) * rad * 2.4);
+      ctx.arc(px, py, rad, 0, Math.PI * 2);
       ctx.stroke();
     }
 

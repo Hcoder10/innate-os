@@ -429,6 +429,7 @@ select.skill-input {
   border-radius: 10px;
   background: var(--ctl-glass);
   box-shadow: var(--ctl-sheen);
+  backdrop-filter: blur(6px);
   color: var(--text);
   text-align: left;
   transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
@@ -437,6 +438,10 @@ select.skill-input {
 .map-btn:hover:not(:disabled) {
   border-color: var(--ctl-edge-accent);
   background: var(--ctl-glass-hover);
+}
+
+.map-btn:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .map-btn:disabled {
@@ -457,6 +462,16 @@ select.skill-input {
   height: 24px;
   border: 1px solid var(--hairline-strong);
   border-radius: 50%;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.map-btn:hover:not(:disabled) .map-btn-icon {
+  border-color: var(--ctl-edge-accent);
+}
+
+.map-btn.is-active .map-btn-icon {
+  border-color: var(--ctl-edge-accent-hover);
+  background: var(--accent-faint);
 }
 
 .map-btn-icon svg {
@@ -493,8 +508,10 @@ select.skill-input {
 .map-status {
   max-width: 340px;
   padding: 4px 10px;
+  border: 1px solid var(--hairline);
   border-radius: 8px;
-  background: rgba(10, 10, 12, 0.7);
+  background: var(--ctl-glass);
+  backdrop-filter: blur(6px);
   font-size: 12px;
   line-height: 1.4;
   color: var(--muted);
@@ -2287,6 +2304,20 @@ select.skill-input {
   margin: 0;
   font-size: 19px;
   font-weight: 600;
+}
+
+/* Title with a leading identity glyph (Nav wears the mobile app's map pin). */
+.page-title-iconed {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.page-title-iconed svg {
+  flex: none;
+  width: 19px;
+  height: 19px;
+  color: var(--muted);
 }
 
 .log-main {
@@ -6523,14 +6554,57 @@ select.skill-input {
   bottom: 12px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
+  gap: 5px;
+  padding: 9px 12px;
   font-size: 11px;
   color: var(--muted);
-  background: rgb(10 10 12 / 72%);
+  background: var(--ctl-glass);
+  backdrop-filter: blur(6px);
   border: 1px solid var(--hairline);
-  border-radius: 8px;
+  border-radius: 10px;
   pointer-events: none;
+}
+
+/* Current-map pill (bottom-left) — the mobile app's map-name pill, same
+   glyph; the pin lights amber only while a map is actually loaded. */
+.map-name-pill {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(46%, 260px);
+  padding: 5px 12px 5px 10px;
+  font-size: 11px;
+  color: var(--ctl-text);
+  background: var(--ctl-glass);
+  box-shadow: var(--ctl-sheen);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.map-name-pill svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: var(--ctl-accent);
+}
+
+.map-name-pill span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-name-pill.is-empty {
+  color: var(--ctl-text-off);
+}
+
+.map-name-pill.is-empty svg {
+  color: var(--ctl-text-off);
 }
 
 .legend-row {
@@ -6628,6 +6702,11 @@ select.skill-input {
   color: var(--accent);
   border: 1px solid var(--accent-dim);
   border-radius: 999px;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.maps-new:hover:not(:disabled) {
+  background: var(--accent-faint);
 }
 
 .maps-new:disabled {
@@ -6654,6 +6733,7 @@ select.skill-input {
   padding: 5px 6px;
   border-radius: 6px;
   text-align: left;
+  transition: background 120ms ease;
 }
 
 .maps-pick:hover:not(:disabled) {
@@ -6695,8 +6775,9 @@ select.skill-input {
   color: var(--muted);
   text-align: center;
   background: rgb(10 10 12 / 92%);
-  border: 1px solid var(--hairline);
-  border-radius: 8px;
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
   pointer-events: none;
 }
 
@@ -6955,9 +7036,15 @@ select.skill-input {
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
 
+.layer-chip:not(.is-on):hover:not(:disabled) {
+  color: var(--text);
+  border-color: rgb(255 255 255 / 26%);
+}
+
 .layer-chip.is-on {
   color: var(--ctl-accent);
   border-color: var(--ctl-edge-accent);
+  background: linear-gradient(var(--accent-faint), var(--accent-faint)), var(--ctl-glass);
 }
 
 /* Momentary action chip (never .is-on) — reads as a button, not a toggle. */
