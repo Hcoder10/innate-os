@@ -347,7 +347,12 @@ Add update notifications to your shell prompt:
 echo 'source ~/innate-os/scripts/ssh_welcome.zsh' >> ~/.zshrc
 ```
 
-This shows a notification on login if updates are available.
+This shows a notification on login if updates are available, and drops interactive
+SSH logins into `~/innate-os`. To opt out of the `cd`:
+
+```bash
+echo 'INNATE_SSH_CD=0' >> ~/.zshenv
+```
 
 ---
 
