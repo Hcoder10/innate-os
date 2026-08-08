@@ -160,6 +160,11 @@ export const ROBOT_INFO_TOPIC = "/robot/info";
 // mobile app's volume slider calls; current value rides on /robot/info.
 export const SET_VOLUME_SERVICE = "/set_volume";
 
+// Power off the Jetson (mars_msgs/srv/Shutdown): request {delay_seconds},
+// response {success, message}. mars_control runs `sudo shutdown` — the same
+// service the mobile app's power-off calls.
+export const SHUTDOWN_SERVICE = "/shutdown";
+
 // WebRTC signaling over rosbridge. START is a std_msgs/String JSON payload that
 // carries our client_id: {"source":"live","audio":bool,"client_id":"...","video":[...]}.
 // The robot routes offer/answer/ICE on the *_id topics, each enveloped as {client_id, ...}
