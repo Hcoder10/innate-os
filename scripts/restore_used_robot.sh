@@ -1,6 +1,6 @@
 #!/bin/bash
 # Restore this robot to the "used robot" snapshot captured on this branch
-# (sim/used-robot-fixture). One command:
+# (fixtures/used-robot-2026-08-08). One command:
 #
 #     ./scripts/restore_used_robot.sh
 #
@@ -18,11 +18,11 @@
 #      blobs.manifest.tsv (sha256 too with VERIFY=1).
 #   4. Restarts ros-app.service and prints a verification summary.
 #
-# See sim/used-robot-fixture/README.md for what the snapshot contains.
+# See fixtures/used-robot-2026-08-08/README.md for what the snapshot contains.
 set -euo pipefail
 
 REPO="${INNATE_OS_ROOT:-/home/jetson1/innate-os}"
-FIX="$REPO/sim/used-robot-fixture"
+FIX="$REPO/fixtures/used-robot-2026-08-08"
 # The release this snapshot was taken on; the branch is this tag plus the fixture.
 FIXTURE_BASE_TAG=0.6.0
 
@@ -30,7 +30,7 @@ BUILD=1
 for arg in "$@"; do
     case "$arg" in
         --state-only) BUILD=0 ;;
-        -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
         *) echo "Unknown argument: $arg (use --state-only or --help)" >&2; exit 1 ;;
     esac
 done
@@ -44,7 +44,7 @@ fi
 MANIFEST="$FIX/blobs.manifest.tsv"
 
 [ "$(id -u)" -eq 0 ] && { echo "Run as the robot user, not root." >&2; exit 1; }
-[ -d "$FIX/state" ] || { echo "Fixture not found at $FIX — are you on the sim-used-robot-* branch?" >&2; exit 1; }
+[ -d "$FIX/state" ] || { echo "Fixture not found at $FIX — are you on the fixture-used-robot-* branch?" >&2; exit 1; }
 
 echo "== Restoring used-robot snapshot from $FIX"
 
@@ -55,7 +55,7 @@ described=$(git -C "$REPO" describe --tags 2>/dev/null || echo "unknown")
 case "$described" in
     "$FIXTURE_BASE_TAG"*) ;;
     *) echo "WARNING: checkout describes as '$described', expected ${FIXTURE_BASE_TAG}-based." >&2
-       echo "         Are you on the sim-used-robot-* branch? Continuing anyway." >&2 ;;
+       echo "         Are you on the fixture-used-robot-* branch? Continuing anyway." >&2 ;;
 esac
 
 # --- 0. bring the OS to this release: apt dependencies + workspace rebuild ---

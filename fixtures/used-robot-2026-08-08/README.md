@@ -62,7 +62,7 @@ bucket `https://storage.googleapis.com/innate-robot-fixtures/used-robot-2026-08-
 with `BLOB_SOURCE=<dir-or-url>`. So on any robot the whole flow is just:
 
 ```bash
-git checkout sim-used-robot-2026-08-08 && ./scripts/restore_used_robot.sh
+git checkout fixture-used-robot-2026-08-08 && ./scripts/restore_used_robot.sh
 ```
 
 The TRT engine blob is machine-specific; if it is missing or mismatched the
