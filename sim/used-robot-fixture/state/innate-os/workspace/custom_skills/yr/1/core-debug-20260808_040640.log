@@ -1,0 +1,15 @@
+{"time":"2026-08-08T04:06:40.038111001Z","level":"INFO","msg":"main: starting server","port-filename":"/tmp/tmp1uyfaqrl/port-1765.txt","pid":1765,"log-level":0,"disable-analytics":false,"shutdown-on-parent-exit":false}
+{"time":"2026-08-08T04:06:40.041358117Z","level":"INFO","msg":"Will exit if parent process dies.","ppid":1765}
+{"time":"2026-08-08T04:06:40.041331281Z","level":"INFO","msg":"server is running","addr":{"IP":"127.0.0.1","Port":35923,"Zone":""}}
+{"time":"2026-08-08T04:06:40.159152807Z","level":"INFO","msg":"connection: ManageConnectionData: new connection created","id":"127.0.0.1:57860"}
+{"time":"2026-08-08T04:06:40.404956559Z","level":"INFO","msg":"handleInformInit: received","streamId":"rpwbkchr","id":"127.0.0.1:57860"}
+{"time":"2026-08-08T04:06:40.540460851Z","level":"INFO","msg":"handleInformInit: stream started","streamId":"rpwbkchr","id":"127.0.0.1:57860"}
+{"time":"2026-08-08T04:15:17.734717528Z","level":"INFO","msg":"handleInformFinish: finish message received","streamId":"rpwbkchr","id":"127.0.0.1:57860"}
+{"time":"2026-08-08T04:15:17.735143551Z","level":"INFO","msg":"handleInformFinish: stream closed","streamId":"rpwbkchr","id":"127.0.0.1:57860"}
+{"time":"2026-08-08T04:15:19.464226973Z","level":"INFO","msg":"handleInformTeardown: server teardown initiated","id":"127.0.0.1:57860"}
+{"time":"2026-08-08T04:15:19.464293286Z","level":"INFO","msg":"handleInformTeardown: server shutdown complete","id":"127.0.0.1:57860"}
+{"time":"2026-08-08T04:15:19.464312233Z","level":"INFO","msg":"server is shutting down"}
+{"time":"2026-08-08T04:15:19.464360673Z","level":"INFO","msg":"connection: closing","id":"127.0.0.1:57860"}
+{"time":"2026-08-08T04:15:19.464605417Z","level":"INFO","msg":"connection: closed successfully","id":"127.0.0.1:57860"}
+{"time":"2026-08-08T04:15:19.464665207Z","level":"INFO","msg":"connection: ManageConnectionData: connection closed","id":"127.0.0.1:57860"}
+{"time":"2026-08-08T04:15:19.464689143Z","level":"INFO","msg":"server is closed"}

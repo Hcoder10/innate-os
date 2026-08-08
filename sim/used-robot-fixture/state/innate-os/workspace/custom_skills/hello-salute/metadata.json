@@ -1,0 +1,29 @@
+{
+    "name": "Hello Salute",
+    "type": "replay",
+    "guidelines": "Perform a friendly salute with the arm to greet a person. Use when meeting someone or saying goodbye. The robot base stays in place.",
+    "guidelines_when_running": "",
+    "inputs": {},
+    "wheeled": false,
+    "execution": {
+        "model_type": "replay",
+        "replay_file": "episode_0.h5",
+        "replay_frequency": 30.0,
+        "start_pose": [
+            1.4373399982488457,
+            -0.3098641191528995,
+            1.303883669702795,
+            -0.34514567727426926,
+            0.4356505437595221,
+            -0.0260776733940559
+        ],
+        "end_pose": [
+            1.4373399982488457,
+            -0.3098641191528995,
+            1.303883669702795,
+            -0.34514567727426926,
+            0.4356505437595221,
+            -0.0260776733940559
+        ]
+    }
+}

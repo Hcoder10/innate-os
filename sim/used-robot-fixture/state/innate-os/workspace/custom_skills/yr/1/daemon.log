@@ -1,0 +1,104 @@
+2026-08-08 04:05:27 [INFO] training_daemon.main: Daemon log file: /training/daemon.log
+2026-08-08 04:05:27 [INFO] training_daemon.src.log_watcher: LogWatcher started
+2026-08-08 04:05:27 [INFO] training_daemon.src.heartbeat: Heartbeat started (heartbeat=30s, progress=5s)
+2026-08-08 04:05:27 [INFO] training_daemon.src.log_server: LogServer listening on :8888
+2026-08-08 04:05:27 [INFO] training_daemon.src.state: State installing-bash → loading-job
+2026-08-08 04:05:27 [INFO] training_daemon.src.job: Fetching job spec from URL
+2026-08-08 04:05:27 [INFO] training_daemon.src.job: Loaded job d5005351-2815-4dfc-9561-99f4e4c4d3b3/1 (repo=innate-inc/ACT, ref=main)
+2026-08-08 04:05:27 [INFO] training_daemon.src.compression: Auto-detected 128 CPU cores for compression
+2026-08-08 04:05:27 [INFO] training_daemon.src.state: State loading-job → downloading-data
+2026-08-08 04:05:27 [INFO] training_daemon.src.github_client: Downloading innate-inc/ACT@main from GitHub API
+2026-08-08 04:05:28 [INFO] training_daemon.src.s3_client: Downloaded dataset_metadata.json.lock (0 bytes)
+2026-08-08 04:05:28 [INFO] training_daemon.src.s3_client: Downloaded dataset_metadata.json (2611 bytes)
+2026-08-08 04:05:28 [INFO] training_daemon.src.s3_client: Downloaded episode_0.h5 (46728 bytes)
+2026-08-08 04:05:28 [INFO] training_daemon.src.s3_client: Downloaded episode_2_camera_2.mp4 (213089 bytes)
+2026-08-08 04:05:28 [INFO] training_daemon.src.s3_client: Downloaded episode_3.h5 (46728 bytes)
+2026-08-08 04:05:28 [INFO] training_daemon.src.s3_client: Downloaded episode_1_camera_2.mp4 (825404 bytes)
+2026-08-08 04:05:28 [INFO] training_daemon.src.s3_client: Downloaded episode_2_camera_1.mp4 (224044 bytes)
+2026-08-08 04:05:28 [INFO] training_daemon.src.s3_client: Downloaded episode_1.h5 (46728 bytes)
+2026-08-08 04:05:28 [INFO] training_daemon.src.s3_client: Downloaded episode_4.h5 (28008 bytes)
+2026-08-08 04:05:28 [INFO] training_daemon.src.s3_client: Downloaded episode_2.h5 (28008 bytes)
+2026-08-08 04:05:28 [INFO] training_daemon.src.s3_client: Downloaded episode_0_camera_2.mp4 (836360 bytes)
+2026-08-08 04:05:28 [INFO] training_daemon.src.s3_client: Downloaded episode_0_camera_1.mp4 (888683 bytes)
+2026-08-08 04:05:28 [INFO] training_daemon.src.s3_client: Downloaded episode_1_camera_1.mp4 (876581 bytes)
+2026-08-08 04:05:28 [INFO] training_daemon.src.s3_client: Downloaded episode_3_camera_1.mp4 (937999 bytes)
+2026-08-08 04:05:28 [INFO] training_daemon.src.s3_client: Downloaded episode_3_camera_2.mp4 (934021 bytes)
+2026-08-08 04:05:28 [INFO] training_daemon.src.s3_client: Downloaded episode_4_camera_2.mp4 (195641 bytes)
+2026-08-08 04:05:28 [INFO] training_daemon.src.s3_client: Downloaded episode_4_camera_1.mp4 (192769 bytes)
+2026-08-08 04:05:29 [INFO] training_daemon.src.s3_client: Downloaded episode_5.h5 (28008 bytes)
+2026-08-08 04:05:29 [INFO] training_daemon.src.s3_client: Downloaded episode_5_camera_1.mp4 (205718 bytes)
+2026-08-08 04:05:29 [INFO] training_daemon.src.s3_client: Downloaded episode_6.h5 (28008 bytes)
+2026-08-08 04:05:29 [INFO] training_daemon.src.s3_client: Downloaded episode_5_camera_2.mp4 (202529 bytes)
+2026-08-08 04:05:29 [INFO] training_daemon.src.s3_client: Downloaded episode_6_camera_1.mp4 (206394 bytes)
+2026-08-08 04:05:29 [INFO] training_daemon.src.s3_client: Downloaded episode_6_camera_2.mp4 (190986 bytes)
+2026-08-08 04:05:29 [INFO] training_daemon.src.github_client: Extracted repo to /training/project
+2026-08-08 04:05:29 [INFO] training_daemon.src.state: State downloading-data → running
+2026-08-08 04:05:29 [INFO] training_daemon.src.process_manager: Starting process: /training/project/cloud_run.sh
+2026-08-08 04:06:45 [INFO] training_daemon.src.heartbeat: W&B run URL captured: https://wandb.ai/vignesh-anand/act-simple/runs/rpwbkchr
+2026-08-08 04:15:21 [INFO] training_daemon.src.process_manager: Process exited with code 0
+2026-08-08 04:15:21 [INFO] training_daemon.src.state: State running → uploading-results
+2026-08-08 04:15:21 [INFO] training_daemon.src.asset_uploader: Uploading 23 asset files
+2026-08-08 04:15:21 [INFO] training_daemon.src.compression: Compressing /training/project/wandb/run-20260808_040640-rpwbkchr/logs/debug-internal.log → /training/project/wandb/run-20260808_040640-rpwbkchr/logs/debug-internal.log.zst
+2026-08-08 04:15:22 [INFO] training_daemon.src.s3_client: Uploaded debug-internal.log.zst (606 bytes)
+2026-08-08 04:15:22 [INFO] training_daemon.src.asset_uploader: Uploaded [1/23] project/wandb/run-20260808_040640-rpwbkchr/logs/debug-internal.log
+2026-08-08 04:15:22 [INFO] training_daemon.src.compression: Compressing /training/project/wandb/run-20260808_040640-rpwbkchr/logs/debug.log → /training/project/wandb/run-20260808_040640-rpwbkchr/logs/debug.log.zst
+2026-08-08 04:15:22 [INFO] training_daemon.src.s3_client: Uploaded debug.log.zst (1497 bytes)
+2026-08-08 04:15:22 [INFO] training_daemon.src.asset_uploader: Uploaded [2/23] project/wandb/run-20260808_040640-rpwbkchr/logs/debug.log
+2026-08-08 04:15:22 [INFO] training_daemon.src.compression: Compressing /training/project/wandb/run-20260808_040640-rpwbkchr/files/config.yaml → /training/project/wandb/run-20260808_040640-rpwbkchr/files/config.yaml.zst
+2026-08-08 04:15:23 [INFO] training_daemon.src.s3_client: Uploaded config.yaml.zst (679 bytes)
+2026-08-08 04:15:23 [INFO] training_daemon.src.asset_uploader: Uploaded [3/23] project/wandb/run-20260808_040640-rpwbkchr/files/config.yaml
+2026-08-08 04:15:23 [INFO] training_daemon.src.compression: Compressing /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_final.onnx → /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_final.onnx.zst
+2026-08-08 04:15:25 [INFO] training_daemon.src.s3_client: Uploaded act_policy_final.onnx.zst (185956131 bytes)
+2026-08-08 04:15:25 [INFO] training_daemon.src.asset_uploader: Uploaded [4/23] data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_final.onnx
+2026-08-08 04:15:25 [INFO] training_daemon.src.compression: Compressing /training/project/wandb/run-20260808_040640-rpwbkchr/files/output.log → /training/project/wandb/run-20260808_040640-rpwbkchr/files/output.log.zst
+2026-08-08 04:15:26 [INFO] training_daemon.src.s3_client: Uploaded output.log.zst (3118 bytes)
+2026-08-08 04:15:26 [INFO] training_daemon.src.asset_uploader: Uploaded [5/23] project/wandb/run-20260808_040640-rpwbkchr/files/output.log
+2026-08-08 04:15:26 [INFO] training_daemon.src.compression: Compressing /training/project/wandb/run-20260808_040640-rpwbkchr/files/requirements.txt → /training/project/wandb/run-20260808_040640-rpwbkchr/files/requirements.txt.zst
+2026-08-08 04:15:26 [INFO] training_daemon.src.s3_client: Uploaded requirements.txt.zst (920 bytes)
+2026-08-08 04:15:26 [INFO] training_daemon.src.asset_uploader: Uploaded [6/23] project/wandb/run-20260808_040640-rpwbkchr/files/requirements.txt
+2026-08-08 04:15:26 [INFO] training_daemon.src.compression: Compressing /training/project/wandb/run-20260808_040640-rpwbkchr/files/wandb-metadata.json → /training/project/wandb/run-20260808_040640-rpwbkchr/files/wandb-metadata.json.zst
+2026-08-08 04:15:27 [INFO] training_daemon.src.s3_client: Uploaded wandb-metadata.json.zst (608 bytes)
+2026-08-08 04:15:27 [INFO] training_daemon.src.asset_uploader: Uploaded [7/23] project/wandb/run-20260808_040640-rpwbkchr/files/wandb-metadata.json
+2026-08-08 04:15:27 [INFO] training_daemon.src.compression: Compressing /training/project/wandb/run-20260808_040640-rpwbkchr/files/wandb-summary.json → /training/project/wandb/run-20260808_040640-rpwbkchr/files/wandb-summary.json.zst
+2026-08-08 04:15:28 [INFO] training_daemon.src.s3_client: Uploaded wandb-summary.json.zst (283416 bytes)
+2026-08-08 04:15:28 [INFO] training_daemon.src.asset_uploader: Uploaded [8/23] project/wandb/run-20260808_040640-rpwbkchr/files/wandb-summary.json
+2026-08-08 04:15:28 [INFO] training_daemon.src.compression: Compressing /root/.cache/wandb/logs/core-debug-20260808_040640.log → /root/.cache/wandb/logs/core-debug-20260808_040640.log.zst
+2026-08-08 04:15:28 [INFO] training_daemon.src.s3_client: Uploaded core-debug-20260808_040640.log.zst (597 bytes)
+2026-08-08 04:15:28 [INFO] training_daemon.src.asset_uploader: Uploaded [9/23] core-debug-20260808_040640.log
+2026-08-08 04:15:28 [INFO] training_daemon.src.compression: Compressing /training/project/wandb/run-20260808_040640-rpwbkchr/run-rpwbkchr.wandb → /training/project/wandb/run-20260808_040640-rpwbkchr/run-rpwbkchr.wandb.zst
+2026-08-08 04:15:29 [INFO] training_daemon.src.s3_client: Uploaded run-rpwbkchr.wandb.zst (4026508 bytes)
+2026-08-08 04:15:29 [INFO] training_daemon.src.asset_uploader: Uploaded [10/23] project/wandb/run-20260808_040640-rpwbkchr/run-rpwbkchr.wandb
+2026-08-08 04:15:29 [INFO] training_daemon.src.compression: Compressing /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_1080.pth → /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_1080.pth.zst
+2026-08-08 04:15:32 [INFO] training_daemon.src.s3_client: Uploaded act_policy_step_1080.pth.zst (250127748 bytes)
+2026-08-08 04:15:32 [INFO] training_daemon.src.asset_uploader: Uploaded [11/23] data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_1080.pth
+2026-08-08 04:15:32 [INFO] training_daemon.src.compression: Compressing /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_120.pth → /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_120.pth.zst
+2026-08-08 04:15:34 [INFO] training_daemon.src.s3_client: Uploaded act_policy_step_120.pth.zst (250104068 bytes)
+2026-08-08 04:15:34 [INFO] training_daemon.src.asset_uploader: Uploaded [12/23] data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_120.pth
+2026-08-08 04:15:34 [INFO] training_daemon.src.compression: Compressing /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_1200.pth → /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_1200.pth.zst
+2026-08-08 04:15:37 [INFO] training_daemon.src.s3_client: Uploaded act_policy_step_1200.pth.zst (250129183 bytes)
+2026-08-08 04:15:37 [INFO] training_daemon.src.asset_uploader: Uploaded [13/23] data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_1200.pth
+2026-08-08 04:15:37 [INFO] training_daemon.src.compression: Compressing /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_240.pth → /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_240.pth.zst
+2026-08-08 04:15:40 [INFO] training_daemon.src.s3_client: Uploaded act_policy_step_240.pth.zst (250113991 bytes)
+2026-08-08 04:15:40 [INFO] training_daemon.src.asset_uploader: Uploaded [14/23] data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_240.pth
+2026-08-08 04:15:40 [INFO] training_daemon.src.compression: Compressing /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_360.pth → /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_360.pth.zst
+2026-08-08 04:15:44 [INFO] training_daemon.src.s3_client: Uploaded act_policy_step_360.pth.zst (250117702 bytes)
+2026-08-08 04:15:44 [INFO] training_daemon.src.asset_uploader: Uploaded [15/23] data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_360.pth
+2026-08-08 04:15:44 [INFO] training_daemon.src.compression: Compressing /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_480.pth → /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_480.pth.zst
+2026-08-08 04:15:46 [INFO] training_daemon.src.s3_client: Uploaded act_policy_step_480.pth.zst (250123936 bytes)
+2026-08-08 04:15:46 [INFO] training_daemon.src.asset_uploader: Uploaded [16/23] data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_480.pth
+2026-08-08 04:15:46 [INFO] training_daemon.src.compression: Compressing /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_600.pth → /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_600.pth.zst
+2026-08-08 04:15:49 [INFO] training_daemon.src.s3_client: Uploaded act_policy_step_600.pth.zst (250124943 bytes)
+2026-08-08 04:15:49 [INFO] training_daemon.src.asset_uploader: Uploaded [17/23] data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_600.pth
+2026-08-08 04:15:49 [INFO] training_daemon.src.compression: Compressing /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_720.pth → /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_720.pth.zst
+2026-08-08 04:15:51 [INFO] training_daemon.src.s3_client: Uploaded act_policy_step_720.pth.zst (250125846 bytes)
+2026-08-08 04:15:51 [INFO] training_daemon.src.asset_uploader: Uploaded [18/23] data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_720.pth
+2026-08-08 04:15:51 [INFO] training_daemon.src.compression: Compressing /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_840.pth → /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_840.pth.zst
+2026-08-08 04:15:53 [INFO] training_daemon.src.s3_client: Uploaded act_policy_step_840.pth.zst (250127685 bytes)
+2026-08-08 04:15:53 [INFO] training_daemon.src.asset_uploader: Uploaded [19/23] data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_840.pth
+2026-08-08 04:15:53 [INFO] training_daemon.src.compression: Compressing /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_960.pth → /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_960.pth.zst
+2026-08-08 04:15:56 [INFO] training_daemon.src.s3_client: Uploaded act_policy_step_960.pth.zst (250131928 bytes)
+2026-08-08 04:15:56 [INFO] training_daemon.src.asset_uploader: Uploaded [20/23] data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_960.pth
+2026-08-08 04:15:56 [INFO] training_daemon.src.compression: Compressing /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/dataset_stats.pt → /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/dataset_stats.pt.zst
+2026-08-08 04:15:57 [INFO] training_daemon.src.s3_client: Uploaded dataset_stats.pt.zst (1116 bytes)
+2026-08-08 04:15:57 [INFO] training_daemon.src.asset_uploader: Uploaded [21/23] data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/dataset_stats.pt
+2026-08-08 04:15:57 [INFO] training_daemon.src.compression: Compressing /training/daemon.log → /training/daemon.log.zst

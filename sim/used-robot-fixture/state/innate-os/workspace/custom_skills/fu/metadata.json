@@ -1,0 +1,14 @@
+{
+    "name": "fu",
+    "type": "learned",
+    "guidelines": "",
+    "guidelines_when_running": "",
+    "inputs": {},
+    "execution": {
+        "duration": null,
+        "progress_threshold": null,
+        "start_pose": null,
+        "end_pose": null,
+        "n_action_steps": null
+    }
+}

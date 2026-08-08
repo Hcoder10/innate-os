@@ -1,0 +1,60 @@
+{
+  "os":  "Linux-6.8.0-136-generic-x86_64-with-glibc2.35",
+  "python":  "CPython 3.10.12",
+  "startedAt":  "2026-08-08T04:06:40.400809Z",
+  "args":  [
+    "--data_dir",
+    "/training/data/data",
+    "--chunk_size",
+    "30",
+    "--max_steps",
+    "1200",
+    "--learning_rate",
+    "5e-5",
+    "--learning_rate_backbone",
+    "5e-5",
+    "--batch_size",
+    "96",
+    "--num_workers",
+    "4",
+    "--world_size",
+    "2"
+  ],
+  "program":  "-m act_test.train_dist",
+  "email":  "karmanyaah.gh@malhotra.cc",
+  "root":  "/training/project",
+  "host":  "6b848c03535b",
+  "executable":  "/training/project/.venv/bin/python3",
+  "cpu_count":  64,
+  "cpu_count_logical":  128,
+  "gpu":  "NVIDIA H100 PCIe",
+  "gpu_count":  2,
+  "disk":  {
+    "/":  {
+      "total":  "1073741824000",
+      "used":  "11864948736"
+    }
+  },
+  "memory":  {
+    "total":  "2164138115072"
+  },
+  "cpu":  {
+    "count":  64,
+    "countLogical":  128
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA H100 PCIe",
+      "memoryTotal":  "85520809984",
+      "cudaCores":  14592,
+      "architecture":  "Hopper"
+    },
+    {
+      "name":  "NVIDIA H100 PCIe",
+      "memoryTotal":  "85520809984",
+      "cudaCores":  14592,
+      "architecture":  "Hopper"
+    }
+  ],
+  "cudaVersion":  "13.0"
+}

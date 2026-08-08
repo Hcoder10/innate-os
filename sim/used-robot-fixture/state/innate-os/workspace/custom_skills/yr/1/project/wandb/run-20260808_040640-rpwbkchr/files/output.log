@@ -1,0 +1,525 @@
+Initializing WebDataset data loaders...
+Found 1 WebDataset files
+⚠️  Reducing num_workers from 4 to 1 (only 1 shards available)
+Using dataset pattern: /training/data/data/webdataset/train-00000.tar
+/training/project/.venv/lib/python3.10/site-packages/webdataset/compat.py:393: UserWarning: set WebDataset(shardshuffle=...) to a positive integer or 0 or False
+  warnings.warn(
+Calculating dataset statistics...
+Computing dataset statistics from ALL samples...
+Computing stats: 3batch [00:05,  1.74s/batch, samples=288, batch_size=96]
+Dataset statistics computed successfully!
+Processed 288 samples, 288 qpos, 7216 actions
+Saved dataset_stats to /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/dataset_stats.pt
+WebDataset dataloaders initialized (streaming datasets - no fixed length)
+Initializing ACT Policy...
+⚡ Compiling model with torch.compile()...
+   Mode: default (with inductor backend)
+   ✓ Model compilation setup completed
+   Note: First forward/backward pass will trigger actual compilation
+Learning rate scheduler: Linear warmup (60 steps, 5.0%) + Cosine annealing to 10% of max LR
+Starting step-based distributed training...
+                                                                                                                                        
+@@INNATE_PROGRESS step=1 total=1200
+Completed one pass through dataset at step 3
+Completed one pass through dataset at step 6
+Completed one pass through dataset at step 9
+Completed one pass through dataset at step 12
+Completed one pass through dataset at step 15
+Completed one pass through dataset at step 18
+Completed one pass through dataset at step 21
+Completed one pass through dataset at step 24
+@@INNATE_PROGRESS step=26 total=1200
+Completed one pass through dataset at step 27
+Completed one pass through dataset at step 30
+Completed one pass through dataset at step 33
+Completed one pass through dataset at step 36
+Completed one pass through dataset at step 39
+Completed one pass through dataset at step 42
+Completed one pass through dataset at step 45
+Completed one pass through dataset at step 48
+@@INNATE_PROGRESS step=51 total=1200
+Completed one pass through dataset at step 51
+Completed one pass through dataset at step 54
+Completed one pass through dataset at step 57
+Completed one pass through dataset at step 60
+Completed one pass through dataset at step 63
+Completed one pass through dataset at step 66
+Completed one pass through dataset at step 69
+Completed one pass through dataset at step 72
+Completed one pass through dataset at step 75
+@@INNATE_PROGRESS step=76 total=1200
+Completed one pass through dataset at step 78
+Completed one pass through dataset at step 81
+Completed one pass through dataset at step 84
+Completed one pass through dataset at step 87
+Completed one pass through dataset at step 90
+Completed one pass through dataset at step 93
+Completed one pass through dataset at step 96
+Completed one pass through dataset at step 99
+Step 100 - Avg timing (last 100 steps): Batch: 274.1ms, Forward: 76.9ms, Backward: 99.3ms, Optimizer: 7.9ms, Total: 459.6ms
+Validation at step 100: Loss=3.6407, Total=59.0ms (load=3.8ms, forward=53.3ms)
+@@INNATE_PROGRESS step=101 total=1200
+Completed one pass through dataset at step 102
+Completed one pass through dataset at step 105
+Completed one pass through dataset at step 108
+Completed one pass through dataset at step 111
+Completed one pass through dataset at step 114
+Completed one pass through dataset at step 117
+Saved checkpoint: /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_120.pth
+Completed one pass through dataset at step 120
+Completed one pass through dataset at step 123
+@@INNATE_PROGRESS step=126 total=1200
+Completed one pass through dataset at step 126
+Completed one pass through dataset at step 129
+Completed one pass through dataset at step 132
+Completed one pass through dataset at step 135
+Completed one pass through dataset at step 138
+Completed one pass through dataset at step 141
+Completed one pass through dataset at step 144
+Completed one pass through dataset at step 147
+Completed one pass through dataset at step 150
+@@INNATE_PROGRESS step=151 total=1200
+Completed one pass through dataset at step 153
+Completed one pass through dataset at step 156
+Completed one pass through dataset at step 159
+Completed one pass through dataset at step 162
+Completed one pass through dataset at step 165
+Completed one pass through dataset at step 168
+Completed one pass through dataset at step 171
+Completed one pass through dataset at step 174
+@@INNATE_PROGRESS step=176 total=1200
+Completed one pass through dataset at step 177
+Completed one pass through dataset at step 180
+Completed one pass through dataset at step 183
+Completed one pass through dataset at step 186
+Completed one pass through dataset at step 189
+Completed one pass through dataset at step 192
+Completed one pass through dataset at step 195
+Completed one pass through dataset at step 198
+Step 200 - Avg timing (last 100 steps): Batch: 230.5ms, Forward: 65.3ms, Backward: 96.8ms, Optimizer: 5.8ms, Total: 399.7ms
+Validation dataset exhausted at step 200, resetting iterator
+@@INNATE_PROGRESS step=201 total=1200
+Completed one pass through dataset at step 201
+Completed one pass through dataset at step 204
+Completed one pass through dataset at step 207
+Completed one pass through dataset at step 210
+Completed one pass through dataset at step 213
+Completed one pass through dataset at step 216
+Completed one pass through dataset at step 219
+Completed one pass through dataset at step 222
+Completed one pass through dataset at step 225
+@@INNATE_PROGRESS step=226 total=1200
+Completed one pass through dataset at step 228
+Completed one pass through dataset at step 231
+Completed one pass through dataset at step 234
+Completed one pass through dataset at step 237
+Saved checkpoint: /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_240.pth
+Completed one pass through dataset at step 240
+Completed one pass through dataset at step 243
+Completed one pass through dataset at step 246
+Completed one pass through dataset at step 249
+@@INNATE_PROGRESS step=251 total=1200
+Completed one pass through dataset at step 252
+Completed one pass through dataset at step 255
+Completed one pass through dataset at step 258
+Completed one pass through dataset at step 261
+Completed one pass through dataset at step 264
+Completed one pass through dataset at step 267
+Completed one pass through dataset at step 270
+Completed one pass through dataset at step 273
+@@INNATE_PROGRESS step=276 total=1200
+Completed one pass through dataset at step 276
+Completed one pass through dataset at step 279
+Completed one pass through dataset at step 282
+Completed one pass through dataset at step 285
+Completed one pass through dataset at step 288
+Completed one pass through dataset at step 291
+Completed one pass through dataset at step 294
+Completed one pass through dataset at step 297
+Step 300 - Avg timing (last 100 steps): Batch: 231.8ms, Forward: 64.2ms, Backward: 97.3ms, Optimizer: 5.8ms, Total: 400.2ms
+Validation at step 300: Loss=1.5198, Total=52.8ms (load=1.9ms, forward=48.8ms)
+Completed one pass through dataset at step 300
+@@INNATE_PROGRESS step=301 total=1200
+Completed one pass through dataset at step 303
+Completed one pass through dataset at step 306
+Completed one pass through dataset at step 309
+Completed one pass through dataset at step 312
+Completed one pass through dataset at step 315
+Completed one pass through dataset at step 318
+Completed one pass through dataset at step 321
+Completed one pass through dataset at step 324
+@@INNATE_PROGRESS step=326 total=1200
+Completed one pass through dataset at step 327
+Completed one pass through dataset at step 330
+Completed one pass through dataset at step 333
+Completed one pass through dataset at step 336
+Completed one pass through dataset at step 339
+Completed one pass through dataset at step 342
+Completed one pass through dataset at step 345
+Completed one pass through dataset at step 348
+@@INNATE_PROGRESS step=351 total=1200
+Completed one pass through dataset at step 351
+Completed one pass through dataset at step 354
+Completed one pass through dataset at step 357
+Saved checkpoint: /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_360.pth
+Completed one pass through dataset at step 360
+Completed one pass through dataset at step 363
+Completed one pass through dataset at step 366
+Completed one pass through dataset at step 369
+Completed one pass through dataset at step 372
+Completed one pass through dataset at step 375
+@@INNATE_PROGRESS step=376 total=1200
+Completed one pass through dataset at step 378
+Completed one pass through dataset at step 381
+Completed one pass through dataset at step 384
+Completed one pass through dataset at step 387
+Completed one pass through dataset at step 390
+Completed one pass through dataset at step 393
+Completed one pass through dataset at step 396
+Completed one pass through dataset at step 399
+Step 400 - Avg timing (last 100 steps): Batch: 236.8ms, Forward: 67.4ms, Backward: 96.3ms, Optimizer: 6.0ms, Total: 407.7ms
+Validation dataset exhausted at step 400, resetting iterator
+@@INNATE_PROGRESS step=401 total=1200
+Completed one pass through dataset at step 402
+Completed one pass through dataset at step 405
+Completed one pass through dataset at step 408
+Completed one pass through dataset at step 411
+Completed one pass through dataset at step 414
+Completed one pass through dataset at step 417
+Completed one pass through dataset at step 420
+Completed one pass through dataset at step 423
+@@INNATE_PROGRESS step=426 total=1200
+Completed one pass through dataset at step 426
+Completed one pass through dataset at step 429
+Completed one pass through dataset at step 432
+Completed one pass through dataset at step 435
+Completed one pass through dataset at step 438
+Completed one pass through dataset at step 441
+Completed one pass through dataset at step 444
+Completed one pass through dataset at step 447
+Completed one pass through dataset at step 450
+@@INNATE_PROGRESS step=451 total=1200
+Completed one pass through dataset at step 453
+Completed one pass through dataset at step 456
+Completed one pass through dataset at step 459
+Completed one pass through dataset at step 462
+Completed one pass through dataset at step 465
+Completed one pass through dataset at step 468
+Completed one pass through dataset at step 471
+Completed one pass through dataset at step 474
+@@INNATE_PROGRESS step=476 total=1200
+Completed one pass through dataset at step 477
+Saved checkpoint: /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_480.pth
+Completed one pass through dataset at step 480
+Completed one pass through dataset at step 483
+Completed one pass through dataset at step 486
+Completed one pass through dataset at step 489
+Completed one pass through dataset at step 492
+Completed one pass through dataset at step 495
+Completed one pass through dataset at step 498
+Step 500 - Avg timing (last 100 steps): Batch: 238.9ms, Forward: 69.7ms, Backward: 98.8ms, Optimizer: 6.4ms, Total: 415.1ms
+Validation at step 500: Loss=1.4200, Total=54.5ms (load=4.0ms, forward=48.8ms)
+@@INNATE_PROGRESS step=501 total=1200
+Completed one pass through dataset at step 501
+Completed one pass through dataset at step 504
+Completed one pass through dataset at step 507
+Completed one pass through dataset at step 510
+Completed one pass through dataset at step 513
+Completed one pass through dataset at step 516
+Completed one pass through dataset at step 519
+Completed one pass through dataset at step 522
+Completed one pass through dataset at step 525
+@@INNATE_PROGRESS step=526 total=1200
+Completed one pass through dataset at step 528
+Completed one pass through dataset at step 531
+Completed one pass through dataset at step 534
+Completed one pass through dataset at step 537
+Completed one pass through dataset at step 540
+Completed one pass through dataset at step 543
+Completed one pass through dataset at step 546
+Completed one pass through dataset at step 549
+@@INNATE_PROGRESS step=551 total=1200
+Completed one pass through dataset at step 552
+Completed one pass through dataset at step 555
+Completed one pass through dataset at step 558
+Completed one pass through dataset at step 561
+Completed one pass through dataset at step 564
+Completed one pass through dataset at step 567
+Completed one pass through dataset at step 570
+Completed one pass through dataset at step 573
+@@INNATE_PROGRESS step=576 total=1200
+Completed one pass through dataset at step 576
+Completed one pass through dataset at step 579
+Completed one pass through dataset at step 582
+Completed one pass through dataset at step 585
+Completed one pass through dataset at step 588
+Completed one pass through dataset at step 591
+Completed one pass through dataset at step 594
+Completed one pass through dataset at step 597
+Step 600 - Avg timing (last 100 steps): Batch: 257.4ms, Forward: 68.5ms, Backward: 96.8ms, Optimizer: 6.7ms, Total: 430.6ms
+Validation dataset exhausted at step 600, resetting iterator
+Saved checkpoint: /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_600.pth
+Completed one pass through dataset at step 600
+@@INNATE_PROGRESS step=601 total=1200
+Completed one pass through dataset at step 603
+Completed one pass through dataset at step 606
+Completed one pass through dataset at step 609
+Completed one pass through dataset at step 612
+Completed one pass through dataset at step 615
+Completed one pass through dataset at step 618
+Completed one pass through dataset at step 621
+Completed one pass through dataset at step 624
+@@INNATE_PROGRESS step=626 total=1200
+Completed one pass through dataset at step 627
+Completed one pass through dataset at step 630
+Completed one pass through dataset at step 633
+Completed one pass through dataset at step 636
+Completed one pass through dataset at step 639
+Completed one pass through dataset at step 642
+Completed one pass through dataset at step 645
+Completed one pass through dataset at step 648
+@@INNATE_PROGRESS step=651 total=1200
+Completed one pass through dataset at step 651
+Completed one pass through dataset at step 654
+Completed one pass through dataset at step 657
+Completed one pass through dataset at step 660
+Completed one pass through dataset at step 663
+Completed one pass through dataset at step 666
+Completed one pass through dataset at step 669
+Completed one pass through dataset at step 672
+Completed one pass through dataset at step 675
+@@INNATE_PROGRESS step=676 total=1200
+Completed one pass through dataset at step 678
+Completed one pass through dataset at step 681
+Completed one pass through dataset at step 684
+Completed one pass through dataset at step 687
+Completed one pass through dataset at step 690
+Completed one pass through dataset at step 693
+Completed one pass through dataset at step 696
+Completed one pass through dataset at step 699
+Step 700 - Avg timing (last 100 steps): Batch: 251.3ms, Forward: 66.5ms, Backward: 96.5ms, Optimizer: 6.4ms, Total: 421.9ms
+Validation at step 700: Loss=1.7602, Total=49.8ms (load=3.5ms, forward=45.2ms)
+@@INNATE_PROGRESS step=701 total=1200
+Completed one pass through dataset at step 702
+Completed one pass through dataset at step 705
+Completed one pass through dataset at step 708
+Completed one pass through dataset at step 711
+Completed one pass through dataset at step 714
+Completed one pass through dataset at step 717
+Saved checkpoint: /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_720.pth
+Completed one pass through dataset at step 720
+Completed one pass through dataset at step 723
+@@INNATE_PROGRESS step=726 total=1200
+Completed one pass through dataset at step 726
+Completed one pass through dataset at step 729
+Completed one pass through dataset at step 732
+Completed one pass through dataset at step 735
+Completed one pass through dataset at step 738
+Completed one pass through dataset at step 741
+Completed one pass through dataset at step 744
+Completed one pass through dataset at step 747
+Completed one pass through dataset at step 750
+@@INNATE_PROGRESS step=751 total=1200
+Completed one pass through dataset at step 753
+Completed one pass through dataset at step 756
+Completed one pass through dataset at step 759
+Completed one pass through dataset at step 762
+Completed one pass through dataset at step 765
+Completed one pass through dataset at step 768
+Completed one pass through dataset at step 771
+Completed one pass through dataset at step 774
+@@INNATE_PROGRESS step=776 total=1200
+Completed one pass through dataset at step 777
+Completed one pass through dataset at step 780
+Completed one pass through dataset at step 783
+Completed one pass through dataset at step 786
+Completed one pass through dataset at step 789
+Completed one pass through dataset at step 792
+Completed one pass through dataset at step 795
+Completed one pass through dataset at step 798
+Step 800 - Avg timing (last 100 steps): Batch: 233.4ms, Forward: 64.1ms, Backward: 96.4ms, Optimizer: 5.7ms, Total: 400.6ms
+Validation dataset exhausted at step 800, resetting iterator
+@@INNATE_PROGRESS step=801 total=1200
+Completed one pass through dataset at step 801
+Completed one pass through dataset at step 804
+Completed one pass through dataset at step 807
+Completed one pass through dataset at step 810
+Completed one pass through dataset at step 813
+Completed one pass through dataset at step 816
+Completed one pass through dataset at step 819
+Completed one pass through dataset at step 822
+Completed one pass through dataset at step 825
+@@INNATE_PROGRESS step=826 total=1200
+Completed one pass through dataset at step 828
+Completed one pass through dataset at step 831
+Completed one pass through dataset at step 834
+Completed one pass through dataset at step 837
+Saved checkpoint: /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_840.pth
+Completed one pass through dataset at step 840
+Completed one pass through dataset at step 843
+Completed one pass through dataset at step 846
+Completed one pass through dataset at step 849
+@@INNATE_PROGRESS step=851 total=1200
+Completed one pass through dataset at step 852
+Completed one pass through dataset at step 855
+Completed one pass through dataset at step 858
+Completed one pass through dataset at step 861
+Completed one pass through dataset at step 864
+Completed one pass through dataset at step 867
+Completed one pass through dataset at step 870
+Completed one pass through dataset at step 873
+@@INNATE_PROGRESS step=876 total=1200
+Completed one pass through dataset at step 876
+Completed one pass through dataset at step 879
+Completed one pass through dataset at step 882
+Completed one pass through dataset at step 885
+Completed one pass through dataset at step 888
+Completed one pass through dataset at step 891
+Completed one pass through dataset at step 894
+Completed one pass through dataset at step 897
+Step 900 - Avg timing (last 100 steps): Batch: 234.3ms, Forward: 63.9ms, Backward: 96.8ms, Optimizer: 5.7ms, Total: 401.8ms
+Validation at step 900: Loss=1.0518, Total=52.3ms (load=2.1ms, forward=48.1ms)
+Completed one pass through dataset at step 900
+@@INNATE_PROGRESS step=901 total=1200
+Completed one pass through dataset at step 903
+Completed one pass through dataset at step 906
+Completed one pass through dataset at step 909
+Completed one pass through dataset at step 912
+Completed one pass through dataset at step 915
+Completed one pass through dataset at step 918
+Completed one pass through dataset at step 921
+Completed one pass through dataset at step 924
+@@INNATE_PROGRESS step=926 total=1200
+Completed one pass through dataset at step 927
+Completed one pass through dataset at step 930
+Completed one pass through dataset at step 933
+Completed one pass through dataset at step 936
+Completed one pass through dataset at step 939
+Completed one pass through dataset at step 942
+Completed one pass through dataset at step 945
+Completed one pass through dataset at step 948
+@@INNATE_PROGRESS step=951 total=1200
+Completed one pass through dataset at step 951
+Completed one pass through dataset at step 954
+Completed one pass through dataset at step 957
+Saved checkpoint: /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_960.pth
+Completed one pass through dataset at step 960
+Completed one pass through dataset at step 963
+Completed one pass through dataset at step 966
+Completed one pass through dataset at step 969
+Completed one pass through dataset at step 972
+Completed one pass through dataset at step 975
+@@INNATE_PROGRESS step=976 total=1200
+Completed one pass through dataset at step 978
+Completed one pass through dataset at step 981
+Completed one pass through dataset at step 984
+Completed one pass through dataset at step 987
+Completed one pass through dataset at step 990
+Completed one pass through dataset at step 993
+Completed one pass through dataset at step 996
+Completed one pass through dataset at step 999
+Step 1000 - Avg timing (last 100 steps): Batch: 230.7ms, Forward: 64.0ms, Backward: 96.8ms, Optimizer: 5.7ms, Total: 398.3ms
+Validation dataset exhausted at step 1000, resetting iterator
+@@INNATE_PROGRESS step=1001 total=1200
+Completed one pass through dataset at step 1002
+Completed one pass through dataset at step 1005
+Completed one pass through dataset at step 1008
+Completed one pass through dataset at step 1011
+Completed one pass through dataset at step 1014
+Completed one pass through dataset at step 1017
+Completed one pass through dataset at step 1020
+Completed one pass through dataset at step 1023
+@@INNATE_PROGRESS step=1026 total=1200
+Completed one pass through dataset at step 1026
+Completed one pass through dataset at step 1029
+Completed one pass through dataset at step 1032
+Completed one pass through dataset at step 1035
+Completed one pass through dataset at step 1038
+Completed one pass through dataset at step 1041
+Completed one pass through dataset at step 1044
+Completed one pass through dataset at step 1047
+Completed one pass through dataset at step 1050
+@@INNATE_PROGRESS step=1051 total=1200
+Completed one pass through dataset at step 1053
+Completed one pass through dataset at step 1056
+Completed one pass through dataset at step 1059
+Completed one pass through dataset at step 1062
+Completed one pass through dataset at step 1065
+Completed one pass through dataset at step 1068
+Completed one pass through dataset at step 1071
+Completed one pass through dataset at step 1074
+@@INNATE_PROGRESS step=1076 total=1200
+Completed one pass through dataset at step 1077
+Saved checkpoint: /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_1080.pth
+Completed one pass through dataset at step 1080
+Completed one pass through dataset at step 1083
+Completed one pass through dataset at step 1086
+Completed one pass through dataset at step 1089
+Completed one pass through dataset at step 1092
+Completed one pass through dataset at step 1095
+Completed one pass through dataset at step 1098
+Step 1100 - Avg timing (last 100 steps): Batch: 239.6ms, Forward: 64.3ms, Backward: 96.8ms, Optimizer: 5.9ms, Total: 407.6ms
+Validation at step 1100: Loss=0.9836, Total=54.5ms (load=4.5ms, forward=47.6ms)
+@@INNATE_PROGRESS step=1101 total=1200
+Completed one pass through dataset at step 1101
+Completed one pass through dataset at step 1104
+Completed one pass through dataset at step 1107
+Completed one pass through dataset at step 1110
+Completed one pass through dataset at step 1113
+Completed one pass through dataset at step 1116
+Completed one pass through dataset at step 1119
+Completed one pass through dataset at step 1122
+Completed one pass through dataset at step 1125
+@@INNATE_PROGRESS step=1126 total=1200
+Completed one pass through dataset at step 1128
+Completed one pass through dataset at step 1131
+Completed one pass through dataset at step 1134
+Completed one pass through dataset at step 1137
+Completed one pass through dataset at step 1140
+Completed one pass through dataset at step 1143
+Completed one pass through dataset at step 1146
+Completed one pass through dataset at step 1149
+@@INNATE_PROGRESS step=1151 total=1200
+Completed one pass through dataset at step 1152
+Completed one pass through dataset at step 1155
+Completed one pass through dataset at step 1158
+Completed one pass through dataset at step 1161
+Completed one pass through dataset at step 1164
+Completed one pass through dataset at step 1167
+Completed one pass through dataset at step 1170
+Completed one pass through dataset at step 1173
+@@INNATE_PROGRESS step=1176 total=1200
+Completed one pass through dataset at step 1176
+Completed one pass through dataset at step 1179
+Completed one pass through dataset at step 1182
+Completed one pass through dataset at step 1185
+Completed one pass through dataset at step 1188
+Completed one pass through dataset at step 1191
+Completed one pass through dataset at step 1194
+Completed one pass through dataset at step 1197
+@@INNATE_PROGRESS step=1200 total=1200
+Step 1200 - Avg timing (last 100 steps): Batch: 231.3ms, Forward: 64.2ms, Backward: 97.4ms, Optimizer: 5.7ms, Total: 399.6ms
+Validation dataset exhausted at step 1200, resetting iterator
+Saved checkpoint: /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_1200.pth
+Training finished.
+Exporting model to ONNX format...
+  Creating fresh model without torch.compile()...
+  Exporting to /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_final.onnx...
+/training/project/act_test/ACT.py:168: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
+  if torch.isinf(mean).any(): raise ValueError(_no_stats_error_str(f"{key} mean"))
+/training/project/act_test/ACT.py:169: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
+  if torch.isinf(std).any(): raise ValueError(_no_stats_error_str(f"{key} std"))
+/training/project/act_test/ACT.py:963: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
+  if img_tensor.shape[0] != batch_size:
+/training/project/act_test/ACT.py:972: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
+  if feature_map.shape[0] != batch_size:
+/training/project/act_test/ACT.py:983: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
+  if projected_feature.shape[0] != batch_size:
+/training/project/act_test/ACT.py:223: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
+  if torch.isinf(mean).any(): raise ValueError(_no_stats_error_str(f"{key} mean"))
+/training/project/act_test/ACT.py:224: TracerWarning: Converting a tensor to a Python boolean might cause the trace to be incorrect. We can't record the data flow of Python values, so this value will be treated as a constant in the future. This means that the trace might not generalize to other inputs!
+  if torch.isinf(std).any(): raise ValueError(_no_stats_error_str(f"{key} std"))
+✅ ONNX model saved to: /training/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_final.onnx
+   Model inputs: image_camera_1, image_camera_2, robot_state
+   Model output: predicted_actions (shape: [batch, 30, 10])
+wandb: WARNING Saving files without folders. If you want to preserve subdirectories pass base_path to wandb.save, i.e. wandb.save("/mnt/folder/file.h5", base_path="/mnt")

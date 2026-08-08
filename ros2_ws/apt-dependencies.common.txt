@@ -58,6 +58,10 @@ ros-humble-rclpy
 ros-humble-rclcpp-components
 ros-humble-fastrtps
 ros-humble-rmw-zenoh-cpp
+# Keep the zenoh vendor lib in lockstep with rmw-zenoh-cpp: apt does not force the
+# upgrade on its own, and a version split leaves every node failing with
+# "undefined symbol: z_reply_keyexpr_default" (seen 2026-08-08).
+ros-humble-zenoh-cpp-vendor
 ros-humble-launch-xml
 ros-humble-ament-cmake
 ros-humble-ament-cmake-python

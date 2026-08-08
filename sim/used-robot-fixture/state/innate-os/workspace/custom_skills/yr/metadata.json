@@ -1,0 +1,18 @@
+{
+    "name": "Yr",
+    "type": "learned",
+    "guidelines": "",
+    "guidelines_when_running": "",
+    "inputs": {},
+    "execution": {
+        "duration": null,
+        "progress_threshold": null,
+        "start_pose": null,
+        "end_pose": null,
+        "n_action_steps": null,
+        "checkpoint": "1/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/act_policy_step_1200.pth",
+        "stats_file": "1/data/data/checkpoints/default-3/d5005351-2815-4dfc-9561-99f4e4c4d3b3/dataset_stats.pt"
+    },
+    "training_skill_id": "d5005351-2815-4dfc-9561-99f4e4c4d3b3",
+    "uploaded_episode_count": 7
+}
