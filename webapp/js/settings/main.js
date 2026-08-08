@@ -15,7 +15,7 @@
 import { ROBOT_INFO_TOPIC, SET_VOLUME_SERVICE, SHUTDOWN_SERVICE } from "../constants.js";
 import { ros } from "../rosClient.js";
 import { SETTINGS_PAGES } from "./catalog.js";
-import { SETTINGS_STYLE } from "./styles.js";
+import { GROUP_EXPAND_MS, SETTINGS_STYLE } from "./styles.js";
 
 // Assigned per mount by mount() at the bottom. The volume control uses the shared
 // rosbridge socket, which the router connects once at boot and keeps up across
@@ -48,20 +48,19 @@ const SHUTDOWN_QUICK_RECONNECT_MS = 15_000;
 const entries = [];
 
 /**
- * @typedef {Object} PageUI
- * @property {HTMLElement} panel  Detail-pane content for this destination.
- * @property {HTMLButtonElement} row  Index list row that opens this destination.
- * @property {HTMLElement} dot  Unsaved-changes indicator on the index row.
- * @property {Entry[]} entries  Knob entries belonging to this destination.
+ * @typedef {Object} GroupUI
+ * @property {HTMLElement} section  The collapsible section wrapping header and body.
+ * @property {HTMLElement} dot  Unsaved-changes indicator in the header.
+ * @property {Entry[]} entries  Knob entries belonging to this group.
  */
-/** @type {PageUI[]} */
-const pages = [];
+/** @type {GroupUI[]} */
+const groups = [];
 /**
  * @typedef {Object} SearchTarget
  * @property {string} label
  * @property {string} description
  * @property {HTMLElement} row
- * @property {PageUI} page
+ * @property {GroupUI} group
  * @property {string} breadcrumb
  * @property {string} visibleSearchText  Label, description, and breadcrumb.
  * @property {{label: string, text: string}[]} extraSearchSources
@@ -70,8 +69,8 @@ const pages = [];
 /** @type {SearchTarget[]} */
 const searchTargets = [];
 const MAX_SEARCH_RESULTS = 20;
-/** @type {HTMLElement | null} */
-let bodyEl = null;
+/** @type {HTMLInputElement | null} */
+let searchInput = null;
 
 /** @type {HTMLButtonElement} */ let saveBtn;
 /** @type {HTMLButtonElement} */ let resetAllBtn;
@@ -228,9 +227,9 @@ function recompute() {
     e.row.classList.toggle("has-override", e.value !== e.knob.default);
     if (e.validationEl) e.validationEl.textContent = err;
   }
-  for (const page of pages) {
-    // Index rows stay quiet — purple dot alone marks unsaved work in the destination.
-    page.dot.classList.toggle("show", page.entries.some(isDirty));
+  for (const group of groups) {
+    // Headers stay quiet — the purple dot alone marks unsaved work inside a collapsed group.
+    group.dot.classList.toggle("show", group.entries.some(isDirty));
   }
   dirtyEl.textContent = bad
     ? `${bad} value${bad === 1 ? "" : "s"} out of range`
@@ -413,17 +412,12 @@ function buildVolumeSection() {
   return { section, row, label: labelText, description: descriptionText };
 }
 
-const INDEX_CHEV =
-  '<svg class="set-index-chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9,6 15,12 9,18"/></svg>';
+const GROUP_CHEV =
+  '<svg class="set-group-chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9,6 15,12 9,18"/></svg>';
 
-function selectSettingsPage(/** @type {PageUI | null} */ ui) {
-  for (const page of pages) {
-    const on = page === ui;
-    page.panel.classList.toggle("active", on);
-    if (on) page.row.setAttribute("aria-current", "page");
-    else page.row.removeAttribute("aria-current");
-  }
-  bodyEl?.classList.toggle("is-detail", ui !== null);
+function setGroupOpen(/** @type {GroupUI} */ ui, /** @type {boolean} */ open) {
+  ui.section.classList.toggle("open", open);
+  ui.section.querySelector(".set-group-h")?.setAttribute("aria-expanded", String(open));
 }
 
 function buildSettingsPage() {
@@ -434,25 +428,23 @@ function buildSettingsPage() {
   const page = textEl("div", "settings-page");
 
   const body = textEl("div", "settings-body");
-  bodyEl = body;
 
   const scroll = textEl("div", "settings-scroll");
 
   const wrap = textEl("div", "settings-wrap");
 
-  const index = textEl("div", "set-index");
-
   const search = inputEl("search", "set-search");
   search.placeholder = "Search settings";
   search.maxLength = 40;
   search.setAttribute("aria-label", "Search settings");
+  searchInput = search;
 
-  const indexCard = textEl("div", "set-card-index");
+  const accordion = textEl("div", "set-accordion");
 
   const searchResults = textEl("div", "set-card-search");
   searchResults.hidden = true;
 
-  index.append(
+  wrap.append(
     textEl("h1", "page-title", "Settings"),
     textEl(
       "p",
@@ -460,52 +452,45 @@ function buildSettingsPage() {
       "Changes save to config/settings.yaml; restart the robot to apply.",
     ),
     search,
-    indexCard,
+    accordion,
     searchResults,
   );
 
-  const returnToIndex = () => {
-    search.value = "";
-    renderSearchResults("", indexCard, searchResults);
-    selectSettingsPage(null);
-  };
-
-  const detail = textEl("div", "set-detail");
-
-  const back = buttonEl("set-back", "", returnToIndex);
-  back.innerHTML =
-    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15,6 9,12 15,18"/></svg><span>Settings</span>';
-  detail.appendChild(back);
-
   for (const settingsPage of SETTINGS_PAGES) {
-    const row = buttonEl("set-index-row", "");
+    const section = textEl("section", "set-group");
 
-    const icon = textEl("span", "set-index-icon");
+    const header = buttonEl("set-group-h", "");
+    header.setAttribute("aria-expanded", "false");
+
+    const icon = textEl("span", "set-group-icon");
     icon.style.setProperty(
       "--icon-url",
       `url("/js/settings/icons/${settingsPage.icon}")`,
     );
 
-    const text = textEl("span", "set-index-text");
-    const label = textEl("span", "set-index-label", settingsPage.title);
-    const summary = textEl("span", "set-index-summary", settingsPage.summary);
+    const text = textEl("span", "set-group-text");
+    const label = textEl("span", "set-group-label", settingsPage.title);
+    const summary = textEl("span", "set-group-summary", settingsPage.summary);
     text.append(label, summary);
 
-    const dot = textEl("span", "set-index-dot");
+    const dot = textEl("span", "set-group-dot");
     dot.title = "Unsaved changes in this section";
 
-    row.append(icon, text, dot);
-    row.insertAdjacentHTML("beforeend", INDEX_CHEV);
-    indexCard.appendChild(row);
+    header.append(icon, text, dot);
+    header.insertAdjacentHTML("beforeend", GROUP_CHEV);
 
-    const panel = textEl("section", "set-pane");
-    panel.setAttribute("aria-label", settingsPage.title);
-
-    panel.appendChild(textEl("h1", "page-title", settingsPage.title));
+    const groupBody = textEl("div", "set-group-body");
+    const groupClip = textEl("div", "set-group-body-inner");
+    const groupInner = textEl("div", "set-group-content");
+    groupClip.appendChild(groupInner);
+    groupBody.appendChild(groupClip);
 
     if (settingsPage.note) {
-      panel.appendChild(textEl("p", "settings-note", settingsPage.note));
+      groupInner.appendChild(textEl("p", "set-group-note", settingsPage.note));
     }
+
+    section.append(header, groupBody);
+    accordion.appendChild(section);
 
     const pageSearchSource = {
       label: "Matched in page description",
@@ -514,22 +499,21 @@ function buildSettingsPage() {
     const volumeControl = settingsPage.hasSpeakerVolume ? buildVolumeSection() : null;
     if (volumeControl) {
       const speaker = textEl("section", "set-page-section");
-      const speakerTitle = textEl("h2", "set-section-title", "Speaker");
-      speaker.append(speakerTitle, volumeControl.section);
-      panel.appendChild(speaker);
+      speaker.append(textEl("h2", "set-section-title", "Speaker"), volumeControl.section);
+      groupInner.appendChild(speaker);
     }
 
-    /** @type {PageUI} */
-    const ui = { panel, row, dot, entries: [] };
-    row.addEventListener("click", () => selectSettingsPage(ui));
-    pages.push(ui);
+    /** @type {GroupUI} */
+    const ui = { section, dot, entries: [] };
+    header.addEventListener("click", () => setGroupOpen(ui, !section.classList.contains("open")));
+    groups.push(ui);
 
     if (volumeControl) {
       addSearchTarget({
         label: volumeControl.label,
         description: volumeControl.description,
         row: volumeControl.row,
-        page: ui,
+        group: ui,
         breadcrumb: `${settingsPage.title} · Speaker`,
         extraSearchSources: [pageSearchSource],
       });
@@ -537,7 +521,7 @@ function buildSettingsPage() {
 
     for (const pageSection of settingsPage.sections) {
       const sectionStart = entries.length;
-      panel.appendChild(buildPageSection(pageSection));
+      groupInner.appendChild(buildPageSection(pageSection));
       const sectionEntries = entries.slice(sectionStart);
       ui.entries.push(...sectionEntries);
       const extraSearchSources = [
@@ -552,18 +536,16 @@ function buildSettingsPage() {
           label: entry.knob.label,
           description: entry.knob.doc,
           row: entry.row,
-          page: ui,
+          group: ui,
           breadcrumb,
           extraSearchSources,
         });
       }
     }
-    detail.appendChild(panel);
   }
 
-  search.addEventListener("input", () => renderSearchResults(search.value, indexCard, searchResults));
+  search.addEventListener("input", () => renderSearchResults(search.value, accordion, searchResults));
 
-  wrap.append(index, detail);
   scroll.appendChild(wrap);
   body.appendChild(scroll);
   page.appendChild(body);
@@ -666,13 +648,13 @@ function searchResultRank(
 
 function renderSearchResults(
   /** @type {string} */ query,
-  /** @type {HTMLElement} */ indexCard,
+  /** @type {HTMLElement} */ accordion,
   /** @type {HTMLElement} */ resultsContainer,
 ) {
   const normalizedQuery = query.trim().toLowerCase();
   const terms = normalizedQuery.split(/\s+/).filter(Boolean);
   const hasSearchTerms = terms.length > 0;
-  indexCard.hidden = hasSearchTerms;
+  accordion.hidden = hasSearchTerms;
   resultsContainer.hidden = !hasSearchTerms;
   resultsContainer.replaceChildren();
   if (!hasSearchTerms) return;
@@ -718,8 +700,14 @@ function renderSearchResults(
       unshownTerms = unshownTerms.filter((term) => !normalizedSourceText.includes(term));
     }
     resultButton.addEventListener("click", () => {
-      selectSettingsPage(target.page);
-      requestAnimationFrame(() => {
+      // Clearing the query puts the accordion back on screen — scrolling to a row
+      // inside a hidden container would land nowhere.
+      if (searchInput) searchInput.value = "";
+      renderSearchResults("", accordion, resultsContainer);
+      const wasOpen = target.group.section.classList.contains("open");
+      setGroupOpen(target.group, true);
+      // Scrolling before the group finishes expanding aims at a row still collapsed to nothing.
+      setTimeout(() => {
         target.row.scrollIntoView({ block: "center", behavior: "smooth" });
         const targetControl = target.row.querySelector("input, select, textarea, button");
         if (targetControl instanceof HTMLElement) focusControl(targetControl, { preventScroll: true });
@@ -729,7 +717,7 @@ function renderSearchResults(
           () => target.row.classList.remove("search-hit"),
           { once: true },
         );
-      });
+      }, wasOpen ? 0 : GROUP_EXPAND_MS);
     });
     resultsContainer.appendChild(resultButton);
   }
@@ -1166,9 +1154,9 @@ export function mount(stageEl) {
   stage = stageEl;
   cleanups = [];
   entries.length = 0;
-  pages.length = 0;
+  groups.length = 0;
   searchTargets.length = 0;
-  bodyEl = null;
+  searchInput = null;
   buildSettingsPage();
   loadSettings();
   return {
@@ -1176,7 +1164,7 @@ export function mount(stageEl) {
       for (const fn of cleanups.splice(0)) fn();
       styleEl?.remove();
       styleEl = null;
-      bodyEl = null;
+      searchInput = null;
       stage.replaceChildren();
     },
   };

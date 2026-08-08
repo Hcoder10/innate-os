@@ -16,7 +16,7 @@
 // params.yaml), with robot_config.yaml / motion_control.yaml / arm_config.yaml /
 // velocity_smoother.yaml for the original knobs. These can diverge from a node's
 // code default AND from settings.yaml.template's comments (e.g. the launch sets
-// vertical_fov=80, send_depth=false, log_everything=true — overriding config.py;
+// log_everything=true — overriding config.py's False;
 // both nodes' TTS voice default to the same env-backed id; temporal_ensemble_coeff
 // is 0.0 and consecutive_stops_to_complete is 30 per the loaded YAMLs).
 //
@@ -258,26 +258,33 @@ export const SETTINGS_PAGES = [
   {
     icon: "cloud.svg",
     title: "Brain client",
-    summary: "Sensing uplink, diagnostics, and AI models",
-    note: "Tune what the brain client sends to the Innate agent, plus realtime speech model selection.",
+    summary: "What the brain sees, how often it looks, and its models",
+    note: "Tune the agent loop that runs on the robot, plus realtime speech model selection.",
     sections: [
       {
         title: "Sensing",
-        note: "What the brain client sends to the Innate agent.",
+        note: "What the brain sees each turn. The camera figures ground a pointed pixel to a floor target, so they follow the hardware, not taste.",
         knobs: [
           { path: ["brain_client_node", P, "vertical_fov"], label: "Camera vertical FOV", default: 80, type: "float", unit: "°", doc: "Camera vertical field of view" },
-          { path: ["brain_client_node", P, "pose_image_interval"], label: "Pose-image interval", default: 0.5, type: "float", unit: "s", doc: "Seconds between pose-image sends" },
+          { path: ["brain_client_node", P, "x_cam"], label: "Camera forward offset", default: 0.0197, type: "float", unit: "m", doc: "Camera forward offset from base_link" },
+          { path: ["brain_client_node", P, "height_cam"], label: "Camera height", default: 0.19663, type: "float", unit: "m", doc: "Camera height above the floor" },
           { path: ["brain_client_node", P, "scan_stale_after_sec"], label: "Scan stale after", default: 10, type: "float", unit: "s", doc: "Seconds without a lidar scan before flagging stale" },
-          { path: ["brain_client_node", P, "send_depth"], label: "Send depth images", default: false, type: "bool", doc: "Also send depth images to the agent" },
-          { path: ["brain_client_node", P, "send_arm_camera_image"], label: "Send arm-camera image", default: true, type: "bool", doc: "Also send the arm camera image" },
+          { path: ["brain_client_node", P, "send_arm_camera_image"], label: "Send arm-camera image", default: true, type: "bool", doc: "Also send the arm wrist camera image to the model" },
+        ],
+      },
+      {
+        title: "Turn cadence",
+        note: "How often the brain takes a look. Supervision is the slower rate used while a skill is already running.",
+        knobs: [
+          { path: ["brain_client_node", P, "idle_turn_interval"], label: "Idle interval", default: 3, type: "float", unit: "s", doc: "Seconds between looks when no skill is running" },
+          { path: ["brain_client_node", P, "supervision_turn_interval"], label: "Supervision interval", default: 5, type: "float", unit: "s", doc: "Seconds between looks while a skill runs" },
         ],
       },
       {
         title: "AI models",
-        note: "The brain-runtime and realtime-voice paths use separate fields. Keep each matching model pair in sync.",
+        note: "The brain and the realtime-voice path use separate models. Keep the realtime-voice pair in sync.",
         knobs: [
-          { path: ["brain_client_node", P, "openai_realtime_model"], label: "Realtime model", default: "gpt-4o-realtime-preview", type: "string", doc: "OpenAI realtime model", subsection: "Brain runtime" },
-          { path: ["brain_client_node", P, "openai_transcribe_model"], label: "Transcribe model", default: "gpt-4o-mini-transcribe", type: "string", doc: "OpenAI transcription model", subsection: "Brain runtime" },
+          { path: ["brain_client_node", P, "gemini_model"], label: "Brain model", default: "gemini-3.6-flash", type: "string", doc: "Gemini model powering the local brain", subsection: "Brain" },
           { path: ["input_manager_node", P, "openai_realtime_model"], label: "Realtime model", default: "gpt-4o-realtime-preview", type: "string", doc: "OpenAI realtime model", subsection: "Realtime voice" },
           { path: ["input_manager_node", P, "openai_transcribe_model"], label: "Transcribe model", default: "gpt-4o-mini-transcribe", type: "string", doc: "OpenAI transcription model", subsection: "Realtime voice" },
         ],
@@ -285,7 +292,7 @@ export const SETTINGS_PAGES = [
       {
         title: "Diagnostics",
         knobs: [
-          { path: ["brain_client_node", P, "log_everything"], label: "Verbose logging", default: true, type: "bool", doc: "Verbose vision-agent output logging" },
+          { path: ["brain_client_node", P, "log_everything"], label: "Verbose logging", default: true, type: "bool", doc: "Log every turn's full input" },
         ],
       },
     ],

@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Innate Inc
 
+/** Group expand/collapse duration. Shared so the search jump can wait it out before scrolling. */
+export const GROUP_EXPAND_MS = 220;
+
 /** Page-scoped settings CSS, injected on mount and removed on destroy. */
 export const SETTINGS_STYLE = `
 .settings-page { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg, #0b0b0d); }
@@ -11,49 +14,49 @@ export const SETTINGS_STYLE = `
 .settings-wrap .page-title { margin: 0 0 6px; font-size: 22px; font-weight: 600; letter-spacing: -.02em; }
 .settings-note { color: var(--muted, #8a90a0); font-size: 13px; margin: 0 0 22px; line-height: 1.5; }
 
-.set-detail, .set-pane { display: none; }
-.settings-body.is-detail .set-index { display: none; }
-.settings-body.is-detail .set-detail { display: block; }
-.set-back { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 14px; padding: 0;
-  border: none; background: none; color: var(--muted, #8a90a0); font: inherit; font-size: 13px;
-  font-weight: 500; cursor: pointer; }
-.set-back:hover { color: var(--text, #e7e7ea); }
-.set-back svg { flex: none; }
-.set-pane.active { display: block; }
-
 .set-search { width: 100%; box-sizing: border-box; margin: 0 0 18px; padding: 9px 12px;
   border: 1px solid var(--hairline, #2a2f3a); border-radius: 8px;
   background: rgba(255,255,255,.03); color: inherit; font: inherit; font-size: 13px; }
 .set-search:focus { outline: none; border-color: rgba(117,105,253,.55); background: rgba(0,0,0,.2); }
 .set-search::placeholder { color: var(--muted, #8a90a0); }
-.set-card, .set-card-index, .set-card-search, .set-card-volume {
+.set-card, .set-accordion, .set-card-search, .set-card-volume {
   margin: 0; border: 1px solid var(--hairline, #2a2f3a); border-radius: 10px;
   background: transparent; overflow: hidden;
 }
-.set-index-row { display: flex; align-items: center; gap: 14px; width: 100%; box-sizing: border-box;
-  margin: 0; padding: 14px 16px; border: none; border-bottom: 1px solid var(--hairline, #2a2f3a);
-  border-radius: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+.set-accordion > .set-group + .set-group { border-top: 1px solid var(--hairline, #2a2f3a); }
+.set-group-h { display: flex; align-items: center; gap: 14px; width: 100%; box-sizing: border-box;
+  margin: 0; padding: 14px 16px; border: none; border-radius: 0;
+  background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
   transition: background .12s ease; }
-.set-card-index > .set-index-row:last-child { border-bottom: none; }
-.set-index-row:hover { background: rgba(255,255,255,.035); }
-.set-index-icon { flex: none; display: flex; align-items: center; justify-content: center;
+.set-group-h:hover { background: rgba(255,255,255,.035); }
+.set-group-icon { flex: none; display: flex; align-items: center; justify-content: center;
   width: 32px; height: 32px; border-radius: 8px; background: rgba(255,255,255,.06);
   color: var(--text, #e7e7ea); line-height: 0; }
-.set-index-icon::before { content: ""; display: block; width: 18px; height: 18px;
+.set-group-icon::before { content: ""; display: block; width: 18px; height: 18px;
   background: currentColor;
   -webkit-mask-image: var(--icon-url); mask-image: var(--icon-url);
   -webkit-mask-position: center; mask-position: center;
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
   -webkit-mask-size: contain; mask-size: contain; }
-.set-index-text { flex: 1; min-width: 0; }
-.set-index-label { display: block; font-size: 14px; font-weight: 500; line-height: 1.3;
+.set-group-text { flex: 1; min-width: 0; }
+.set-group-label { display: block; font-size: 14px; font-weight: 500; line-height: 1.3;
   color: var(--text, #e7e7ea); }
-.set-index-summary { display: block; margin-top: 2px; font-size: 12px; line-height: 1.4;
+.set-group-summary { display: block; margin-top: 2px; font-size: 12px; line-height: 1.4;
   color: var(--muted, #8a90a0); }
-.set-index-dot { flex: none; width: 6px; height: 6px; border-radius: 50%;
+.set-group-dot { flex: none; width: 6px; height: 6px; border-radius: 50%;
   background: var(--primary, #7569FD); display: none; }
-.set-index-dot.show { display: block; }
-.set-index-chev { flex: none; color: var(--muted, #8a90a0); opacity: .5; }
+.set-group-dot.show { display: block; }
+.set-group-chev { flex: none; color: var(--muted, #8a90a0); opacity: .5;
+  transition: transform ${GROUP_EXPAND_MS}ms ease; }
+.set-group.open .set-group-chev { transform: rotate(90deg); }
+/* 0fr -> 1fr animates to the body's natural height; the inner div owns the clipping. */
+.set-group-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows ${GROUP_EXPAND_MS}ms ease; }
+.set-group.open .set-group-body { grid-template-rows: 1fr; }
+.set-group-body-inner { overflow: hidden; min-height: 0; }
+/* Padding lives here, not on the clipped element — padding on a 0fr row still paints. */
+.set-group-content { padding: 4px 16px 20px; }
+.set-group-content > .set-page-section:last-child { margin-bottom: 0; }
+.set-group-note { margin: 0 2px 16px; color: var(--muted, #8a90a0); font-size: 12px; line-height: 1.5; }
 .set-search-result { display: block; width: 100%; box-sizing: border-box; margin: 0; padding: 12px 16px;
   border: none; border-bottom: 1px solid var(--hairline, #2a2f3a); border-radius: 0;
   background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
@@ -203,13 +206,13 @@ export const SETTINGS_STYLE = `
   .settings-wrap { padding: 20px 18px 36px; }
   .set-row { gap: 10px 20px; padding: 14px 16px; }
   .set-bar { padding: 12px 18px; }
-  .set-index-row { padding: 13px 14px; gap: 12px; }
+  .set-group-h { padding: 13px 14px; gap: 12px; }
 }
 
 @media (max-width: 560px) {
   .settings-wrap { padding: 16px 14px 28px; }
   .settings-wrap .page-title { font-size: 20px; }
-  .set-card, .set-card-index, .set-card-search, .set-card-volume { border-radius: 8px; }
+  .set-card, .set-accordion, .set-card-search, .set-card-volume { border-radius: 8px; }
   .set-subh { padding: 14px 14px 2px; }
   .set-row { grid-template-columns: 1fr; gap: 10px; padding: 14px; }
   .set-doc { max-width: none; }
@@ -220,7 +223,8 @@ export const SETTINGS_STYLE = `
   /* Toggles stay label | switch — stacking them under the copy looks wrong. */
   .set-row-toggle { grid-template-columns: minmax(0, 1fr) auto; }
   .set-row-toggle .set-ctl { width: auto; justify-content: flex-end; }
-  .set-index-summary { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .set-group-summary { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .set-group-content { padding: 4px 14px 18px; }
   .set-bar { padding: 10px 14px; gap: 8px 10px; }
   .set-save { flex: 1 1 auto; text-align: center; }
   .set-dirty, .set-status { flex: 1 1 100%; order: 3; }
