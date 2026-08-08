@@ -5,20 +5,35 @@
 #     ./scripts/restore_used_robot.sh
 #
 # What it does:
-#   1. Syncs the fixture's user state into place (custom skills/agents, maps,
+#   1. Brings the OS itself to this release: installs the apt dependencies and
+#      rebuilds ros2_ws (via post_update.sh), so the running binaries match the
+#      0.6.0 source this branch pins. Skip with --state-only when you know the
+#      workspace is already built from this branch.
+#   2. Syncs the fixture's user state into place (custom skills/agents, maps,
 #      nav mode/map selection, patrol waypoints), deleting anything extra so the
 #      result matches the snapshot exactly.
-#   2. Restores the large recordings/checkpoints from a blob cache
+#   3. Restores the large recordings/checkpoints from a blob cache
 #      (default /home/jetson1/robot-fixtures/used-robot-2026-08-08/blobs, or a
 #      directory/URL given via BLOB_SOURCE), verifying sizes against
 #      blobs.manifest.tsv (sha256 too with VERIFY=1).
-#   3. Restarts ros-app.service and prints a verification summary.
+#   4. Restarts ros-app.service and prints a verification summary.
 #
 # See sim/used-robot-fixture/README.md for what the snapshot contains.
 set -euo pipefail
 
 REPO="${INNATE_OS_ROOT:-/home/jetson1/innate-os}"
 FIX="$REPO/sim/used-robot-fixture"
+# The release this snapshot was taken on; the branch is this tag plus the fixture.
+FIXTURE_BASE_TAG=0.6.0
+
+BUILD=1
+for arg in "$@"; do
+    case "$arg" in
+        --state-only) BUILD=0 ;;
+        -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+        *) echo "Unknown argument: $arg (use --state-only or --help)" >&2; exit 1 ;;
+    esac
+done
 # Blob source: local hardlink cache when present (instant), else the public
 # bucket the snapshot was published to. Override with BLOB_SOURCE=<dir-or-url>.
 LOCAL_CACHE=/home/jetson1/robot-fixtures/used-robot-2026-08-08/blobs
@@ -32,6 +47,27 @@ MANIFEST="$FIX/blobs.manifest.tsv"
 [ -d "$FIX/state" ] || { echo "Fixture not found at $FIX — are you on the sim-used-robot-* branch?" >&2; exit 1; }
 
 echo "== Restoring used-robot snapshot from $FIX"
+
+# The fixture is only meaningful on top of its own release: the snapshot
+# includes C++ changes (e.g. the recorder executor fix) that only take effect
+# once built, so warn if this checkout isn't the expected tag.
+described=$(git -C "$REPO" describe --tags 2>/dev/null || echo "unknown")
+case "$described" in
+    "$FIXTURE_BASE_TAG"*) ;;
+    *) echo "WARNING: checkout describes as '$described', expected ${FIXTURE_BASE_TAG}-based." >&2
+       echo "         Are you on the sim-used-robot-* branch? Continuing anyway." >&2 ;;
+esac
+
+# --- 0. bring the OS to this release: apt dependencies + workspace rebuild ---
+# Without this the source says 0.6.0 while the running binaries are whatever was
+# built last, and the snapshot does not actually behave like the robot it came from.
+if [ "$BUILD" = "1" ]; then
+    echo "== Installing apt dependencies and rebuilding ros2_ws (this takes a few minutes)"
+    echo "   (skip with --state-only if the workspace is already built from this branch)"
+    sudo -n "$REPO/scripts/update/post_update.sh" --skip-ros-clean
+else
+    echo "== Skipping apt/build step (--state-only)"
+fi
 
 # --- 1. small state (no --delete yet: blobs are restored in step 2, the
 #        cleanup in step 3 removes anything that belongs to neither) ---
@@ -89,9 +125,14 @@ echo "== Restarting ros-app.service"
 sudo -n /usr/bin/systemctl restart ros-app.service
 
 echo "== Waiting for stack (up to 5 min)..."
-if source /opt/ros/humble/setup.bash 2>/dev/null && \
-   source "$REPO/ros2_ws/install/setup.bash" 2>/dev/null && \
-   source "$REPO/config/dds/setup_dds.zsh" 2>/dev/null; then
+# ROS setup scripts reference unset variables, which is fatal under `set -u`
+# (it kills the shell even inside an `if` condition). Relax while sourcing.
+set +eu
+source /opt/ros/humble/setup.bash 2>/dev/null || true
+source "$REPO/ros2_ws/install/setup.bash" 2>/dev/null || true
+source "$REPO/config/dds/setup_dds.zsh" 2>/dev/null || true
+set -eu
+if command -v ros2 >/dev/null 2>&1; then
     mode=""
     for _ in $(seq 1 60); do
         mode=$(timeout -k 3 8 ros2 topic echo /nav/current_mode --once 2>/dev/null | awk '/^data:/{print $2}' || true)

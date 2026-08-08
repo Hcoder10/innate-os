@@ -12,9 +12,20 @@ Check out this branch on the robot and run:
 ./scripts/restore_used_robot.sh
 ```
 
-The script syncs the state below into place (deleting anything extra), restores
-the large blobs, restarts `ros-app.service`, and prints a verification summary.
-`VERIFY=1` additionally sha256-checks every blob.
+By default this does the whole job: installs the release's apt dependencies and
+rebuilds `ros2_ws` via `post_update.sh` (so the running binaries match the 0.6.0
+source this branch pins — the snapshot includes C++ changes that only take
+effect once built), then syncs the state below into place (deleting anything
+extra), restores the large blobs, restarts `ros-app.service`, and prints a
+verification summary.
+
+- `--state-only` skips the apt/build step when the workspace is already built
+  from this branch (seconds instead of minutes).
+- `VERIFY=1` additionally sha256-checks every blob.
+
+Note the apt dependency list is not version-pinned, so the build installs
+*current* packages, not the ones that shipped with 0.6.0. Source and build are
+reproducible; the apt layer is not.
 
 ## What the snapshot contains
 
