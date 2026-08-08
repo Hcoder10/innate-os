@@ -27,6 +27,10 @@ let styleEl = null;
 /** @type {(() => void)[]} */
 let cleanups = [];
 
+// Long enough for several reconnect attempts (1s base, 10s cap), far shorter
+// than a real power cycle — see the reconnect watch in onShutdown().
+const SHUTDOWN_RECONNECT_WATCH_MS = 15_000;
+
 /**
  * @typedef {Object} Entry
  * @property {import("./catalog.js").Knob} knob
@@ -1023,12 +1027,29 @@ async function onShutdown() {
     }
   } catch (err) {
     // The power-off can kill rosbridge before the response frame escapes, so a
-    // link that was up at call time and dropped during it IS a success signal.
+    // link that was up at call time and dropped during it reads as a success —
+    // but the same drop could be an unrelated blip that ate the request. Only
+    // a reconnect can tell them apart: the client retries within seconds, and
+    // a robot that really powered off can't be back inside the watch window
+    // (a full power cycle takes about a minute).
     if (!wasConnected || ros.state === "connected") {
       setStatus("Couldn't reach the robot to shut down: " + (err instanceof Error ? err.message : String(err)), "err");
       shutdownBtn.disabled = false;
       return;
     }
+    const unlisten = ros.onStateChange((state) => {
+      if (state !== "connected") return;
+      stopWatch();
+      shutdownBtn.disabled = false;
+      restartBtn.disabled = false;
+      setStatus("The connection came back — the robot is still up, so the shutdown request was lost. Try again.", "err");
+    });
+    const timer = setTimeout(unlisten, SHUTDOWN_RECONNECT_WATCH_MS);
+    const stopWatch = () => {
+      clearTimeout(timer);
+      unlisten();
+    };
+    cleanups.push(stopWatch);
   }
   // The box is going down, so both power buttons stay disabled until the
   // operator powers it back on and reloads.
