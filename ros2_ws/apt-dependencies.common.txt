@@ -51,6 +51,8 @@ ros-humble-rclcpp
 ros-humble-rclpy
 ros-humble-rclcpp-components
 ros-humble-rmw-zenoh-cpp
+# unversioned Depends of the rmw — unnamed, apt leaves libzenohc.so behind and every node dies at load
+ros-humble-zenoh-cpp-vendor
 ros-humble-launch-xml
 ros-humble-ament-cmake
 ros-humble-ament-cmake-python
