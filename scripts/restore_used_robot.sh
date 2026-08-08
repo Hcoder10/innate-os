@@ -86,9 +86,10 @@ echo "== Waiting for stack (up to 5 min)..."
 if source /opt/ros/humble/setup.bash 2>/dev/null && \
    source "$REPO/ros2_ws/install/setup.bash" 2>/dev/null && \
    source "$REPO/config/dds/setup_dds.zsh" 2>/dev/null; then
+    mode=""
     for _ in $(seq 1 60); do
         mode=$(timeout -k 3 8 ros2 topic echo /nav/current_mode --once 2>/dev/null | awk '/^data:/{print $2}' || true)
-        [ -n "$mode" ] && [ "$mode" != "switching" ] && break
+        if [ -n "$mode" ] && [ "$mode" != "switching" ]; then break; fi
         sleep 5
     done
     echo "   nav mode: ${mode:-<none>} (expected: navigation)"
