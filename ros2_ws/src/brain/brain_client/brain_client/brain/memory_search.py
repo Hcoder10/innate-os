@@ -100,6 +100,7 @@ class _CacheHandle:
     name: str  # "cachedContents/…"
     revision: int
     map_name: str | None
+    fingerprint: str
     memories: tuple[Memory, ...]  # frame numbers resolve against what was cached, not the live store
     expires_monotonic: float
 
@@ -267,9 +268,11 @@ class MemorySearch:
 
     def _usable_cache(self, snapshot: MemorySnapshot) -> _CacheHandle | None:
         """The handle a search may ride right now — fresh OR stale (the delta
-        covers staleness); only the wrong map or expiry disqualifies it."""
+        covers staleness); only the wrong map or expiry disqualifies it. The
+        delta's supersede/retire notes trust stable ids, which a same-name
+        remap resets — so the map is matched by fingerprint, not just name."""
         cache = self._cache
-        if cache is None or cache.map_name != snapshot.map_name:
+        if cache is None or cache.map_name != snapshot.map_name or cache.fingerprint != snapshot.fingerprint:
             return None
         return cache if time.monotonic() < cache.expires_monotonic else None
 
@@ -347,6 +350,7 @@ class MemorySearch:
                 name=name,
                 revision=snapshot.revision,
                 map_name=snapshot.map_name,
+                fingerprint=snapshot.fingerprint,
                 memories=included,
                 expires_monotonic=expires,
             ),
@@ -369,10 +373,10 @@ class MemorySearch:
             )
         found, frame_id, explanation = parsed
         # The coordinates only mean anything on the map the frames came from —
-        # a map switched mid-flight voids the verdict rather than steering the
-        # robot toward another map's frame.
+        # a map switched (or remapped under its own name) mid-flight voids the
+        # verdict rather than steering the robot toward another map's frame.
         live = self._store.snapshot()
-        if live.map_name != snapshot.map_name:
+        if live.map_name != snapshot.map_name or live.fingerprint != snapshot.fingerprint:
             return SearchVerdict(
                 query=query,
                 found=False,

@@ -45,6 +45,9 @@ class MemorySnapshot:
     map_name: str | None
     revision: int
     memories: tuple[Memory, ...]
+    # Same-name remaps reset memory ids, so name equality alone cannot prove
+    # two snapshots share a coordinate frame — the fingerprint can.
+    fingerprint: str = ""
 
 
 class MemoryStore:
@@ -92,7 +95,7 @@ class MemoryStore:
 
     def snapshot(self) -> MemorySnapshot:
         with self._lock:
-            return MemorySnapshot(self._map_name, self._revision, tuple(self._memories))
+            return MemorySnapshot(self._map_name, self._revision, tuple(self._memories), self._fingerprint)
 
     @property
     def fingerprint(self) -> str:
