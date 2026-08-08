@@ -561,7 +561,7 @@ function buildSettingsPage() {
   restartBtn = buttonEl("set-restart", "Restart robot", onRestart);
   restartBtn.title = "Restart the robot to apply saved settings (same as innate restart)";
   shutdownBtn = buttonEl("set-restart set-shutdown", "Shut down", onShutdown);
-  shutdownBtn.title = "Power off the Jetson (press the power button to turn it back on)";
+  shutdownBtn.title = "Power off the Jetson (unplug and replug the battery to bring it back up)";
   statusEl = document.createElement("span");
   bar.append(saveBtn, dirtyEl, statusEl, resetAllBtn, restartBtn, shutdownBtn);
   page.appendChild(bar);
@@ -1103,7 +1103,7 @@ async function onRestart() {
 }
 
 async function onShutdown() {
-  if (!window.confirm("Shut down the robot now? The Jetson will power off — press its power button to turn it back on.")) {
+  if (!window.confirm("Shut down the robot now? The Jetson will power off — the only way back up is to unplug the battery and plug it in again.")) {
     return;
   }
   shutdownBtn.disabled = true;
@@ -1144,7 +1144,7 @@ async function onShutdown() {
     cleanups.push(unlisten);
   }
   // The box is going down, so both power buttons stay disabled until the
-  // operator powers it back on and reloads.
+  // operator power-cycles the battery and reloads.
   restartBtn.disabled = true;
   setStatus("Shutting down — the robot will power off in a few seconds.", "ok");
 }
