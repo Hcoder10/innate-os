@@ -1103,6 +1103,10 @@ class Skill(ABC):
             except Exception as e:
                 self.logger.error(f"Error sending feedback for skill {self.name}: {e}")
 
+    def _send_feedback(self, message: str, image_b64: str | None = None) -> None:
+        """Deprecated pre-#542 name for feedback(), kept for existing workspace skills."""
+        self.feedback(message, image_b64)
+
     def set_feedback_callback(self, callback: Callable[[str, str | None], None]) -> None:
         self._feedback_callback = callback
         self.logger.debug(f"Feedback callback set for skill {self.name}.")
