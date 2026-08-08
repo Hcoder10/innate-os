@@ -27,9 +27,10 @@ let styleEl = null;
 /** @type {(() => void)[]} */
 let cleanups = [];
 
-// Long enough for several reconnect attempts (1s base, 10s cap), far shorter
-// than a real power cycle — see the reconnect watch in onShutdown().
-const SHUTDOWN_RECONNECT_WATCH_MS = 15_000;
+// A reconnect faster than this after a shutdown-time drop means the request
+// was lost (a real power cycle takes about a minute); slower means the robot
+// was powered back on — see the reconnect watch in onShutdown().
+const SHUTDOWN_QUICK_RECONNECT_MS = 15_000;
 
 /**
  * @typedef {Object} Entry
@@ -1028,28 +1029,29 @@ async function onShutdown() {
   } catch (err) {
     // The power-off can kill rosbridge before the response frame escapes, so a
     // link that was up at call time and dropped during it reads as a success —
-    // but the same drop could be an unrelated blip that ate the request. Only
-    // a reconnect can tell them apart: the client retries within seconds, and
-    // a robot that really powered off can't be back inside the watch window
-    // (a full power cycle takes about a minute).
+    // but the same drop could be an unrelated blip that ate the request. A
+    // reconnect settles it: whether the request was lost or the robot was
+    // powered back on, a live link means the robot is up and the buttons must
+    // work again, so the watch never expires — elapsed time only picks the
+    // message.
     if (!wasConnected || ros.state === "connected") {
       setStatus("Couldn't reach the robot to shut down: " + (err instanceof Error ? err.message : String(err)), "err");
       shutdownBtn.disabled = false;
       return;
     }
+    const droppedAt = performance.now();
     const unlisten = ros.onStateChange((state) => {
       if (state !== "connected") return;
-      stopWatch();
+      unlisten();
       shutdownBtn.disabled = false;
       restartBtn.disabled = false;
-      setStatus("The connection came back — the robot is still up, so the shutdown request was lost. Try again.", "err");
+      if (performance.now() - droppedAt < SHUTDOWN_QUICK_RECONNECT_MS) {
+        setStatus("The connection came back — the robot is still up, so the shutdown request was lost. Try again.", "err");
+      } else {
+        setStatus("Reconnected — the robot is back online.", "ok");
+      }
     });
-    const timer = setTimeout(unlisten, SHUTDOWN_RECONNECT_WATCH_MS);
-    const stopWatch = () => {
-      clearTimeout(timer);
-      unlisten();
-    };
-    cleanups.push(stopWatch);
+    cleanups.push(unlisten);
   }
   // The box is going down, so both power buttons stay disabled until the
   // operator powers it back on and reloads.
