@@ -42,13 +42,16 @@ the large blobs, restarts `ros-app.service`, and prints a verification summary.
 - `~/patrol_waypoints.json` (one saved waypoint, `dock`)
 
 **Large blobs (`blobs.manifest.tsv`, 16 files ≈ 3.8 GB)**
-Files > 45 MB are not in git. The restore script copies them from
-`BLOB_SOURCE` (default `/home/jetson1/robot-fixtures/used-robot-2026-08-08/blobs`,
-a hardlink cache created when this snapshot was taken; an `https://` base URL
-works too). To seed another robot, copy that directory across first:
+Files > 45 MB are not in git. The restore script fetches them automatically:
+it prefers the local hardlink cache
+(`/home/jetson1/robot-fixtures/used-robot-2026-08-08/blobs`, present on the
+robot the snapshot was taken from) and otherwise downloads from the public
+bucket `https://storage.googleapis.com/innate-robot-fixtures/used-robot-2026-08-08`
+(sizes checked against the manifest; `VERIFY=1` adds sha256). Override either
+with `BLOB_SOURCE=<dir-or-url>`. So on any robot the whole flow is just:
 
 ```bash
-rsync -a jetson1@mars-the-3rd:/home/jetson1/robot-fixtures/ /home/jetson1/robot-fixtures/
+git checkout sim/used-robot-2026-08-08 && ./scripts/restore_used_robot.sh
 ```
 
 The TRT engine blob is machine-specific; if it is missing or mismatched the

@@ -19,7 +19,13 @@ set -euo pipefail
 
 REPO="${INNATE_OS_ROOT:-/home/jetson1/innate-os}"
 FIX="$REPO/sim/used-robot-fixture"
-BLOB_SOURCE="${BLOB_SOURCE:-/home/jetson1/robot-fixtures/used-robot-2026-08-08/blobs}"
+# Blob source: local hardlink cache when present (instant), else the public
+# bucket the snapshot was published to. Override with BLOB_SOURCE=<dir-or-url>.
+LOCAL_CACHE=/home/jetson1/robot-fixtures/used-robot-2026-08-08/blobs
+GCS_URL=https://storage.googleapis.com/innate-robot-fixtures/used-robot-2026-08-08
+if [ -z "${BLOB_SOURCE:-}" ]; then
+    if [ -d "$LOCAL_CACHE" ]; then BLOB_SOURCE="$LOCAL_CACHE"; else BLOB_SOURCE="$GCS_URL"; fi
+fi
 MANIFEST="$FIX/blobs.manifest.tsv"
 
 [ "$(id -u)" -eq 0 ] && { echo "Run as the robot user, not root." >&2; exit 1; }
