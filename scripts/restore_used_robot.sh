@@ -29,7 +29,7 @@ fi
 MANIFEST="$FIX/blobs.manifest.tsv"
 
 [ "$(id -u)" -eq 0 ] && { echo "Run as the robot user, not root." >&2; exit 1; }
-[ -d "$FIX/state" ] || { echo "Fixture not found at $FIX — are you on the sim/used-robot-* branch?" >&2; exit 1; }
+[ -d "$FIX/state" ] || { echo "Fixture not found at $FIX — are you on the sim-used-robot-* branch?" >&2; exit 1; }
 
 echo "== Restoring used-robot snapshot from $FIX"
 
