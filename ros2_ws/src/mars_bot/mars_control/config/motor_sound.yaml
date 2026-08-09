@@ -5,10 +5,27 @@
 
       # Which costume the acceleration wears. "motor" is the electric whine
       # modelled in motor_synth; the rest live in accel_voices and are pure
-      # character. Switchable live:
+      # character. Switchable live, no rebuild:
       #   ros2 param set /motor_sound motor_sound.voice purr
-      # motor | lip_trill | mars_voice | whistle | music_box | chiptune |
-      # purr | hyperdrive | choir
+      #
+      #   motor        the electric whine (below tunes only this one)
+      #   lip_trill    a mouth going brrrrrr
+      #   mars_voice   the robot's own voice, flapped into that trill
+      #   mars_song    the same clip sung up a scale
+      #   kazoo        a hum with a membrane rattling on it
+      #   whistle      someone whistling as they zoom past
+      #   choir        a tiny choir going "ah"
+      #   jetski       Swiss Army Man propulsion
+      #   acappella    Swiss Army Man's all-mouth score
+      #   music_box    pentatonic plinks, climbing and quickening
+      #   harp         glissando runs that reset and climb
+      #   disco        four on the floor, BPM tied to road speed
+      #   chiptune     8-bit racer
+      #   bagpipe      fixed drone, climbing chanter
+      #   purr         a large cat, pleased about the speed
+      #   steam_train  chuffs that quicken, whistle at the top
+      #   theremin     wavering swoop, sliding into every pitch
+      #   hyperdrive   detuned saws opening up
       voice: "motor"
 
       volume: 0.50                # 0..1, before the ALSA softvol Master level

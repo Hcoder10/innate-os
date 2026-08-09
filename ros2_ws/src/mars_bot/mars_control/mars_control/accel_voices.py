@@ -11,14 +11,34 @@ it as a *wrong* motor, and it is free to be charming instead.
 Every voice answers the same question the motor does -- how fast is the robot
 going, and how hard is it working -- and each answers in a different register:
 
-* ``lip_trill``  a mouth doing engine noises. Buzz, lip flutter, vowel.
-* ``mars_voice`` the robot's own Cartesia voice, looped and revved.
-* ``whistle``    someone whistling as they zoom past.
-* ``music_box``  a pentatonic ladder that climbs and quickens.
-* ``chiptune``   an 8-bit racer, pulse wave and arpeggio.
-* ``purr``       a large cat, pleased about the speed.
-* ``hyperdrive`` detuned saws opening up, the polite spaceship.
-* ``choir``      a tiny choir going "ah", rising with the robot.
+Made of mouths:
+
+* ``lip_trill``   a mouth doing engine noises. Buzz, lip flutter, vowel.
+* ``mars_voice``  the robot's own voice, flapped into the trill it cannot say.
+* ``mars_song``   that same clip struck as notes, singing up a scale.
+* ``kazoo``       a hum with a membrane rattling against it.
+* ``whistle``     someone whistling as they zoom past.
+* ``choir``       a tiny choir going "ah", rising with the robot.
+
+Swiss Army Man, both halves:
+
+* ``jetski``      propulsion by flatulence, sputtering then settling.
+* ``acappella``   the all-mouth score that makes the above sincere.
+
+Musical, where speed is tempo and pitch:
+
+* ``music_box``   a pentatonic ladder that climbs and quickens.
+* ``harp``        the same idea poured -- glissando runs that reset and climb.
+* ``disco``       four on the floor, BPM tied to road speed.
+* ``chiptune``    an 8-bit racer, pulse wave and arpeggio.
+* ``bagpipe``     a fixed drone with a chanter climbing over it.
+
+Creatures and machines:
+
+* ``purr``        a large cat, pleased about the speed.
+* ``steam_train`` chuffs that quicken, alternating cylinders, a whistle on top.
+* ``theremin``    a hand wavering near an aerial, sliding into every pitch.
+* ``hyperdrive``  detuned saws opening up, the polite spaceship.
 
 They share the motor's *feel* by construction: the same underdamped spring
 (:class:`~mars_control.motor_synth.Rotor`) lags the heard speed behind the real
@@ -171,6 +191,106 @@ def _voiced(phase: np.ndarray, freq: np.ndarray, harmonics: int, vowel: Vowel) -
     for n in range(1, harmonics + 1):
         out += (_resonance(n * freq, vowel) / n) * np.sin(n * phase)
     return out
+
+
+def _cycle(phase: np.ndarray) -> np.ndarray:
+    """Position within each turn of a phase ramp: 0 at the strike, rising to 1.
+
+    Turns any oscillator into a repeating envelope generator, which is how the
+    chuffing, sputtering and four-on-the-floor voices get a rhythm without
+    keeping a pool of events in flight.
+    """
+    return (phase / (2.0 * np.pi)) % 1.0
+
+
+@dataclass
+class Metronome:
+    """Fires a whole number of events per block at a rate that may change every
+    block, banking the remainder so the average rate stays exact."""
+
+    clock: float = 0.0
+
+    def tick(self, rate_hz: float, dt: float) -> int:
+        self.clock += rate_hz * dt
+        fired = int(self.clock)
+        self.clock -= fired
+        return fired
+
+
+class PluckBank:
+    """A pool of struck, decaying notes rendered together.
+
+    Every note is generated from its absolute age rather than an advancing
+    phase, so where the block boundaries happen to fall across it changes
+    nothing about how it sounds.
+    """
+
+    def __init__(self, sample_rate: int, partials: tuple[tuple[float, float, float], ...], life: float = 1.6) -> None:
+        self._rate = sample_rate
+        self._partials = partials
+        self._life = life
+        self._notes: list[tuple[float, int, float]] = []
+
+    def strike(self, freq: float, amp: float = 1.0) -> None:
+        # A ceiling on simultaneous notes, not a musical decision: at the top
+        # of a glissando the strike rate outruns the decay.
+        if len(self._notes) >= 32:
+            self._notes.pop(0)
+        self._notes.append((freq, 0, amp))
+
+    def clear(self) -> None:
+        self._notes.clear()
+
+    def render(self, frames: int) -> np.ndarray:
+        out = np.zeros(frames)
+        span = np.arange(frames)
+        alive: list[tuple[float, int, float]] = []
+        for freq, age, amp in self._notes:
+            time = (age + span) / self._rate
+            for ratio, amplitude, decay in self._partials:
+                out += amp * amplitude * np.exp(-decay * time) * np.sin(2.0 * np.pi * freq * ratio * time)
+            if age + frames < self._life * self._rate:
+                alive.append((freq, age + frames, amp))
+        self._notes = alive
+        return out
+
+
+_LOOPS: dict[tuple[str, int], np.ndarray | None] = {}
+
+
+def load_loop(name: str, sample_rate: int) -> np.ndarray | None:
+    """A shipped loop, resampled to the audio rate and peak-normalised.
+
+    Cached because two voices share the one clip, and because reading it on the
+    audio thread's first block would be a disk hit inside the callback.
+    """
+    key = (name, sample_rate)
+    if key in _LOOPS:
+        return _LOOPS[key]
+
+    path = asset_path(name)
+    if path is None:
+        _LOOPS[key] = None
+        return None
+    clip, clip_rate = load_wav(path)
+    # Resample once at load, so playback rate means pitch and only pitch.
+    if clip_rate != sample_rate:
+        source = np.arange(len(clip)) / clip_rate
+        target = np.arange(int(len(clip) * sample_rate / clip_rate)) / sample_rate
+        clip = np.interp(target, source, clip)
+    peak = float(np.abs(clip).max())
+    _LOOPS[key] = clip / peak if peak > 1e-6 else clip
+    return _LOOPS[key]
+
+
+def _read_loop(loop: np.ndarray, index: np.ndarray) -> np.ndarray:
+    """Linearly interpolated read, wrapping. The assets are cut to whole pitch
+    periods and crossfaded, so a plain wrap is seamless."""
+    length = len(loop)
+    position = index % length
+    floor = np.floor(position).astype(np.int64)
+    frac = position - floor
+    return loop[floor] * (1.0 - frac) + loop[(floor + 1) % length] * frac
 
 
 def asset_path(name: str) -> Path | None:
@@ -340,12 +460,18 @@ class LipTrill(AccelVoice):
 
 
 class MarsVoice(AccelVoice):
-    """The robot's own Cartesia voice, looped and revved.
+    """The robot's own voice, revving itself.
 
-    A seamless loop of MARS saying "brrrrr" is played back at a rate that rises
-    with speed. Resampling moves pitch and formants together, so at redline it
-    is audibly the same robot doing a chipmunk impression of itself -- which is
-    the joke, and why it is not corrected for.
+    The trill is built, not bought. TTS will not sustain a "brrrrr" -- ask it
+    and you get a consonant and a short vowel -- so the asset is the longest
+    steadily voiced stretch the robot's voice does hold, an "rrr" around
+    150 Hz, and the flapping is done here at 19-34 Hz. That is what a lip trill
+    physically is anyway: a steady voiced source chopped by the lips.
+
+    On top of that the loop is played faster as the robot speeds up, which
+    moves pitch and formants together, so at redline it is audibly the same
+    robot doing an impression of itself. That is the joke, so it is not
+    corrected for.
 
     Falls back to :class:`LipTrill` if the clip is missing, so a workspace that
     never ran the fetch script still makes a mouth noise rather than silence.
@@ -353,32 +479,20 @@ class MarsVoice(AccelVoice):
 
     slug = "mars_voice"
     label = "MARS Voice"
-    blurb = "the robot's own voice, revving itself"
-    trim = 1.27
+    blurb = "the robot's own voice, flapped into a brrrrr"
+    trim = 2.28
 
     ASSET = "mars_voice_brr.wav"
     RATE = (0.82, 1.85)
+    TRILL = (19.0, 34.0)
 
     def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
         super().__init__(sample_rate, feel, seed)
         self._speed_glide = Glide(self.RATE[0])
         self._cursor = 0.0
-        self._loop: np.ndarray | None = None
-        self._understudy: LipTrill | None = None
-
-        path = asset_path(self.ASSET)
-        if path is None:
-            self._understudy = LipTrill(sample_rate, feel, seed)
-            return
-        clip, clip_rate = load_wav(path)
-        # Resample once at load so playback rate means pitch only, never a
-        # sample-rate mismatch.
-        if clip_rate != sample_rate:
-            source = np.arange(len(clip)) / clip_rate
-            target = np.arange(int(len(clip) * sample_rate / clip_rate)) / sample_rate
-            clip = np.interp(target, source, clip)
-        peak = float(np.abs(clip).max())
-        self._loop = clip / peak if peak > 1e-6 else clip
+        self._trill_phase = 0.0
+        self._loop = load_loop(self.ASSET, sample_rate)
+        self._understudy = LipTrill(sample_rate, feel, seed) if self._loop is None else None
 
     def _voice(self, drive: Drive) -> np.ndarray:
         if self._loop is None:
@@ -387,16 +501,15 @@ class MarsVoice(AccelVoice):
         low, high = self.RATE
         rate = self._speed_glide.to(low + (high - low) * drive.speed_frac, drive.frames)
         cursor = self._cursor + np.cumsum(rate)
-        length = len(self._loop)
-        self._cursor = float(cursor[-1] % length)
+        self._cursor = float(cursor[-1] % len(self._loop))
+        voiced = _read_loop(self._loop, cursor)
 
-        # The asset is already crossfaded end-to-start, so a plain wrap is
-        # seamless and the read needs no windowing.
-        index = cursor % length
-        floor = np.floor(index).astype(np.int64)
-        frac = index - floor
-        nxt = (floor + 1) % length
-        return 1.15 * (self._loop[floor] * (1.0 - frac) + self._loop[nxt] * frac)
+        trill_low, trill_high = self.TRILL
+        trill_hz = trill_low + (trill_high - trill_low) * drive.speed_frac
+        trill = self._trill_phase + 2.0 * np.pi * trill_hz * drive.steps
+        self._trill_phase = float(trill[-1] % (2.0 * np.pi))
+        flap = 0.5 * (1.0 + 0.82 * np.sin(trill) + 0.18 * np.sin(2.0 * trill))
+        return 1.45 * voiced * (0.14 + 0.86 * flap**1.3)
 
 
 class Whistle(AccelVoice):
@@ -456,31 +569,19 @@ class MusicBox(AccelVoice):
 
     def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
         super().__init__(sample_rate, feel, seed)
-        self._clock = 0.0
+        self._metronome = Metronome()
+        self._bank = PluckBank(sample_rate, self.PARTIALS)
         self._step = 0
-        self._notes: list[tuple[float, int]] = []
 
     def _quiet(self, dt: float) -> None:
-        self._notes.clear()
+        self._bank.clear()
 
     def _voice(self, drive: Drive) -> np.ndarray:
         low, high = self.RATE
         rate = low + (high - low) * drive.speed_frac
-        self._clock += rate * drive.dt
-        while self._clock >= 1.0:
-            self._clock -= 1.0
-            self._notes.append((self._next_hz(drive.speed_frac), 0))
-
-        out = np.zeros(drive.frames)
-        alive: list[tuple[float, int]] = []
-        for freq, age in self._notes:
-            time = (age + np.arange(drive.frames)) / self.sample_rate
-            for ratio, amplitude, decay in self.PARTIALS:
-                out += amplitude * np.exp(-decay * time) * np.sin(2.0 * np.pi * freq * ratio * time)
-            if age + drive.frames < 1.6 * self.sample_rate:
-                alive.append((freq, age + drive.frames))
-        self._notes = alive
-        return 0.5 * out
+        for _ in range(self._metronome.tick(rate, drive.dt)):
+            self._bank.strike(self._next_hz(drive.speed_frac))
+        return 0.5 * self._bank.render(drive.frames)
 
     def _next_hz(self, speed_frac: float) -> float:
         """Walk up the scale with speed, ornamented so a held speed still plays
@@ -661,8 +762,466 @@ class Choir(AccelVoice):
         return 1.9 * sung + breath
 
 
+class JetSki(AccelVoice):
+    """Swiss Army Man: propulsion by flatulence.
+
+    Structurally it is the lip trill's rude cousin -- a low voiced buzz chopped
+    by a deep modulator -- but the sputter is the point. At idle the pulses are
+    slow and their depth wanders, so it fires unevenly; as speed rises they
+    crowd together and even out into the flat drone of an outboard motor. That
+    transition from splutter to drive *is* the acceleration cue.
+    """
+
+    slug = "jetski"
+    label = "Jet Ski"
+    blurb = "Swiss Army Man. Propulsion by flatulence, and it does accelerate"
+    trim = 1.04
+
+    F0 = (54.0, 104.0)
+    SPUTTER = (7.0, 27.0)
+    VOWEL: Vowel = ((250.0, 150.0, 1.0), (620.0, 240.0, 0.45), (1500.0, 400.0, 0.10))
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._pitch = Glide(self.F0[0])
+        self._buzz_phase = 0.0
+        self._sputter_phase = 0.0
+        self._wet = Stream(bandpass_kernel(sample_rate, 150.0, 900.0, taps=127))
+        self._wobble = 0.0
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        low, high = self.F0
+        freq = self._pitch.to(low + (high - low) * drive.speed_frac, drive.frames)
+        harmonics = min(MAX_HARMONICS, max(6, int(2600.0 / max(freq[0], 1.0))))
+        buzz_phase, self._buzz_phase = _phase(self._buzz_phase, freq, self.sample_rate)
+        body = _voiced(buzz_phase, freq, harmonics, self.VOWEL)
+
+        sputter_low, sputter_high = self.SPUTTER
+        rate = sputter_low + (sputter_high - sputter_low) * drive.speed_frac
+        sputter, self._sputter_phase = _phase(self._sputter_phase, np.full(drive.frames, rate), self.sample_rate)
+
+        # The unevenness dies away with speed: a labouring engine hunts, one at
+        # full chat does not.
+        self._wobble += (float(self._rng.standard_normal()) - self._wobble) * 0.25
+        depth = (0.92 - 0.30 * drive.speed_frac) * (1.0 + 0.22 * self._wobble * (1.0 - drive.speed_frac))
+        burst = np.exp(-_cycle(sputter) * (7.0 - 4.5 * drive.speed_frac))
+        gate = 1.0 - depth + depth * burst
+
+        wet = self._wet(self._noise(drive.frames)) * (0.35 + 0.25 * drive.load)
+        return 1.25 * (body + wet) * gate
+
+
+class Acappella(AccelVoice):
+    """Swiss Army Man's other half: the score, sung by mouths.
+
+    That film's music is voices -- humming, chanting, breathing -- and nothing
+    else, which is why a corpse-powered jet ski plays as sincere rather than
+    merely gross. Three hummed voices hold a chord here, pulsed on a beat that
+    quickens with speed and stepping through a small motif, so the robot
+    accelerates by singing faster rather than louder.
+    """
+
+    slug = "acappella"
+    label = "A Cappella"
+    blurb = "Swiss Army Man's score: three mouths humming you up to speed"
+    trim = 1.87
+
+    F0 = (150.0, 300.0)
+    BEAT = (1.7, 4.6)
+    MOTIF = (0, 7, 12, 7, 5, 12)
+    DETUNE = (-0.05, 0.0, 0.06)
+    VOWEL: Vowel = ((300.0, 130.0, 1.0), (1150.0, 220.0, 0.34), (2500.0, 340.0, 0.07))
+    """A closed hum: "mm", not "ah" -- the mouth shut, which is what makes it
+    read as someone humming rather than a synthesiser holding a chord."""
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._pitch = Glide(self.F0[0])
+        self._phases = np.zeros(len(self.DETUNE))
+        self._beat_phase = 0.0
+        self._metronome = Metronome()
+        self._step = 0
+        self._breath = Stream(bandpass_kernel(sample_rate, 900.0, 3500.0))
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        beat_low, beat_high = self.BEAT
+        beat_hz = beat_low + (beat_high - beat_low) * drive.speed_frac
+        for _ in range(self._metronome.tick(beat_hz, drive.dt)):
+            self._step += 1
+
+        low, high = self.F0
+        root = low + (high - low) * drive.speed_frac
+        semitones = self.MOTIF[self._step % len(self.MOTIF)]
+        freq = self._pitch.to(root * 2.0 ** (semitones / 12.0), drive.frames)
+
+        harmonics = min(MAX_HARMONICS, max(4, int(4000.0 / max(freq[0], 1.0))))
+        sung = np.zeros(drive.frames)
+        for index, offset in enumerate(self.DETUNE):
+            voice_hz = freq * 2.0 ** (offset / 12.0)
+            phase, self._phases[index] = _phase(float(self._phases[index]), voice_hz, self.sample_rate)
+            sung += _voiced(phase, voice_hz, harmonics, self.VOWEL)
+        sung /= len(self.DETUNE)
+
+        beat, self._beat_phase = _phase(self._beat_phase, np.full(drive.frames, beat_hz), self.sample_rate)
+        position = _cycle(beat)
+        swell = np.minimum(position * 22.0, 1.0) * np.exp(-2.4 * position)
+        breath = self._breath(self._noise(drive.frames)) * 0.05 * swell
+        return 2.6 * sung * (0.10 + 0.90 * swell) + breath
+
+
+class SteamTrain(AccelVoice):
+    """A little steam engine, chuffing faster as it goes.
+
+    Chuff rate is the speedometer, and it is the one engine sound everybody can
+    already read without being told. Two cylinders fire alternately, so every
+    other chuff is slightly softer and darker -- get that wrong and it sounds
+    like a machine rather than a locomotive.
+    """
+
+    slug = "steam_train"
+    label = "Steam Train"
+    blurb = "chuff-chuff, quicker and quicker, with a whistle at the top"
+    trim = 1.05
+
+    CHUFF = (1.8, 9.0)
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._chuff_phase = 0.0
+        self._steam = Stream(bandpass_kernel(sample_rate, 300.0, 2400.0, taps=127))
+        self._rumble = Stream(bandpass_kernel(sample_rate, 170.0, 420.0, taps=127))
+        self._whistle_phase = 0.0
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        low, high = self.CHUFF
+        rate = low + (high - low) * drive.speed_frac
+        chuff, self._chuff_phase = _phase(self._chuff_phase, np.full(drive.frames, rate), self.sample_rate)
+
+        position = _cycle(chuff)
+        burst = np.exp(-position * 11.0)
+        # Half-rate square: the alternating cylinder, quieter on its stroke.
+        cylinder = np.where(_cycle(chuff / 2.0) < 0.5, 1.0, 0.72)
+
+        steam = self._steam(self._noise(drive.frames)) * burst * cylinder
+        rumble = self._rumble(self._noise(drive.frames)) * (0.25 + 0.5 * drive.speed_frac)
+
+        whistle = 0.0
+        if drive.speed_frac > 0.82:
+            lean = (drive.speed_frac - 0.82) / 0.18
+            phase, self._whistle_phase = _phase(
+                self._whistle_phase, np.full(drive.frames, 620.0 + 40.0 * drive.speed_frac), self.sample_rate
+            )
+            whistle = lean * 0.16 * (np.sin(phase) + 0.4 * np.sin(1.5 * phase))
+        return 1.5 * steam + 0.5 * rumble + whistle
+
+
+class Disco(AccelVoice):
+    """Four on the floor, and the tempo is the speedometer.
+
+    Everyone already knows how to hear a groove speeding up, so tying beats per
+    minute to metres per second needs no explaining. It is the only voice here
+    where the robot is not making a noise so much as playing you a track.
+    """
+
+    slug = "disco"
+    label = "Disco"
+    blurb = "a four-on-the-floor groove whose tempo is your speed"
+    trim = 2.99
+
+    BEAT = (1.7, 4.4)
+    BASSLINE = (0, 0, 7, 5, 0, 0, 3, 7)
+    ROOT_HZ = 65.4
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._beat_phase = 0.0
+        self._metronome = Metronome()
+        self._step = 0
+        self._kick_phase = 0.0
+        self._bass_phase = 0.0
+        self._hat = Stream(bandpass_kernel(sample_rate, 2600.0, 6000.0))
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        low, high = self.BEAT
+        beat_hz = low + (high - low) * drive.speed_frac
+        for _ in range(self._metronome.tick(beat_hz, drive.dt)):
+            self._step += 1
+
+        beat, self._beat_phase = _phase(self._beat_phase, np.full(drive.frames, beat_hz), self.sample_rate)
+        position = _cycle(beat)
+
+        # The kick's pitch drops through its own decay -- that fall is what the
+        # ear reads as weight, and it costs one envelope.
+        thump = np.exp(-position * 16.0)
+        kick_hz = 62.0 + 78.0 * thump
+        kick_phase, self._kick_phase = _phase(self._kick_phase, kick_hz * np.ones(drive.frames), self.sample_rate)
+        kick = np.sin(kick_phase) * thump
+
+        offbeat = np.exp(-((_cycle(beat + np.pi) ** 0.5) * 14.0))
+        hat = self._hat(self._noise(drive.frames)) * offbeat * 0.30
+
+        semitones = self.BASSLINE[self._step % len(self.BASSLINE)]
+        bass_hz = self.ROOT_HZ * 2.0 ** (semitones / 12.0) * 2.0
+        bass_phase, self._bass_phase = _phase(self._bass_phase, bass_hz * np.ones(drive.frames), self.sample_rate)
+        bass = _pulse(bass_phase, 12, 0.32) * np.exp(-position * 3.2) * 0.30
+
+        return 1.15 * kick + bass + hat
+
+
+class Theremin(AccelVoice):
+    """A hand wavering near an aerial.
+
+    Almost a sine, like the whistle, but the opposite temperament: it slides
+    into every pitch instead of arriving, and the vibrato is wide and slow
+    enough to sound like an unsteady hand rather than an effect.
+    """
+
+    slug = "theremin"
+    label = "Theremin"
+    blurb = "a wavering sci-fi swoop, sliding up to speed"
+    trim = 0.67
+
+    F0 = (190.0, 690.0)
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._pitch = Glide(self.F0[0])
+        self._slide = self.F0[0]
+        self._tone_phase = 0.0
+        self._vibrato_phase = 0.0
+        self._drift = 0.0
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        low, high = self.F0
+        # A slower glide than the other voices use: on a theremin the slide
+        # between notes is the instrument, not a transition between them. The
+        # slide is tracked separately from the Glide, which still has to ramp
+        # within the block -- smooth them both with one variable and every
+        # block starts where it ends, which is a stair, not a slide.
+        target = low + (high - low) * drive.speed_frac
+        self._slide += (target - self._slide) * min(drive.dt / 0.22, 1.0)
+        freq = self._pitch.to(self._slide, drive.frames)
+
+        self._drift += (float(self._rng.standard_normal()) * 0.4 - self._drift) * 0.08
+        vibrato = self._vibrato_phase + 2.0 * np.pi * (5.6 + 0.6 * self._drift) * drive.steps
+        self._vibrato_phase = float(vibrato[-1] % (2.0 * np.pi))
+        freq = freq * (1.0 + 0.028 * np.sin(vibrato) + 0.004 * self._drift)
+
+        phase, self._tone_phase = _phase(self._tone_phase, freq, self.sample_rate)
+        tone = np.sin(phase) + 0.16 * np.sin(2.0 * phase) + 0.05 * np.sin(3.0 * phase)
+        return 0.9 * tone * (0.93 + 0.07 * np.sin(vibrato * 0.5))
+
+
+class Bagpipe(AccelVoice):
+    """A drone that never moves and a chanter that never stops.
+
+    The drone is fixed, so the climbing chanter has something to be measured
+    against -- speed reads as the interval between them widening. Absurd on a
+    robot, which is the entire recommendation.
+    """
+
+    slug = "bagpipe"
+    label = "Bagpipe"
+    blurb = "a fixed drone and a chanter climbing over it. Yes, really"
+    trim = 0.69
+
+    DRONE_HZ = (116.5, 233.0)
+    SCALE = (0, 2, 4, 5, 7, 9, 10, 12, 14, 16)
+    CHANTER_HZ = 233.0
+    NOTE = (2.4, 8.0)
+    REED: Vowel = ((450.0, 260.0, 1.0), (1300.0, 420.0, 0.5), (2400.0, 500.0, 0.16))
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._drone_phases = np.zeros(len(self.DRONE_HZ))
+        self._chanter_phase = 0.0
+        self._pitch = Glide(self.CHANTER_HZ)
+        self._metronome = Metronome()
+        self._step = 0
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        drone = np.zeros(drive.frames)
+        for index, hz in enumerate(self.DRONE_HZ):
+            phase, self._drone_phases[index] = _phase(
+                float(self._drone_phases[index]), np.full(drive.frames, hz), self.sample_rate
+            )
+            drone += _voiced(phase, np.full(drive.frames, hz), 20, self.REED)
+        drone /= len(self.DRONE_HZ)
+
+        low, high = self.NOTE
+        for _ in range(self._metronome.tick(low + (high - low) * drive.speed_frac, drive.dt)):
+            self._step += 1
+
+        top = drive.speed_frac * (len(self.SCALE) - 3)
+        grace = (0, 2, 1, 0)[self._step % 4]
+        semitones = self.SCALE[min(int(top) + grace, len(self.SCALE) - 1)]
+        freq = self._pitch.to(self.CHANTER_HZ * 2.0 ** (semitones / 12.0), drive.frames)
+        harmonics = min(MAX_HARMONICS, max(4, int(3800.0 / max(freq[0], 1.0))))
+        phase, self._chanter_phase = _phase(self._chanter_phase, freq, self.sample_rate)
+        chanter = _voiced(phase, freq, harmonics, self.REED)
+
+        return 1.6 * (0.42 * drone + 0.58 * chanter)
+
+
+class Kazoo(AccelVoice):
+    """A membrane buzzing against a hum.
+
+    A kazoo does not make a sound of its own -- it takes a voice and rattles a
+    membrane against it, which multiplies the harmonics and makes anything
+    hummed into it ridiculous. Modelled the same way: a hum, then a fast
+    shallow rattle on top.
+    """
+
+    slug = "kazoo"
+    label = "Kazoo"
+    blurb = "the sound of a person taking this very seriously"
+    trim = 0.67
+
+    F0 = (165.0, 380.0)
+    NASAL: Vowel = ((380.0, 150.0, 0.7), (1750.0, 320.0, 1.0), (2600.0, 400.0, 0.30))
+    """Weighted onto the second formant, which is the nasal honk that says
+    kazoo. The top is capped well below where it would start to shriek."""
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._pitch = Glide(self.F0[0])
+        self._buzz_phase = 0.0
+        self._rattle_phase = 0.0
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        low, high = self.F0
+        freq = self._pitch.to(low + (high - low) * drive.speed_frac, drive.frames)
+        harmonics = min(MAX_HARMONICS, max(4, int(3400.0 / max(freq[0], 1.0))))
+        phase, self._buzz_phase = _phase(self._buzz_phase, freq, self.sample_rate)
+        hum = _voiced(phase, freq, harmonics, self.NASAL)
+
+        # The membrane runs at its own pitch, not the hum's, so the two beat
+        # against each other -- that beat is the buzz you actually hear.
+        rattle, self._rattle_phase = _phase(self._rattle_phase, freq * 2.02, self.sample_rate)
+        return 2.0 * hum * (0.72 + 0.28 * np.sin(rattle))
+
+
+class Harp(AccelVoice):
+    """Glissando runs that get faster and climb higher.
+
+    The music box strikes one note at a time; this pours them. Same pentatonic
+    reasoning -- nothing can clash -- but with a long decay, so at speed the
+    notes overlap into a wash rather than a sequence.
+    """
+
+    slug = "harp"
+    label = "Harp"
+    blurb = "cascading glissando runs, pouring faster as you speed up"
+    trim = 0.74
+
+    SCALE = (0, 2, 4, 7, 9)
+    ROOT_HZ = 261.6
+    RATE = (4.0, 19.0)
+    OCTAVES = 3
+    PARTIALS = ((1.0, 1.0, 1.4), (2.0, 0.42, 2.2), (3.0, 0.20, 3.1), (4.0, 0.09, 4.4))
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._metronome = Metronome()
+        self._bank = PluckBank(sample_rate, self.PARTIALS, life=2.4)
+        self._step = 0
+
+    def _quiet(self, dt: float) -> None:
+        self._bank.clear()
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        low, high = self.RATE
+        rate = low + (high - low) * drive.speed_frac
+        steps = len(self.SCALE) * self.OCTAVES
+        for _ in range(self._metronome.tick(rate, drive.dt)):
+            # A run that restarts low each time it tops out, so the ear keeps
+            # getting the rising gesture instead of one endless climb.
+            position = self._step % steps
+            semitones = self.SCALE[position % len(self.SCALE)] + 12 * (position // len(self.SCALE))
+            self._bank.strike(self.ROOT_HZ * 2.0 ** (semitones / 12.0), amp=0.55 + 0.45 * (1.0 - position / steps))
+            self._step += 1
+        return 0.42 * self._bank.render(drive.frames)
+
+
+class MarsSong(AccelVoice):
+    """The robot's voice, but singing.
+
+    Same clip as :class:`MarsVoice`, resampled per note instead of held: the
+    robot goes "bo bo bo" up a pentatonic scale, faster and higher as it
+    accelerates. It keeps its own formants as the pitch moves, so it gets
+    steadily more excited about the whole thing.
+    """
+
+    slug = "mars_song"
+    label = "MARS Sings"
+    blurb = "the robot's voice going bo-bo-bo up a scale"
+    trim = 1.5
+
+    ASSET = "mars_voice_brr.wav"
+    SCALE = (0, 3, 5, 7, 10, 12)
+    """One octave, and no more: resampling lifts the formants along with the
+    pitch, so every extra octave is also a doubling of how bright the robot
+    gets. Two octaves put more energy above 2.5 kHz than anything else here."""
+    RATE = (2.4, 10.0)
+    LIFE = 0.42
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._loop = load_loop(self.ASSET, sample_rate)
+        self._understudy = MusicBox(sample_rate, feel, seed) if self._loop is None else None
+        self._metronome = Metronome()
+        self._notes: list[tuple[float, int]] = []
+        self._step = 0
+
+    def _quiet(self, dt: float) -> None:
+        self._notes.clear()
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        if self._loop is None:
+            return self._understudy._voice(drive) if self._understudy else np.zeros(drive.frames)
+
+        low, high = self.RATE
+        for _ in range(self._metronome.tick(low + (high - low) * drive.speed_frac, drive.dt)):
+            step = drive.speed_frac * (len(self.SCALE) - 2)
+            ornament = (0, 1, 0, 2)[self._step % 4]
+            semitones = self.SCALE[min(int(step) + ornament, len(self.SCALE) - 1)]
+            self._notes.append((2.0 ** (semitones / 12.0), 0))
+            self._step += 1
+
+        out = np.zeros(drive.frames)
+        span = np.arange(drive.frames)
+        alive: list[tuple[float, int]] = []
+        for rate, age in self._notes:
+            time = (age + span) / self.sample_rate
+            envelope = np.minimum(time * 90.0, 1.0) * np.exp(-time * 6.5)
+            out += _read_loop(self._loop, (age + span) * rate) * envelope
+            if age + drive.frames < self.LIFE * self.sample_rate:
+                alive.append((rate, age + drive.frames))
+        self._notes = alive
+        return 1.5 * out
+
+
 VOICES: dict[str, type[AccelVoice]] = {
-    voice.slug: voice for voice in (LipTrill, MarsVoice, Whistle, MusicBox, Chiptune, Purr, Hyperdrive, Choir)
+    voice.slug: voice
+    for voice in (
+        LipTrill,
+        MarsVoice,
+        MarsSong,
+        Whistle,
+        MusicBox,
+        Harp,
+        Chiptune,
+        Disco,
+        Purr,
+        Hyperdrive,
+        Theremin,
+        Choir,
+        Acappella,
+        JetSki,
+        SteamTrain,
+        Bagpipe,
+        Kazoo,
+    )
 }
 
 
