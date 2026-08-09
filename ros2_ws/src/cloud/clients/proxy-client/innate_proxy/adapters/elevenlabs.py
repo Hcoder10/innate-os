@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""OpenAI adapter for the Innate proxy client.
+"""ElevenLabs adapter for the Innate proxy client.
 
-Provides :class:`ProxyOpenAIClient` with a ``realtime`` WebSocket sub-API.
+Provides :class:`ProxyElevenLabsClient` with a ``realtime`` WebSocket
+sub-API for Scribe speech-to-text.
 
 The adapter expects a *parent* object that exposes:
 
@@ -14,10 +15,10 @@ construction time for WebSocket auth.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlencode
 
 from auth_client import AuthProvider
 
@@ -25,18 +26,15 @@ from innate_proxy.ws import SyncRealtimeConnection
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Main adapter
-# ---------------------------------------------------------------------------
+REALTIME_ENDPOINT = "v1/speech-to-text/realtime"
 
 
-class ProxyOpenAIClient:
-    """OpenAI client that routes through the Innate service proxy.
+class ProxyElevenLabsClient:
+    """ElevenLabs client that routes through the Innate service proxy.
 
-    Provides a realtime WebSocket sub-API (async *and* sync).
-    Auth is delegated to :mod:`auth_client` — this adapter carries no
-    token / JWT logic of its own.
+    Unlike the OpenAI Realtime API, a Scribe session is configured entirely
+    through query parameters at connect time — there is no session.update
+    frame, so changing any of these means reconnecting.
     """
 
     def __init__(self, parent: Any, auth: AuthProvider | None = None) -> None:
@@ -51,45 +49,41 @@ class ProxyOpenAIClient:
     # -- Realtime -------------------------------------------------------------
 
     class Realtime:
-        def __init__(self, openai_client: ProxyOpenAIClient) -> None:
-            self._oc = openai_client
+        def __init__(self, elevenlabs_client: ProxyElevenLabsClient) -> None:
+            self._ec = elevenlabs_client
 
-        def _build_ws_url(self, model: str) -> str:
-            proxy_url = self._oc._get_proxy_url()
+        def _build_ws_url(self, params: dict[str, Any]) -> str:
+            proxy_url = self._ec._get_proxy_url()
             ws_url = proxy_url.replace("https://", "wss://").replace("http://", "ws://")
-            return f"{ws_url}/v1/services/openai/v1/realtime?model={model}"
-
-        async def connect(
-            self,
-            model: str = "gpt-4o-realtime-preview",
-            on_message: Callable | None = None,
-        ):
-            """Open an async WebSocket to the OpenAI Realtime API via proxy."""
-            ws_url = self._build_ws_url(model)
-            ws = await self._oc._auth.ws_connect(ws_url)
-
-            if on_message:
-
-                async def _handler() -> None:
-                    async for message in ws:
-                        await on_message(ws, message)
-
-                asyncio.create_task(_handler())
-
-            return ws
+            query = urlencode({k: v for k, v in params.items() if v is not None})
+            return f"{ws_url}/v1/services/elevenlabs/{REALTIME_ENDPOINT}?{query}"
 
         def connect_sync(
             self,
-            model: str = "gpt-4o-realtime-preview",
+            model_id: str = "scribe_v2_realtime",
+            audio_format: str = "pcm_24000",
+            language_code: str | None = None,
+            commit_strategy: str = "vad",
+            vad_threshold: float | None = None,
+            vad_silence_threshold_secs: float | None = None,
             on_message: Callable | None = None,
             on_open: Callable | None = None,
             on_error: Callable | None = None,
             on_close: Callable | None = None,
         ) -> SyncRealtimeConnection:
             """Return a :class:`SyncRealtimeConnection` (call ``.start()`` to connect)."""
-            ws_url = self._build_ws_url(model)
+            ws_url = self._build_ws_url(
+                {
+                    "model_id": model_id,
+                    "audio_format": audio_format,
+                    "language_code": language_code,
+                    "commit_strategy": commit_strategy,
+                    "vad_threshold": vad_threshold,
+                    "vad_silence_threshold_secs": vad_silence_threshold_secs,
+                }
+            )
             return SyncRealtimeConnection(
-                auth=self._oc._auth,
+                auth=self._ec._auth,
                 ws_url=ws_url,
                 on_message=on_message,
                 on_open=on_open,
@@ -106,7 +100,7 @@ class ProxyOpenAIClient:
     async def close(self) -> None:
         await self._parent.close_async()
 
-    async def __aenter__(self) -> ProxyOpenAIClient:
+    async def __aenter__(self) -> ProxyElevenLabsClient:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:

@@ -44,11 +44,21 @@ class InputManagerNode(Node):
 
     def _init_proxy(self):
         # Credentials come from env (INNATE_PROXY_URL, INNATE_SERVICE_KEY); config from params.
+        self.declare_parameter("stt_backend", "elevenlabs")
+        self.declare_parameter("stt_language", "en")
+        self.declare_parameter("stt_vad_threshold", 0.3)
+        self.declare_parameter("stt_vad_silence_secs", 0.7)
+        self.declare_parameter("elevenlabs_stt_model", "scribe_v2_realtime")
         self.declare_parameter("openai_realtime_model", "gpt-4o-realtime-preview")
         self.declare_parameter("openai_realtime_url", "wss://api.openai.com/v1/realtime")
         self.declare_parameter("openai_transcribe_model", "gpt-4o-mini-transcribe")
         self.declare_parameter("cartesia_voice_id", "9fdaae0b-f885-4813-b589-3c07cf9d5fea")
         proxy_config = {
+            "stt_backend": self.get_parameter("stt_backend").value,
+            "stt_language": self.get_parameter("stt_language").value,
+            "stt_vad_threshold": self.get_parameter("stt_vad_threshold").value,
+            "stt_vad_silence_secs": self.get_parameter("stt_vad_silence_secs").value,
+            "elevenlabs_stt_model": self.get_parameter("elevenlabs_stt_model").value,
             "openai_realtime_model": self.get_parameter("openai_realtime_model").value,
             "openai_realtime_url": self.get_parameter("openai_realtime_url").value,
             "openai_transcribe_model": self.get_parameter("openai_transcribe_model").value,

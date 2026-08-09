@@ -4,8 +4,17 @@
 """
 Microphone Input Device
 
-Connects to microphone hardware and OpenAI's realtime API to get voice transcripts.
-This is a pure Python class with NO ROS dependencies.
+Connects to microphone hardware and a realtime speech-to-text backend to get
+voice transcripts. This is a pure Python class with NO ROS dependencies.
+
+Two backends, selected by the ``stt_backend`` setting:
+
+- ``elevenlabs`` — ElevenLabs Scribe realtime (default)
+- ``openai``     — OpenAI Realtime transcription sessions
+
+They differ in how a session is configured (query string vs. a session.update
+frame), in the audio frame shape, and in the transcript event names; the
+microphone, ducking, and reconnect machinery is shared.
 
 Uses proxy services via self.proxy (injected by InputManager).
 """
@@ -25,12 +34,33 @@ DEFAULT_SAMPLE_RATE = 24_000
 DEFAULT_CHANNELS = 1
 CHUNK_DURATION_SEC = 0.02
 
+# ElevenLabs names the wire format after the rate; the two must agree or the
+# transcript comes out time-warped.
+ELEVENLABS_AUDIO_FORMAT = f"pcm_{DEFAULT_SAMPLE_RATE}"
+
+ELEVENLABS_ERROR_TYPES = frozenset(
+    {
+        "error",
+        "auth_error",
+        "quota_exceeded",
+        "commit_throttled",
+        "unaccepted_terms",
+        "rate_limited",
+        "queue_overflow",
+        "resource_exhausted",
+        "session_time_limit_exceeded",
+        "input_error",
+        "chunk_size_exceeded",
+        "transcriber_error",
+    }
+)
+
 
 class MicroInput(InputDevice):
     """
     Microphone input device.
 
-    Connects to OpenAI Realtime API via proxy (self.proxy.openai.realtime).
+    Connects to a realtime STT backend via proxy (self.proxy.<backend>.realtime).
     Config comes from self.proxy.config (set by InputManagerNode).
 
     Supports "ducking" - suppresses audio while robot is speaking.
@@ -41,6 +71,7 @@ class MicroInput(InputDevice):
         super().__init__()
         self.mic = None
         self.client = None
+        self._backend = "elevenlabs"
         self._stop_evt = threading.Event()
         self._audio_thread = None
         self._is_robot_talking = False  # For ducking (mic-specific)
@@ -73,7 +104,7 @@ class MicroInput(InputDevice):
         self._is_robot_talking = is_playing
 
     def on_open(self):
-        """Start microphone and connect to OpenAI via proxy."""
+        """Start microphone and connect to the STT backend via proxy."""
         # Check proxy is available
         if not self.proxy or not self.proxy.is_available():
             self.logger.error("❌ Proxy not configured - cannot start microphone input")
@@ -105,6 +136,35 @@ class MicroInput(InputDevice):
             import traceback
 
             traceback.print_exc()
+
+    def _on_elevenlabs_message(self, ws, message: str):
+        """Handle incoming messages from the ElevenLabs Scribe realtime API."""
+        try:
+            event = json.loads(message)
+        except Exception:
+            self.logger.error(f"Failed to parse message: {message[:200]}")
+            return
+
+        etype = event.get("message_type")
+
+        if etype == "committed_transcript":
+            text = event.get("text", "")
+            if text and self.is_active():
+                self._on_transcript(text)
+        elif etype == "partial_transcript":
+            pass  # interim result — only the committed transcript reaches chat
+        elif etype == "session_started":
+            self.logger.info(f"📋 Scribe session started: {event.get('config', {})}")
+        elif etype == "insufficient_audio_activity":
+            pass  # expected whenever the room is quiet — not worth a log line
+        elif etype in ELEVENLABS_ERROR_TYPES:
+            self.logger.error(f"❌ ElevenLabs error ({etype}): {event.get('message', event)}")
+        else:
+            self.logger.info(f"📨 ElevenLabs event: {etype}")
+
+    def _on_elevenlabs_open(self):
+        """Scribe takes its whole session config in the connect URL — nothing to send."""
+        self.logger.info("📤 WebSocket opened (Scribe session configured via query params)")
 
     def _on_openai_message(self, ws, message: str):
         """Handle incoming messages from OpenAI Realtime API."""
@@ -170,11 +230,11 @@ class MicroInput(InputDevice):
         self.client.send_json(session_update)
         self.logger.info("📤 session.update sent")
 
-    def _on_openai_error(self, error):
+    def _on_ws_error(self, error):
         """Handle WebSocket error event."""
         self.logger.error(f"[ws error] {error}")
 
-    def _on_openai_close(self):
+    def _on_ws_close(self):
         """Handle WebSocket close event - trigger reconnection."""
         self.logger.warning("WebSocket closed")
         self._is_connected = False
@@ -187,20 +247,14 @@ class MicroInput(InputDevice):
         self._schedule_reconnect()
 
     def _connect_via_proxy(self):
-        """Connect to OpenAI Realtime API via proxy."""
-        self.logger.info("🔗 Connecting to OpenAI via proxy...")
+        """Connect to the configured STT backend via proxy."""
+        self._backend = str(self.proxy.config.get("stt_backend") or "elevenlabs").lower()
 
-        # Get config from proxy (injected by InputManager)
-        model = self.proxy.config.get("openai_realtime_model", "gpt-4o-realtime-preview")
+        if self._backend == "openai":
+            model = self._connect_openai()
+        else:
+            model = self._connect_elevenlabs()
 
-        # Use proxy's OpenAI adapter
-        self.client = self.proxy.openai.realtime.connect_sync(
-            model=model,
-            on_message=self._on_openai_message,
-            on_open=self._on_openai_open,
-            on_error=self._on_openai_error,
-            on_close=self._on_openai_close,
-        )
         self.client.start()
 
         # Start audio streaming thread
@@ -208,7 +262,49 @@ class MicroInput(InputDevice):
 
         self._is_connected = True
         self._reconnect_delay = 1  # Reset delay on successful connection
-        self.logger.info(f"✅ Connected to OpenAI Realtime (model: {model})")
+        self.logger.info(f"✅ Connected to {self._backend} STT (model: {model})")
+
+    def _connect_elevenlabs(self) -> str:
+        """Open a Scribe realtime session. Returns the model id."""
+        self.logger.info("🔗 Connecting to ElevenLabs Scribe via proxy...")
+
+        cfg = self.proxy.config
+        model = cfg.get("elevenlabs_stt_model", "scribe_v2_realtime")
+        vad_threshold = float(cfg.get("stt_vad_threshold", 0.3))
+        silence_secs = float(cfg.get("stt_vad_silence_secs", 0.7))
+
+        self.logger.info(
+            f"📤 Scribe config: model={model}, audio_format={ELEVENLABS_AUDIO_FORMAT}, "
+            f"vad_threshold={vad_threshold}, silence={silence_secs}s"
+        )
+        self.client = self.proxy.elevenlabs.realtime.connect_sync(
+            model_id=model,
+            audio_format=ELEVENLABS_AUDIO_FORMAT,
+            language_code=cfg.get("stt_language", "en"),
+            commit_strategy="vad",
+            vad_threshold=vad_threshold,
+            vad_silence_threshold_secs=silence_secs,
+            on_message=self._on_elevenlabs_message,
+            on_open=self._on_elevenlabs_open,
+            on_error=self._on_ws_error,
+            on_close=self._on_ws_close,
+        )
+        return model
+
+    def _connect_openai(self) -> str:
+        """Open an OpenAI Realtime transcription session. Returns the model id."""
+        self.logger.info("🔗 Connecting to OpenAI via proxy...")
+
+        model = self.proxy.config.get("openai_realtime_model", "gpt-4o-realtime-preview")
+
+        self.client = self.proxy.openai.realtime.connect_sync(
+            model=model,
+            on_message=self._on_openai_message,
+            on_open=self._on_openai_open,
+            on_error=self._on_ws_error,
+            on_close=self._on_ws_close,
+        )
+        return model
 
     def _schedule_reconnect(self):
         """Schedule a reconnection attempt in a background thread."""
@@ -253,6 +349,13 @@ class MicroInput(InputDevice):
         self._reconnect_thread = threading.Thread(target=reconnect_loop, daemon=True)
         self._reconnect_thread.start()
 
+    def _audio_frame(self, chunk: bytes) -> dict:
+        """Wrap a raw PCM chunk in the backend's audio-append frame."""
+        audio = base64.b64encode(chunk).decode("ascii")
+        if self._backend == "openai":
+            return {"type": "input_audio_buffer.append", "audio": audio}
+        return {"message_type": "input_audio_chunk", "audio_base_64": audio}
+
     def _start_audio_thread(self):
         """Start the audio streaming thread."""
         self._stop_evt.clear()
@@ -290,11 +393,7 @@ class MicroInput(InputDevice):
                         continue
                     ducking_logged = False
 
-                    payload = {
-                        "type": "input_audio_buffer.append",
-                        "audio": base64.b64encode(chunk).decode("ascii"),
-                    }
-                    self.client.send_json(payload)
+                    self.client.send_json(self._audio_frame(chunk))
                     chunks_sent += 1
 
                     # Log periodically (much less frequently)
