@@ -2,6 +2,15 @@
   ros__parameters:
     motor_sound:
       enabled: true
+
+      # Which costume the acceleration wears. "motor" is the electric whine
+      # modelled in motor_synth; the rest live in accel_voices and are pure
+      # character. Switchable live:
+      #   ros2 param set /motor_sound motor_sound.voice purr
+      # motor | lip_trill | mars_voice | whistle | music_box | chiptune |
+      # purr | hyperdrive | choir
+      voice: "motor"
+
       volume: 0.50                # 0..1, before the ALSA softvol Master level
       idle_when_stopped: true     # keep the motor rumbling while parked (in Mad mode)
       # The engine only runs in Mad mode: the node watches /robot/info's

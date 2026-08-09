@@ -29,6 +29,7 @@ from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
 from std_msgs.msg import String
 
+from mars_control.accel_voices import VOICES, VoiceFeel, build_voice
 from mars_control.motor_synth import MotorConfig, MotorSynth, is_mad_scale
 
 CMD_TIMEOUT_S = 0.5
@@ -59,7 +60,7 @@ class MotorSoundNode(Node):
         self._max_speed = max(float(params["max_speed"].value), 1e-3)
         self._reference_acceleration = max(float(params["reference_acceleration"].value), 1e-3)
 
-        self._synth = MotorSynth(int(params["sample_rate"].value), self._build_config(params))
+        self._synth = self._build_synth(params)
         self._synth.volume = float(params["volume"].value)
 
         # Written by the ROS executor thread, read by the audio thread. Both
@@ -92,6 +93,7 @@ class MotorSoundNode(Node):
             namespace="",
             parameters=[
                 ("motor_sound.enabled", True),
+                ("motor_sound.voice", "motor"),
                 ("motor_sound.volume", 0.5),
                 ("motor_sound.idle_when_stopped", True),
                 ("motor_sound.only_in_mad_mode", True),
@@ -122,6 +124,31 @@ class MotorSoundNode(Node):
                 ("motor_sound.blocksize", 512),
                 ("motor_sound.device", ""),
             ],
+        )
+
+    def _build_synth(self, params):
+        """The configured voice, or the motor if the name is not one we have.
+
+        An unknown name falls back rather than raising: a typo in settings must
+        not leave the node dead and the robot mute.
+        """
+        rate = int(params["sample_rate"].value)
+        voice = str(params["voice"].value)
+        if voice == "motor":
+            return MotorSynth(rate, self._build_config(params))
+        if voice not in VOICES:
+            self.get_logger().warning(f"unknown motor_sound.voice {voice!r}, using 'motor' (have: {sorted(VOICES)})")
+            return MotorSynth(rate, self._build_config(params))
+        return build_voice(voice, rate, self._build_feel(params))
+
+    def _build_feel(self, params) -> VoiceFeel:
+        return VoiceFeel(
+            max_speed=self._max_speed,
+            spring_hz=float(params["spring_hz"].value),
+            damping=float(params["damping"].value),
+            idle_level=float(params["idle_level"].value),
+            startup_seconds=float(params["startup_seconds"].value),
+            volume=float(params["volume"].value),
         )
 
     def _build_config(self, params) -> MotorConfig:
@@ -248,6 +275,16 @@ class MotorSoundNode(Node):
                 self._enabled = bool(param.value)
                 if self._enabled and not was_enabled:
                     self._synth.trigger_startup()
+            elif param.name == "motor_sound.voice":
+                # This callback runs before the value is committed, so the
+                # prefix lookup still reports the old voice and the new one has
+                # to be spliced in by hand. Rebinding the reference is the whole
+                # handover: the audio thread picks the new voice up on its next
+                # block, and it ramps its gain from zero, so the swap can't click.
+                pending = self.get_parameters_by_prefix("motor_sound")
+                pending["voice"] = param
+                self._synth = self._build_synth(pending)
+                self._synth.trigger_startup()
             elif param.name == "motor_sound.volume":
                 self._synth.volume = float(param.value)
             elif param.name == "motor_sound.idle_when_stopped":

@@ -186,7 +186,7 @@ def _smoothstep(x: float) -> float:
     return x * x * (3.0 - 2.0 * x)
 
 
-def _bandpass_kernel(sample_rate: int, low_hz: float, high_hz: float, taps: int = NOISE_TAPS) -> np.ndarray:
+def bandpass_kernel(sample_rate: int, low_hz: float, high_hz: float, taps: int = NOISE_TAPS) -> np.ndarray:
     """Windowed-sinc bandpass, normalised so white noise through it comes out
     at unit RMS. Built once; numpy has no IIR filter and a per-sample Python
     loop would be far too slow for the audio thread."""
@@ -201,7 +201,7 @@ def _bandpass_kernel(sample_rate: int, low_hz: float, high_hz: float, taps: int 
 
 
 @dataclass
-class _Rotor:
+class Rotor:
     """The motor's own speed, chasing the robot's through a damped spring.
 
     A first-order filter would just lag. This overshoots slightly on the way up
@@ -209,13 +209,14 @@ class _Rotor:
     'a robot moving' and something that sounds pleased to be going.
     """
 
-    cfg: MotorConfig
+    spring_hz: float
+    damping: float
     speed: float = 0.0
     velocity: float = field(default=0.0)
 
     def update(self, target_speed: float, dt: float) -> float:
-        omega = 2.0 * math.pi * self.cfg.spring_hz
-        acceleration = omega * omega * (target_speed - self.speed) - 2.0 * self.cfg.damping * omega * self.velocity
+        omega = 2.0 * math.pi * self.spring_hz
+        acceleration = omega * omega * (target_speed - self.speed) - 2.0 * self.damping * omega * self.velocity
         self.velocity += acceleration * dt
         self.speed += self.velocity * dt
         # Never let the overshoot swing negative: the whine has no direction,
@@ -277,20 +278,20 @@ class MotorSynth:
         self._throttle = 0.0
         self._turn = 0.0
 
-        self._rotor = _Rotor(self.cfg)
+        self._rotor = Rotor(self.cfg.spring_hz, self.cfg.damping)
         self._gearbox = _Gearbox(self.cfg)
         self._rng = np.random.default_rng(seed)
-        self._noise_kernel = _bandpass_kernel(sample_rate, *self.cfg.rolling_band_hz)
+        self._noise_kernel = bandpass_kernel(sample_rate, *self.cfg.rolling_band_hz)
         self._noise_tail = np.zeros(NOISE_TAPS - 1)
         # Strain noise sits lower than the rolling noise -- that is what makes
         # it read as effort. The long kernel is what holds the low edge: a
         # 63-tap filter at 48 kHz has a ~760 Hz transition band and leaks well
         # below the speaker's ~160 Hz floor, wasting amp headroom there.
-        self._growl_kernel = _bandpass_kernel(sample_rate, 240.0, 700.0, taps=255)
+        self._growl_kernel = bandpass_kernel(sample_rate, 240.0, 700.0, taps=255)
         self._growl_tail = np.zeros(len(self._growl_kernel) - 1)
         # Slip noise, banded around the squeal so tone and noise read as one
         # sound rather than two layers.
-        self._screech_kernel = _bandpass_kernel(sample_rate, self.cfg.screech_hz * 0.7, self.cfg.screech_hz * 1.7)
+        self._screech_kernel = bandpass_kernel(sample_rate, self.cfg.screech_hz * 0.7, self.cfg.screech_hz * 1.7)
         self._screech_tail = np.zeros(NOISE_TAPS - 1)
 
         # One phase per partial: the gear-whine ratio is not a whole number, so
