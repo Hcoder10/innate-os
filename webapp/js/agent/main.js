@@ -14,6 +14,7 @@ import { mountPage } from "../pageMount.js";
 import { getConfig } from "../config.js";
 import { robotSessionFactory } from "../robotSession.js";
 import { createVideoStage } from "../teleop/videoStage.js";
+import { createTrajectoryOverlay } from "../teleop/trajectoryOverlay.js";
 import { createTelemetry } from "../teleop/telemetry.js";
 import { createCameraSwitch } from "../teleop/cameraSwitch.js";
 import { createAgentState } from "../teleop/agentState.js";
@@ -44,7 +45,10 @@ export function mount(stage) {
 function buildAgentView(root) {
   const session = createSession();
 
-  const videoStage = createStage ? createStage(root, session) : createVideoStage(root, session);
+  // realVideo is the WebRTC stage on physical robots, null when the sim's
+  // Three.js stage takes over — parts that need the head camera key off it.
+  const realVideo = createStage ? null : createVideoStage(root, session);
+  const videoStage = realVideo ?? /** @type {NonNullable<typeof createStage>} */ (createStage)(root, session);
 
   // Top-left column: the sim challenge panel (when the session supports it)
   // stacked above the telemetry card; on real robots it holds telemetry alone,
@@ -71,6 +75,12 @@ function buildAgentView(root) {
     createActiveChip(root, agentState),
     { destroy: () => agentState.destroy() },
   ];
+  // Watching the agent drive is where the projected route earns its keep. The
+  // agent panel owns the right edge here, so the toggle joins the top-left
+  // stack instead of a rail.
+  if (realVideo) {
+    parts.push(createTrajectoryOverlay(realVideo.el, realVideo.videoEl, cornerStack, ros, session));
+  }
 
   session.start();
 
