@@ -33,6 +33,17 @@ Musical, where speed is tempo and pitch:
 * ``chiptune``    an 8-bit racer, pulse wave and arpeggio.
 * ``bagpipe``     a fixed drone with a chanter climbing over it.
 
+Not synthesised at all -- generated as sound effects, then cut into something
+road speed can drive (see ``scripts/fetch_sound_assets.py``):
+
+* ``gallop``      hoofbeats fired at a rate, with a limp so it is not a metronome.
+* ``quack``       a duck, increasingly concerned.
+* ``boing``       a cartoon spring. No defence offered.
+* ``didgeridoo``  a circular-breathing drone, revved.
+* ``whale``       a humpback, pitched up until the speaker can carry it.
+* ``f1``          a real race engine -- the control condition.
+* ``crowd``       a stadium, delighted, carried by level rather than pitch.
+
 Creatures and machines:
 
 * ``purr``        a large cat, pleased about the speed.
@@ -314,6 +325,15 @@ def load_loop(name: str, sample_rate: int) -> np.ndarray | None:
     peak = float(np.abs(clip).max())
     _LOOPS[key] = clip / peak if peak > 1e-6 else clip
     return _LOOPS[key]
+
+
+def _read_once(sample: np.ndarray, index: np.ndarray) -> np.ndarray:
+    """Linearly interpolated read that stops at the end instead of wrapping --
+    a one-shot that wrapped would stutter rather than finish."""
+    inside = index < len(sample) - 1
+    floor = np.clip(np.floor(index), 0, len(sample) - 2).astype(np.int64)
+    frac = index - floor
+    return inside * (sample[floor] * (1.0 - frac) + sample[floor + 1] * frac)
 
 
 def _read_loop(loop: np.ndarray, index: np.ndarray) -> np.ndarray:
@@ -1680,6 +1700,197 @@ class Heartbeat(AccelVoice):
         return 1.7 * (np.sin(phase) * envelope + thud)
 
 
+class LoopVoice(AccelVoice):
+    """A sampled loop, played faster as the robot speeds up.
+
+    For material that is not worth synthesising -- a whale, a crowd, a real
+    engine -- because an additive model of it reads as a cartoon of the thing
+    while a recording is simply correct. Resampling moves pitch and timbre
+    together, which is exactly what a real thing speeding up does.
+
+    Subclasses supply an asset and a rate range; the assets are cut to whole
+    pitch periods and crossfaded by ``scripts/fetch_sound_assets.py``, so the
+    wrap needs no windowing here.
+    """
+
+    ASSET: ClassVar[str] = ""
+    RATE: ClassVar[tuple[float, float]] = (0.9, 1.8)
+    UNDERSTUDY: ClassVar[type[AccelVoice]] = Hyperdrive
+    """Stands in when the asset is missing, so a workspace that never ran the
+    fetch script makes a noise rather than silence."""
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._cursor = 0.0
+        self._speed_glide = Glide(self.RATE[0])
+        self._loop = load_loop(self.ASSET, sample_rate)
+        self._understudy = self.UNDERSTUDY(sample_rate, feel, seed) if self._loop is None else None
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        if self._loop is None:
+            return self._understudy._voice(drive) if self._understudy else np.zeros(drive.frames)
+        low, high = self.RATE
+        rate = self._speed_glide.to(low + (high - low) * drive.speed_frac, drive.frames)
+        cursor = self._cursor + np.cumsum(rate)
+        self._cursor = float(cursor[-1] % len(self._loop))
+        return _read_loop(self._loop, cursor)
+
+
+class TriggerVoice(AccelVoice):
+    """A sampled one-shot, fired at a rate the road speed sets.
+
+    The other half of the sampled idea: rather than stretching one sound out,
+    repeat it. Speed becomes how often the thing happens, which is how a
+    gallop or a quacking duck reads as going faster without anything having to
+    rise in pitch.
+    """
+
+    ASSET: ClassVar[str] = ""
+    RATE: ClassVar[tuple[float, float]] = (2.0, 8.0)
+    PITCH: ClassVar[tuple[float, float]] = (1.0, 1.2)
+    ACCENT: ClassVar[tuple[float, ...]] = (1.0,)
+    """Amplitude per successive hit. More than one entry gives the pattern a
+    limp, which is what separates a gallop from a metronome."""
+    JITTER: ClassVar[float] = 0.03
+    """Random spread on each hit's playback rate. A living thing never makes
+    the same noise twice, and identical repeats read as a stuck sample."""
+    UNDERSTUDY: ClassVar[type[AccelVoice]] = MusicBox
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._metronome = Metronome()
+        self._hits: list[tuple[float, int, float]] = []
+        self._step = 0
+        self._sample = load_loop(self.ASSET, sample_rate)
+        self._understudy = self.UNDERSTUDY(sample_rate, feel, seed) if self._sample is None else None
+
+    def _quiet(self, dt: float) -> None:
+        self._hits.clear()
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        if self._sample is None:
+            return self._understudy._voice(drive) if self._understudy else np.zeros(drive.frames)
+
+        low, high = self.RATE
+        for _ in range(self._metronome.tick(low + (high - low) * drive.speed_frac, drive.dt)):
+            pitch_low, pitch_high = self.PITCH
+            rate = pitch_low + (pitch_high - pitch_low) * drive.speed_frac
+            rate *= 1.0 + self.JITTER * float(self._rng.standard_normal())
+            self._hits.append((max(rate, 0.1), 0, self.ACCENT[self._step % len(self.ACCENT)]))
+            self._step += 1
+
+        out = np.zeros(drive.frames)
+        span = np.arange(drive.frames)
+        alive: list[tuple[float, int, float]] = []
+        for rate, age, accent in self._hits:
+            out += accent * _read_once(self._sample, (age + span) * rate)
+            if (age + drive.frames) * rate < len(self._sample):
+                alive.append((rate, age + drive.frames, accent))
+        self._hits = alive
+        return out
+
+
+class Gallop(TriggerVoice):
+    """A horse. The robot has four legs now, apparently."""
+
+    slug = "gallop"
+    label = "Gallop"
+    blurb = "hoofbeats. It gets faster, not higher — and it has a limp on purpose"
+    trim = 8.0
+    ASSET = "gallop.wav"
+    RATE = (2.2, 9.5)
+    PITCH = (1.0, 1.12)
+    ACCENT = (1.0, 0.55, 0.85, 0.5)
+
+
+class Quack(TriggerVoice):
+    """A duck, becoming steadily more concerned about the speed."""
+
+    slug = "quack"
+    label = "Duck"
+    blurb = "quacking, faster and more frantic the harder you drive"
+    trim = 2.19
+    ASSET = "quack.wav"
+    RATE = (1.5, 6.5)
+    PITCH = (0.74, 1.12)
+    """Pitched down, not up. A quack is nasal to begin with, and revving one
+    the way the other sampled voices are revved put half its energy above
+    2.5 kHz -- the brightest thing here by a factor of five. Frequency now does
+    less of the work and the rate does more."""
+    JITTER = 0.05
+
+
+class Boing(TriggerVoice):
+    """A cartoon spring. There is no defence of this one."""
+
+    slug = "boing"
+    label = "Boing"
+    blurb = "a cartoon spring, bouncing quicker and higher"
+    trim = 1.61
+    ASSET = "boing.wav"
+    RATE = (1.4, 7.0)
+    PITCH = (0.85, 1.5)
+    JITTER = 0.04
+
+
+class Didgeridoo(LoopVoice):
+    """A didgeridoo drone, revved.
+
+    Its fundamental sits near 60 Hz, well under what the speaker can radiate,
+    so the rate range starts above 1 -- this is the voice that loses most in
+    the move from headphones to the robot.
+    """
+
+    slug = "didgeridoo"
+    label = "Didgeridoo"
+    blurb = "a circular-breathing drone, wound up as you go"
+    trim = 0.79
+    ASSET = "didgeridoo.wav"
+    RATE = (1.15, 2.5)
+
+
+class Whale(LoopVoice):
+    """A humpback, played fast enough to hear on a 2 W speaker."""
+
+    slug = "whale"
+    label = "Whale Song"
+    blurb = "a humpback moaning, pitched up until the speaker can carry it"
+    trim = 0.73
+    ASSET = "whale.wav"
+    RATE = (1.5, 3.4)
+
+
+class RaceCar(LoopVoice):
+    """An actual Formula One engine -- the control condition.
+
+    Worth having on the board precisely because it is the obvious answer: it
+    settles whether the robot sounds better being what it is not, or being a
+    small machine with a voice of its own.
+    """
+
+    slug = "f1"
+    label = "Formula One"
+    blurb = "a real race engine. The obvious answer, included so you can rule it out"
+    trim = 1.04
+    ASSET = "f1.wav"
+    RATE = (0.75, 1.75)
+
+
+class Crowd(LoopVoice):
+    """A stadium, delighted that the robot is moving.
+
+    Pitch is deliberately barely touched -- a resampled crowd stops being
+    people -- so this one lets the shared level curve carry the speed instead.
+    """
+
+    slug = "crowd"
+    label = "Crowd"
+    blurb = "a stadium cheering you on, louder the faster you go"
+    trim = 1.02
+    ASSET = "crowd.wav"
+    RATE = (0.95, 1.2)
+
+
 VOICES: dict[str, type[AccelVoice]] = {
     voice.slug: voice
     for voice in (
@@ -1710,6 +1921,13 @@ VOICES: dict[str, type[AccelVoice]] = {
         Throat,
         Gamelan,
         Heartbeat,
+        Gallop,
+        Quack,
+        Boing,
+        Didgeridoo,
+        Whale,
+        RaceCar,
+        Crowd,
     )
 }
 

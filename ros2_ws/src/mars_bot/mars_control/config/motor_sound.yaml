@@ -36,6 +36,13 @@
       #   geiger       randomly spaced clicks, denser with speed
       #   panting      the robot is out of breath, and getting worse
       #   heartbeat    its pulse is your speedometer
+      #   gallop       hoofbeats, fired faster rather than higher
+      #   quack        a duck, increasingly concerned about the speed
+      #   boing        a cartoon spring
+      #   didgeridoo   a circular-breathing drone, revved
+      #   whale        a humpback, pitched up until the speaker carries it
+      #   f1           a real race engine
+      #   crowd        a stadium cheering, louder with speed
       voice: "motor"
 
       volume: 0.50                # 0..1, before the ALSA softvol Master level
