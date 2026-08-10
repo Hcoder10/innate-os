@@ -20,9 +20,11 @@ import { createConnectPanel } from "./teleop/connectPanel.js";
  * @param {string} viewClass CSS class for the view layer (e.g. "cockpit").
  * @param {(root: HTMLElement) => { destroy: () => void }} buildView
  *   Builds the page's content; called once, immediately, before the socket is up.
+ * @param {{ offline?: boolean }} [opts] `offline` means no robot is expected
+ *   (a ?demo run): don't dial, and never trade the view for the connect card.
  * @returns {{ destroy: () => void }} the built view
  */
-export function mountPage(stage, viewClass, buildView) {
+export function mountPage(stage, viewClass, buildView, opts = {}) {
   const connectLayer = document.createElement("div");
   connectLayer.className = "connect-layer";
   const viewLayer = document.createElement("div");
@@ -44,7 +46,7 @@ export function mountPage(stage, viewClass, buildView) {
   const servedHost = location.hostname;
   const robotServed = servedHost && servedHost !== "localhost" && servedHost !== "127.0.0.1";
   const target = robotServed ? servedHost : (ros.lastIp ?? servedHost);
-  if (target) {
+  if (target && !opts.offline) {
     ros.connect(target);
   }
 
@@ -52,7 +54,7 @@ export function mountPage(stage, viewClass, buildView) {
   // badge carries the link status. Only a fail-fast "disconnected" (a first
   // connect that never opened, or the idle laptop-dev state) shows the card.
   const unsubState = ros.onStateChange((state) => {
-    const failed = state === "disconnected";
+    const failed = state === "disconnected" && !opts.offline;
     connectLayer.hidden = !failed;
     viewLayer.hidden = failed;
   });

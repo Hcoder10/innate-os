@@ -29,9 +29,11 @@ import {
  * @param {HTMLElement} root cockpit root — the panel mounts as a right-edge overlay.
  * @param {import("../rosClient.js").RosClient} rosClient
  * @param {ReturnType<typeof import("../teleop/agentState.js").createAgentState>} agentState
+ * @param {{ headerExtra?: HTMLElement }} [opts] element to seat in the header row
+ *   (the page's Live/Brain switch), kept here so it holds still across views.
  * @returns {{ destroy: () => void }}
  */
-export function createAgentPanel(root, rosClient, agentState) {
+export function createAgentPanel(root, rosClient, agentState, opts = {}) {
   const selfOrigin = crypto.randomUUID?.() ?? `web-${Date.now()}-${Math.random()}`;
 
   const panel = document.createElement("section");
@@ -57,7 +59,7 @@ export function createAgentPanel(root, rosClient, agentState) {
     expandBtn.textContent = expanded ? "\u25be" : "\u25b4";
     expandBtn.setAttribute("aria-label", expanded ? "Collapse panel" : "Expand panel");
   };
-  head.append(titleEl, stateDot, expandBtn);
+  head.append(titleEl, stateDot, ...(opts.headerExtra ? [opts.headerExtra] : []), expandBtn);
 
   // ---- directive + start/stop --------------------------------------------
   const controls = document.createElement("div");

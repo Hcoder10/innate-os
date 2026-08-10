@@ -5788,7 +5788,8 @@ select.skill-input {
 /* ---- Agent page --------------------------------------------------------- */
 /* Full-bleed live feed (reused from teleop) with one liquid-glass control
    column pinned to the right edge. The cam PiP strip is nudged left so it
-   never tucks behind the panel. */
+   never tucks behind the panel. The panel stays put in the page's other view
+   (Brain, brain.css); everything that belongs to the live feed steps aside. */
 
 .agent-cockpit .cam-strip {
   right: calc(360px + 34px);
@@ -5814,6 +5815,47 @@ select.skill-input {
   justify-content: center;
   height: var(--pip-h);
   padding: 0;
+}
+
+.agent-cockpit.brain-mode .cam-strip,
+.agent-cockpit.brain-mode .overlay-stack-top-left,
+.agent-cockpit.brain-mode .agent-active-chip,
+.agent-cockpit.brain-mode .sim-debug-stack {
+  display: none !important; /* the sim stage sets its stack's display inline */
+}
+
+/* Live/Brain switch, seated in the Agent panel's header. */
+.agent-views {
+  display: flex;
+  margin-left: auto;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 9px;
+  background: var(--ctl-field);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+.agent-view {
+  padding: 3px 10px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--ctl-text-off);
+  font: 600 10px var(--font-ui);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.agent-view:hover {
+  color: var(--ctl-text);
+}
+
+.agent-view.on {
+  background: var(--ctl-glass);
+  color: var(--text);
+  box-shadow: var(--ctl-sheen);
 }
 
 .agent-panel {
@@ -5885,6 +5927,11 @@ select.skill-input {
     justify-content: center;
   }
 
+  /* Thumb-sized view tabs on the bottom sheet. */
+  .agent-view {
+    padding: 7px 14px;
+  }
+
   /* No right dock to clear on phones. */
   .agent-cockpit .cam-strip {
     right: 14px;
@@ -5898,7 +5945,6 @@ select.skill-input {
 }
 
 .agent-title {
-  flex: 1;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.24em;

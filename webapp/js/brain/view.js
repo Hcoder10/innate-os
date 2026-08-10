@@ -1,7 +1,9 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Innate Inc
-// Brain page — a live window into the local Gemini agent loop.
+// Brain view — the Agent page's second face: a live window into the local
+// Gemini agent loop, shown behind the same Agent panel that starts, stops and
+// talks to the brain (see agent/main.js).
 //
 // Deep telemetry rides /brain/trace (JSON on std_msgs/String, published by
 // brain_client's BrainAgent): turn lifecycle with every image the model was
@@ -9,16 +11,17 @@
 // system instruction, tool calls with args + outcomes, think latencies, the
 // event queue, and a 1 Hz snapshot heartbeat. Recent turns are kept so any
 // turn row can be opened in the inspector overlay — the complete model input
-// and output for that turn. Everything else (mind stream, skill runs, pose,
-// live camera fallback) comes from the public topics, so the page degrades
-// gracefully on robots without the trace publisher — the deep panels just
-// stay quiet.
+// and output for that turn. Everything else (skill runs, pose, live camera
+// fallback) comes from the public topics, so the view degrades gracefully on
+// robots without the trace publisher — the deep panels just stay quiet.
 //
-// ?demo drives the whole page from a scripted synthetic brain (demo.js) —
-// useful for UI work with no robot.
+// Thoughts, speech and chat are deliberately absent here: the Agent panel next
+// to it is the canonical stream, and two chat feeds on one screen is noise.
+//
+// ?demo drives it from a scripted synthetic brain (demo.js) — useful for UI
+// work with no robot.
 
 import { ros } from "../rosClient.js";
-import { mountPage } from "../pageMount.js";
 
 const CAM_TOPIC = "/mars/main_camera/left/image_raw/compressed";
 const HIST_MAX = 60; // brain_client default history_max_entries
@@ -39,19 +42,31 @@ const NODE_ANGLE = { look: -90, think: 30, act: 150 };
 const RING_R = 112;
 const RING_C = 2 * Math.PI * RING_R;
 
-/** @param {HTMLElement} stage */
-export function mount(stage) {
-  return mountPage(stage, "brain-page", buildView);
-}
-
 /**
- * @param {HTMLElement} root
- * @returns {{ destroy: () => void }}
+ * Build the brain view into its own layer inside the Agent cockpit. It starts
+ * suspended: nothing is subscribed and no frame loop runs until resume(), so a
+ * cockpit that never opens it pays nothing — /brain/trace carries full JPEGs
+ * every turn.
+ * @param {HTMLElement} parent cockpit root — the view mounts as a full-bleed layer.
+ * @param {{ demo?: boolean }} [opts]
+ * @returns {{ resume: () => void, suspend: () => void, destroy: () => void }}
  */
-function buildView(root) {
+export function createBrainView(parent, opts = {}) {
+  const root = document.createElement("div");
+  root.className = "brain-view";
   root.innerHTML = template();
+  // The inspector is a page-level modal, so it hangs off the cockpit rather than
+  // the view: the view's backdrop-filter would otherwise become the containing
+  // block for its fixed positioning and pin the card inside this layer.
+  const inspector = document.createElement("div");
+  inspector.className = "br-inspect";
+  inspector.hidden = true;
+  inspector.innerHTML = inspectorTemplate();
+  parent.append(root, inspector);
   /** @param {string} sel */
   const $ = (sel) => /** @type {HTMLElement} */ (root.querySelector(sel));
+  /** @param {string} sel */
+  const $i = (sel) => /** @type {HTMLElement} */ (inspector.querySelector(sel));
 
   // ---- live state ----------------------------------------------------------
   const S = {
@@ -186,7 +201,6 @@ function buildView(root) {
     }
     if (d.ev === "event") {
       addQueueCard(d.kind, d.text);
-      if (d.kind === "user") addMsg("user", "USER", d.text.replace(/^The user says: "(.*)"$/s, "$1"));
       if (d.kind === "motion") motionCue();
     }
     if (d.ev === "snapshot") onSnapshot(d);
@@ -194,6 +208,7 @@ function buildView(root) {
 
   /** @param {any} d */
   function onSnapshot(d) {
+    S.turn = d.turn ?? S.turn; // the view is usually opened mid-run, not at turn 0
     S.history = d.history;
     S.streak = d.streak;
     S.uptime = d.uptime;
@@ -219,9 +234,6 @@ function buildView(root) {
 
   /** @param {any} d */
   function onAgentStatus(d) {
-    $(".br-chip-active b").textContent = d.brain_active ? "active" : "stopped";
-    $(".br-chip-active").className = "br-chip br-chip-active " + (d.brain_active ? "live" : "off");
-    $(".br-chip-directive b").textContent = d.current_directive || "—";
     if (!d.brain_active) setPhase("off");
     else if (S.phase === "off") setPhase("idle");
   }
@@ -229,14 +241,6 @@ function buildView(root) {
   /** @param {any} d */
   function onBrainStatus(d) {
     if (!S.haveTrace) $(".br-chip-backend b").textContent = d.backend || "—";
-  }
-
-  /** @param {any} d */
-  function onChat(d) {
-    if (d.sender === "robot_thoughts") addMsg("thought", "THINKS", d.text, d.timestamp);
-    else if (d.sender === "robot") addMsg("speech", "SAYS", d.text, d.timestamp);
-    else if (d.sender === "system") addMsg("system", "SYSTEM", d.text, d.timestamp);
-    else if (d.sender === "skill_output") addMsg("system", "SKILL OUTPUT", d.text, d.timestamp);
   }
 
   /** @param {number} x @param {number} y @param {number} yaw */
@@ -263,8 +267,6 @@ function buildView(root) {
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
-  /** @param {number} [ts] */
-  const hhmmss = (ts) => new Date((ts ?? Date.now() / 1000) * 1000).toLocaleTimeString([], { hour12: false });
 
   /** @param {string} panelSel @param {HTMLElement} el @param {number} [cap] */
   function prepend(panelSel, el, cap = 60) {
@@ -272,15 +274,6 @@ function buildView(root) {
     feed.querySelector(".br-empty")?.remove();
     feed.prepend(el);
     while (feed.children.length > cap) /** @type {Element} */ (feed.lastChild).remove();
-  }
-
-  /** @param {string} cls @param {string} who @param {string} text @param {number} [ts] */
-  function addMsg(cls, who, text, ts) {
-    const div = document.createElement("div");
-    div.className = "br-msg " + cls;
-    div.innerHTML = `<div class="who">${who}<span class="when">${hhmmss(ts)}</span></div><div class="txt"></div>`;
-    /** @type {HTMLElement} */ (div.querySelector(".txt")).textContent = text;
-    prepend(".br-mind", div);
   }
 
   /** @param {any} d */
@@ -333,11 +326,11 @@ function buildView(root) {
       if (skillRows.size > 40) skillRows.delete(/** @type {string} */ (skillRows.keys().next().value));
     }
     row.className = "br-skill-row " + d.status;
-    row.title = "/brain/skill_status_update";
+    row.title = d.reason || "/brain/skill_status_update";
     row.innerHTML =
       `<span class="st"></span><span>${esc(d.skill_name || d.primitive_name)}</span>` +
-      (d.reason ? `<span class="reason">${esc(trunc(d.reason, 60))}</span>` : "") +
-      `<span class="status">${esc(d.status)}</span>`;
+      `<span class="status">${esc(d.status)}</span>` +
+      (d.reason ? `<span class="reason">${esc(trunc(d.reason, 60))}</span>` : "");
   }
 
   /** @param {string} kind @param {string} text */
@@ -436,7 +429,7 @@ function buildView(root) {
     const f = rec?.start.frames[idx];
     if (!f) return;
     shownTurn = turn;
-    showFrame("data:image/jpeg;base64," + f.jpeg, `what the brain saw · turn ${turn} · ${f.label}`);
+    showFrame("data:image/jpeg;base64," + f.jpeg, `turn ${turn} · ${f.label}`);
     if (idx !== 0) hidePing(); // the go-to-point ping is grounded in the head frame
     const film = $(".br-film");
     film.innerHTML = "";
@@ -459,11 +452,11 @@ function buildView(root) {
     if (!turns.has(turn)) return;
     inspecting = turn;
     renderInspector();
-    $(".br-inspect").hidden = false;
+    inspector.hidden = false;
   }
   function closeInspector() {
     inspecting = 0;
-    $(".br-inspect").hidden = true;
+    inspector.hidden = true;
   }
 
   /** A labeled block for the inspector's output section.
@@ -536,19 +529,20 @@ function buildView(root) {
     // Count history images straight from the request body when we have it.
     const reqImgs = req
       ? (req.contents || []).reduce(
-          (a, /** @type {any} */ c) => a + (c.parts || []).filter((/** @type {any} */ p) => p.inlineData).length,
+          (/** @type {number} */ a, /** @type {any} */ c) =>
+            a + (c.parts || []).filter((/** @type {any} */ p) => p.inlineData).length,
           0,
         )
       : 0;
     const nHist = req ? reqImgs - n : (start.history_images ?? 0) * n;
-    $(".br-i-title").textContent = `turn ${start.turn}`;
-    $(".br-i-meta").textContent =
+    $i(".br-i-title").textContent = `turn ${start.turn}`;
+    $i(".br-i-meta").textContent =
       `${n} new image${n === 1 ? "" : "s"}` +
       (nHist > 0 ? ` + ${nHist} in history` : "") +
       ` · history ${start.history} entries · ` +
       (end ? `${end.latency.toFixed(1)}s think` : "thinking…");
 
-    const fr = $(".br-i-frames");
+    const fr = $i(".br-i-frames");
     fr.innerHTML = "";
     for (const f of start.frames || []) {
       const fig = document.createElement("figure");
@@ -559,9 +553,9 @@ function buildView(root) {
     }
 
     // The request itself: every history entry and the new message, verbatim.
-    const conv = $(".br-i-conv");
+    const conv = $i(".br-i-conv");
     conv.innerHTML = "";
-    $(".br-i-conv-h").hidden = /** @type {HTMLElement} */ (conv).hidden = !req;
+    $i(".br-i-conv-h").hidden = /** @type {HTMLElement} */ (conv).hidden = !req;
     if (req) {
       const cfg = document.createElement("div");
       cfg.className = "br-i-cfg";
@@ -578,9 +572,9 @@ function buildView(root) {
       conv.append(decl);
     }
 
-    $(".br-i-input").textContent = start.input || "—";
+    $i(".br-i-input").textContent = start.input || "—";
 
-    const tools = $(".br-i-tools");
+    const tools = $i(".br-i-tools");
     tools.innerHTML = "";
     for (const t of start.tools || []) {
       const chip = document.createElement("span");
@@ -589,7 +583,7 @@ function buildView(root) {
       tools.append(chip);
     }
 
-    const out = $(".br-i-out");
+    const out = $i(".br-i-out");
     out.innerHTML = "";
     if (!end) {
       out.innerHTML = `<div class="br-empty">still thinking…</div>`;
@@ -603,15 +597,15 @@ function buildView(root) {
       if (!out.children.length) out.innerHTML = `<div class="br-empty">no output — observed only</div>`;
     }
 
-    $(".br-i-sys pre").textContent =
+    $i(".br-i-sys pre").textContent =
       req?.systemInstruction?.parts?.[0]?.text ||
       start.system ||
       "(system prompt not reported by this robot's trace)";
   }
 
   $(".br-inspect-btn").addEventListener("click", () => openInspector(shownTurn));
-  $(".br-i-close").addEventListener("click", closeInspector);
-  $(".br-inspect-back").addEventListener("click", closeInspector);
+  $i(".br-i-close").addEventListener("click", closeInspector);
+  $i(".br-inspect-back").addEventListener("click", closeInspector);
   /** @param {KeyboardEvent} e */
   const onKey = (e) => {
     if (e.key === "Escape" && inspecting) closeInspector();
@@ -623,7 +617,7 @@ function buildView(root) {
     /** @type {HTMLImageElement} */ ($(".br-frame")).src = src;
     $(".br-stage-idle").style.display = "none";
     $(".br-frame-cap").innerHTML = `<b>${caption}</b>`;
-    $(".br-vision-src").textContent = S.haveTrace ? "turn-exact frames · /brain/trace" : "live · " + CAM_TOPIC;
+    $(".br-vision-src").textContent = shownTurn ? "turn-exact frames · /brain/trace" : "live · " + CAM_TOPIC;
   }
 
   function sweep() {
@@ -704,7 +698,7 @@ function buildView(root) {
     if (S.running) {
       sub.textContent = "▶ " + S.running;
       sub.classList.remove("err");
-    } else if (S.phase !== "error" && sub.textContent.startsWith("▶")) sub.textContent = "";
+    } else if (S.phase !== "error" && sub.textContent?.startsWith("▶")) sub.textContent = "";
 
     $(".br-turn").textContent = "TURN " + S.turn;
     if (S.uptimeAt) {
@@ -718,7 +712,6 @@ function buildView(root) {
     }
     raf = requestAnimationFrame(tickUI);
   }
-  raf = requestAnimationFrame(tickUI);
 
   // ---- data in -------------------------------------------------------------
   /** @param {any} msg */
@@ -735,28 +728,30 @@ function buildView(root) {
     if (d) fn(d);
   };
 
-  const handlers = { onTrace, onChat, onSkill, onAgentStatus, onBrainStatus, setPose, setSpeaking };
-
   /** @type {(() => void)[]} */
   let unsubs = [];
   /** @type {(() => void) | null} */
   let demoStop = null;
   let destroyed = false;
+  let demoStarted = false;
+  let live = false;
 
-  if (new URLSearchParams(location.search).has("demo")) {
-    // No robot in the picture: the socket's connect card would just sit over
-    // the synthetic show.
-    root.parentElement?.querySelector(".connect-layer")?.classList.add("br-hidden");
+  // Dev-only synthetic brain: started once, then left running for the life of
+  // the view — there is no robot behind it to spare.
+  function startDemo() {
+    if (demoStarted) return;
+    demoStarted = true;
     void import("./demo.js").then((m) => {
-      if (destroyed) return; // the page unmounted before the chunk loaded
-      demoStop = m.startDemo(handlers);
+      if (destroyed) return;
+      demoStop = m.startDemo({ onTrace, onSkill, onAgentStatus, onBrainStatus, setPose, setSpeaking });
     });
-  } else {
+  }
+
+  function subscribe() {
     unsubs = [
       ros.subscribe("/brain/trace", jsonHandler(onTrace), 0, "std_msgs/msg/String"),
       ros.subscribe("/brain/agent_status", jsonHandler(onAgentStatus), 0, "std_msgs/msg/String"),
       ros.subscribe("/brain/websocket_status", jsonHandler(onBrainStatus), 0, "std_msgs/msg/String"),
-      ros.subscribe("/brain/chat_out", jsonHandler(onChat), 0, "std_msgs/msg/String"),
       ros.subscribe("/brain/skill_status_update", jsonHandler(onSkill), 0, "std_msgs/msg/String"),
       ros.subscribe("/tts/is_playing", (msg) => setSpeaking(msg.data === "true"), 0, "std_msgs/msg/String"),
       ros.subscribe(
@@ -771,7 +766,9 @@ function buildView(root) {
       ros.subscribe(
         CAM_TOPIC,
         (msg) => {
-          if (!S.haveTrace) showFrame("data:image/jpeg;base64," + msg.data, "live camera");
+          // Until the first traced turn lands, the live camera stands in — on a
+          // view opened mid-run that's the difference between a picture and NO SIGNAL.
+          if (!shownTurn) showFrame("data:image/jpeg;base64," + msg.data, "live camera");
         },
         500,
         "sensor_msgs/msg/CompressedImage",
@@ -780,31 +777,44 @@ function buildView(root) {
   }
 
   return {
+    // Switching back to the live cockpit keeps the built view and everything it
+    // has collected (turns, latencies, the inspector) — only the feeds stop.
+    resume() {
+      if (live || destroyed) return;
+      live = true;
+      raf = requestAnimationFrame(tickUI);
+      if (opts.demo) startDemo();
+      else subscribe();
+    },
+    suspend() {
+      if (!live) return;
+      live = false;
+      cancelAnimationFrame(raf);
+      for (const u of unsubs) u();
+      unsubs = [];
+    },
     destroy() {
       destroyed = true;
+      live = false;
       cancelAnimationFrame(raf);
       window.clearTimeout(pingTimer);
       window.clearTimeout(motionTimer);
       for (const id of uiTimers) window.clearTimeout(id);
       window.removeEventListener("keydown", onKey);
-      unsubs.forEach((u) => u());
+      for (const u of unsubs) u();
       demoStop?.();
-      root.innerHTML = "";
+      root.remove();
+      inspector.remove();
     },
   };
 }
 
 function template() {
   return `
-  <div class="br-head">
-    <h1 class="page-title">Brain</h1>
-    <div class="br-chips">
-      <div class="br-chip br-chip-active" title="/brain/agent_status"><span class="led"></span><span>brain <b>—</b></span></div>
-      <div class="br-chip br-chip-directive" title="current directive — /brain/agent_status"><span>directive</span><b>—</b></div>
-      <div class="br-chip br-chip-backend" title="inference backend — /brain/trace, falling back to /brain/websocket_status"><span>backend</span><b>—</b></div>
-      <div class="br-chip br-chip-model" title="model in use — /brain/trace"><span>model</span><b>—</b></div>
-      <div class="br-chip br-chip-voice" title="pulses while the robot speaks — /tts/is_playing"><span class="led"></span><span>voice</span></div>
-    </div>
+  <div class="br-chips">
+    <div class="br-chip br-chip-backend" title="inference backend — /brain/trace, falling back to /brain/websocket_status"><span>backend</span><b>—</b></div>
+    <div class="br-chip br-chip-model" title="model in use — /brain/trace"><span>model</span><b>—</b></div>
+    <div class="br-chip br-chip-voice" title="pulses while the robot speaks — /tts/is_playing"><span class="led"></span><span>voice</span></div>
   </div>
   <div class="br-grid">
     <section class="br-panel br-panel-loop">
@@ -848,14 +858,9 @@ function template() {
       </div>
     </section>
 
-    <section class="br-panel br-panel-mind">
-      <h2>Mind stream <span class="sub">thoughts · speech · system</span></h2>
-      <div class="br-feed br-mind"></div>
-    </section>
-
     <section class="br-panel br-panel-actions">
       <h2>Turns &amp; actions <span class="sub">tool calls and skill runs</span></h2>
-      <div class="br-feed br-actions"></div>
+      <div class="br-feed br-actions"><div class="br-empty">waiting for the first turn</div></div>
     </section>
 
     <section class="br-panel br-panel-queue">
@@ -880,8 +885,11 @@ function template() {
         <div class="lab" title="Entries in the rolling conversation history the model sees"><span>conversation history</span><span class="br-hist-txt">0 / ${HIST_MAX}</span></div>
       </div>
     </section>
-  </div>
-  <div class="br-inspect" hidden>
+  </div>`;
+}
+
+function inspectorTemplate() {
+  return `
     <div class="br-inspect-back"></div>
     <div class="br-inspect-card">
       <div class="br-i-head">
@@ -901,6 +909,5 @@ function template() {
         <div class="br-i-out"></div>
         <details class="br-i-sys"><summary>system instruction</summary><pre></pre></details>
       </div>
-    </div>
-  </div>`;
+    </div>`;
 }

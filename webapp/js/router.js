@@ -30,7 +30,6 @@ import { getConfig } from "./config.js";
 const ROUTES = [
   { path: "/", key: "teleop", load: () => import("./teleop/main.js") },
   { path: "/agent", key: "agent", load: () => import("./agent/main.js") },
-  { path: "/brain", key: "brain", load: () => import("./brain/main.js") },
   { path: "/nav", key: "nav", load: () => import("./nav/main.js") },
   { path: "/logging", key: "logging", load: () => import("./logging/main.js") },
   { path: "/datasets", key: "datasets", load: () => import("./datasets/main.js") },
@@ -41,6 +40,20 @@ const ROUTES = [
   { path: "/armsdk", key: "armsdk", load: () => import("./armsdk/main.js") },
   { path: "/settings", key: "settings", load: () => import("./settings/main.js") },
 ];
+
+// Sections that folded into another page. Brain is a view of Agent now, so old
+// links (/brain, /brain?demo) land on it instead of falling back to teleop.
+/** @type {Record<string, string>} */
+const MOVED = { "/brain": "/agent?view=brain" };
+
+/** The current URL for a possibly-moved path, keeping the caller's query. @param {URL} url */
+function relocate(url) {
+  const moved = MOVED[normalize(url.pathname)];
+  if (!moved) return url;
+  const next = new URL(moved, location.origin);
+  for (const [k, v] of url.searchParams) next.searchParams.set(k, v);
+  return next;
+}
 
 const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
 
@@ -63,12 +76,25 @@ function routeFor(pathname) {
   return ROUTES.find((r) => r.path === p) || ROUTES[0];
 }
 
+/** True for anything this router handles, including the moved paths. @param {string} pathname */
+function isAppPath(pathname) {
+  const p = normalize(pathname);
+  return p in MOVED || ROUTES.some((r) => r.path === p);
+}
+
+/** Where we should be: rewrites a moved path in place, then reports it. */
+function landing() {
+  const url = relocate(new URL(location.href));
+  if (url.href !== location.href) history.replaceState({}, "", url.pathname + url.search);
+  return url;
+}
+
 const shell = initShell(navigate);
 
 // Sim deployments hide robot-data workflows from the rail (shell.js's
 // SIM_SECTIONS); gate the routes too, so a deep link or refresh can't mount
 // a page whose services have no sim backing.
-const SIM_ROUTE_KEYS = new Set(["teleop", "agent", "brain", "nav", "logging", "armsdk", "settings"]);
+const SIM_ROUTE_KEYS = new Set(["teleop", "agent", "nav", "logging", "armsdk", "settings"]);
 /** @type {Promise<{simControls?: boolean}>} */
 const configPromise = getConfig();
 
@@ -126,7 +152,7 @@ function dismissBootSplash() {
  * @param {string} href pathname (+ optional search), e.g. "/collect?dir=x".
  */
 function navigate(href) {
-  const url = new URL(href, location.origin);
+  const url = relocate(new URL(href, location.origin));
   const route = routeFor(url.pathname);
   if (route.key === currentKey && url.search === location.search) return;
   history.pushState({}, "", url.pathname + url.search);
@@ -143,14 +169,14 @@ document.addEventListener("click", (e) => {
   const a = target instanceof Element ? target.closest("a") : null;
   if (!(a instanceof HTMLAnchorElement)) return;
   if (a.target === "_blank" || a.hasAttribute("download") || a.origin !== location.origin) return;
-  if (!ROUTES.some((r) => r.path === normalize(a.pathname))) return; // not an app route
+  if (!isAppPath(a.pathname)) return; // not an app route
   e.preventDefault();
   navigate(a.pathname + a.search);
 });
 
 // Back/forward: re-render for the target location (history is already updated).
 window.addEventListener("popstate", () => {
-  const route = routeFor(location.pathname);
+  const route = routeFor(landing().pathname);
   if (route.key === currentKey) return;
   void render(route);
 });
@@ -191,7 +217,7 @@ if (connectTarget) {
 
 // Render the page for the URL we loaded at (deep link or refresh), then prefetch
 // the other route modules while idle so later switches are instant.
-void render(routeFor(location.pathname));
+void render(routeFor(landing().pathname));
 prefetchRoutes();
 
 function prefetchRoutes() {
