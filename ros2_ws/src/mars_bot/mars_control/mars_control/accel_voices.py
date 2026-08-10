@@ -255,6 +255,39 @@ class PluckBank:
         return out
 
 
+def _bell(position: np.ndarray) -> np.ndarray:
+    """Raised cosine over 0..1, zero at both ends.
+
+    The whole trick behind the endless voices: a partial that is silent when it
+    is born and silent when it dies can be recycled forever, and the ear never
+    catches the join.
+    """
+    return 0.5 * (1.0 - np.cos(2.0 * np.pi * position))
+
+
+class Transients:
+    """Short bursts written at arbitrary sample offsets, carrying whatever
+    overhangs into the next block.
+
+    Needed by the voices whose events are not periodic -- a Poisson click can
+    land two samples before the end of a block, and truncating it there is an
+    audible tick of its own.
+    """
+
+    def __init__(self, tail: int) -> None:
+        self._tail = tail
+        self._pending = np.zeros(tail)
+
+    def render(self, frames: int, bursts: list[tuple[int, np.ndarray]]) -> np.ndarray:
+        buffer = np.zeros(frames + self._tail)
+        buffer[: self._tail] += self._pending
+        for offset, shape in bursts:
+            end = min(offset + len(shape), len(buffer))
+            buffer[offset:end] += shape[: end - offset]
+        self._pending = buffer[frames:]
+        return buffer[:frames]
+
+
 _LOOPS: dict[tuple[str, int], np.ndarray | None] = {}
 
 
@@ -329,7 +362,15 @@ class AccelVoice:
     trim: ClassVar[float] = 1.0
     """Loudness match against the motor, measured over a full drive cycle.
     Without it a saw stack lands ~6x hotter than a whistle and choosing a
-    voice would mean choosing a volume."""
+    voice would mean choosing a volume.
+
+    Matched on RMS, except for the voices made of sparse clicks. Those have
+    two to three times the motor's crest factor -- 13 against 4.2 for the card
+    in the spokes -- so against a shared peak ceiling they simply cannot carry
+    a drone's average, and asking them to only drives them far enough into the
+    saturator to flatten the clicks into blobs. They are set to the same peak
+    instead and are genuinely quieter; raise ``volume`` if you pick one.
+    """
 
     def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
         self.feel = feel or VoiceFeel()
@@ -1201,6 +1242,444 @@ class MarsSong(AccelVoice):
         return 1.5 * out
 
 
+class Shepard(AccelVoice):
+    """A tone that rises forever and never gets any higher.
+
+    Five sines an octave apart climb together through a fixed window; each one
+    fades in at the bottom of the span and out at the top, so when it is reborn
+    an octave down nobody hears the join. The pitch appears to rise without
+    limit while the spectrum never actually moves.
+
+    Which makes it the one honest answer to a robot that has a top speed: hold
+    the throttle down and it keeps accelerating, forever, and the sound never
+    runs out of room. Speed sets how fast it climbs, not how high it has got.
+    """
+
+    slug = "shepard"
+    label = "Infinite Riser"
+    blurb = "a Shepard tone: it accelerates forever and never gets higher"
+    trim = 0.88
+
+    SPAN = 5
+    """Octaves across the window. With one partial per octave, the set is
+    identical after each wrap, which is what makes the illusion perfect."""
+    BASE_HZ = 55.0
+    RATE = (0.05, 0.42)
+    """Full traversals of the span per second -- never zero, so even parked it
+    is still, faintly, getting away from you."""
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._theta = 0.0
+        self._phases = np.zeros(self.SPAN)
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        low, high = self.RATE
+        rate = low + (high - low) * drive.speed_frac
+        theta = self._theta + rate * drive.steps
+        self._theta = float(theta[-1] % 1.0)
+
+        out = np.zeros(drive.frames)
+        for k in range(self.SPAN):
+            position = (theta + k / self.SPAN) % 1.0
+            freq = self.BASE_HZ * 2.0 ** (position * self.SPAN)
+            phase, self._phases[k] = _phase(float(self._phases[k]), freq, self.sample_rate)
+            # The octave jump when position wraps happens under a zero window,
+            # so the discontinuity in this partial is never audible.
+            out += _bell(position) * np.sin(phase)
+        return 0.5 * out
+
+
+class Risset(AccelVoice):
+    """The same illusion in time: a groove that speeds up forever.
+
+    Four layers of clicks at octave-related tempos, each fading in slow at the
+    bottom and out fast at the top. The beat accelerates without limit and the
+    average tempo never changes -- a staircase you can run up in one place.
+    """
+
+    slug = "risset"
+    label = "Infinite Groove"
+    blurb = "a Risset rhythm: the beat speeds up forever and never arrives"
+    trim = 2.6
+
+    LAYERS = 4
+    SPAN = 4
+    SLOWEST_HZ = 0.85
+    RATE = (0.03, 0.26)
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._theta = 0.0
+        self._beats = np.zeros(self.LAYERS)
+        self._tones = np.zeros(self.LAYERS)
+        self._crack = Stream(bandpass_kernel(sample_rate, 400.0, 2800.0))
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        low, high = self.RATE
+        rate = low + (high - low) * drive.speed_frac
+        theta = self._theta + rate * drive.steps
+        self._theta = float(theta[-1] % 1.0)
+
+        noise = self._crack(self._noise(drive.frames))
+        out = np.zeros(drive.frames)
+        for k in range(self.LAYERS):
+            position = (theta + k / self.LAYERS) % 1.0
+            tempo = self.SLOWEST_HZ * 2.0 ** (position * self.SPAN)
+            beat, self._beats[k] = _phase(float(self._beats[k]), tempo, self.sample_rate)
+            # Pitch and decay ride the layer's own tempo, so a layer thumps low
+            # while it is slow and ticks high once it is fast.
+            tone_hz = 110.0 * 2.0 ** (position * 2.2)
+            tone, self._tones[k] = _phase(float(self._tones[k]), tone_hz, self.sample_rate)
+            strike = np.exp(-_cycle(beat) * (11.0 + 34.0 * position))
+            out += _bell(position) * strike * (np.sin(tone) + 0.45 * noise)
+        return 0.55 * out
+
+
+class Doppler(AccelVoice):
+    """The robot sounds like it is overtaking you. Repeatedly.
+
+    A real pass is modelled, not faked: a source goes by at a fixed miss
+    distance, and what you hear is its pitch divided by one plus the radial
+    velocity over the speed of sound, with loudness falling off as one over the
+    distance. The eeeee-yowwww swoop and its loudness are then guaranteed to
+    agree, which is the half that faked versions get wrong.
+
+    A real MARS at 0.8 m/s shifts pitch by a fifth of a percent, so the speed
+    of sound here is a fiction chosen to make the effect audible. Road speed
+    sets how often it passes.
+    """
+
+    slug = "doppler"
+    label = "Doppler Pass"
+    blurb = "it flies past you, over and over, and never arrives"
+    trim = 0.72
+
+    PASS_RATE = (0.3, 1.5)
+    SOURCE_HZ = 235.0
+    MACH = 0.55
+    """Source speed as a fraction of this world's speed of sound. Above about
+    0.7 the swoop stops sounding like a pass and starts sounding broken."""
+    SPREAD = 3.6
+    """How many miss-distances either side of the listener a pass covers."""
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._pass_phase = 0.0
+        self._tone_phase = 0.0
+        self._wind = Stream(bandpass_kernel(sample_rate, 400.0, 3000.0))
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        low, high = self.PASS_RATE
+        rate = low + (high - low) * drive.speed_frac
+        passing, self._pass_phase = _phase(self._pass_phase, np.full(drive.frames, rate), self.sample_rate)
+
+        along = (_cycle(passing) * 2.0 - 1.0) * self.SPREAD
+        distance = np.sqrt(along**2 + 1.0)
+        heard = 1.0 / (1.0 + self.MACH * along / distance)
+        loudness = 1.0 / distance
+
+        freq = self.SOURCE_HZ * heard
+        phase, self._tone_phase = _phase(self._tone_phase, freq, self.sample_rate)
+        # Fewer partials than the source really has: distance eats the top of a
+        # spectrum, and loudness alone does not read as far away.
+        tone = _saw(phase, 14) * loudness
+        wind = self._wind(self._noise(drive.frames)) * loudness**1.8 * 0.5
+        return 1.5 * (tone + wind)
+
+
+class Tape(AccelVoice):
+    """The robot as a tape machine, spooling up.
+
+    Wow and flutter are the whole idea: a transport wavers most when it is
+    slow, and steadies as it comes up to speed. So the sound gets *more*
+    stable the faster the robot goes, which is the opposite of every other
+    voice here and reads, unmistakably, as a machine finding its feet.
+    """
+
+    slug = "tape"
+    label = "Tape Spool"
+    blurb = "a tape transport coming up to speed, wow and flutter settling"
+    trim = 0.59
+
+    CAPSTAN = (150.0, 640.0)
+    WOW_HZ = 0.9
+    FLUTTER_HZ = 16.0
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._pitch = Glide(self.CAPSTAN[0])
+        self._whine_phase = 0.0
+        self._wow_phase = 0.0
+        self._flutter_phase = 0.0
+        self._hiss = Stream(bandpass_kernel(sample_rate, 1200.0, 6500.0))
+        self._reel = Stream(bandpass_kernel(sample_rate, 160.0, 430.0, taps=127))
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        low, high = self.CAPSTAN
+        freq = self._pitch.to(low + (high - low) * drive.speed_frac, drive.frames)
+
+        steadiness = 1.0 - 0.75 * drive.speed_frac
+        wow = self._wow_phase + 2.0 * np.pi * self.WOW_HZ * drive.steps
+        flutter = self._flutter_phase + 2.0 * np.pi * self.FLUTTER_HZ * drive.steps
+        self._wow_phase = float(wow[-1] % (2.0 * np.pi))
+        self._flutter_phase = float(flutter[-1] % (2.0 * np.pi))
+        freq = freq * (1.0 + steadiness * (0.045 * np.sin(wow) + 0.011 * np.sin(flutter)))
+
+        phase, self._whine_phase = _phase(self._whine_phase, freq, self.sample_rate)
+        whine = _saw(phase, 9) * 0.55
+        hiss = self._hiss(self._noise(drive.frames)) * 0.16
+        reel = self._reel(self._noise(drive.frames)) * (0.2 + 0.5 * drive.speed_frac)
+        return 1.3 * whine + hiss + reel
+
+
+class SpokeCard(AccelVoice):
+    """A playing card pegged into the spokes.
+
+    The one sound on this list that a small wheeled machine has an actual claim
+    to, and everybody already knows how it maps to speed because they made one
+    as a child. Slow, it is a flap; fast, the flaps fuse into a buzz, and that
+    fusion happening on its own is the acceleration.
+    """
+
+    slug = "spoke_card"
+    label = "Card in the Spokes"
+    blurb = "a playing card pegged into the wheel, flapping into a buzz"
+    trim = 0.8
+
+    RATE = (4.0, 27.0)
+    BODY_HZ = 780.0
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._flap_phase = 0.0
+        self._body_phase = 0.0
+        self._slap = Stream(bandpass_kernel(sample_rate, 380.0, 2600.0))
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        low, high = self.RATE
+        rate = low + (high - low) * drive.speed_frac
+        flap, self._flap_phase = _phase(self._flap_phase, np.full(drive.frames, rate), self.sample_rate)
+        strike = np.exp(-_cycle(flap) * 38.0)
+
+        body, self._body_phase = _phase(self._body_phase, np.full(drive.frames, self.BODY_HZ), self.sample_rate)
+        card = self._slap(self._noise(drive.frames)) + 0.45 * np.sin(body)
+        return 2.1 * card * strike
+
+
+class Geiger(AccelVoice):
+    """Click rate as speed, and the clicks land at random.
+
+    Everything else here is periodic, so it is the only voice whose texture
+    changes rather than its pitch: the ear reads a Poisson process by density
+    alone, and going faster makes the robot sound more dangerous rather than
+    higher. Randomly spaced clicks are also the only ones that never form a
+    tone, however fast they get.
+    """
+
+    slug = "geiger"
+    label = "Geiger Counter"
+    blurb = "randomly spaced clicks. Faster is not higher, just more alarming"
+    trim = 1.2
+
+    RATE = (2.5, 52.0)
+    SHAPES = 5
+    TICK_SECONDS = 0.008
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        length = int(self.TICK_SECONDS * sample_rate)
+        time = np.arange(length) / sample_rate
+        # Raw white noise in a click puts most of its energy in the top octave,
+        # which is the harshest thing this whole set can produce; the short
+        # window rolls that off and leaves the body of the tick.
+        window = np.hanning(9)
+        window /= window.sum()
+        # A handful of ticks rather than one: a counter whose every click is
+        # bit-identical reads as a sample being retriggered, not as a detector.
+        self._ticks = [
+            np.exp(-time * 480.0)
+            * (
+                np.convolve(self._rng.standard_normal(length), window, mode="same") * 0.45
+                + np.sin(2.0 * np.pi * hz * time)
+            )
+            for hz in np.linspace(1050.0, 2050.0, self.SHAPES)
+        ]
+        self._transients = Transients(length)
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        low, high = self.RATE
+        rate = low + (high - low) * drive.speed_frac
+        count = int(self._rng.poisson(rate * drive.dt))
+        bursts = [
+            (int(self._rng.integers(0, drive.frames)), self._ticks[int(self._rng.integers(0, self.SHAPES))])
+            for _ in range(count)
+        ]
+        return 1.4 * self._transients.render(drive.frames, bursts)
+
+
+class Panting(AccelVoice):
+    """The robot is out of breath, and getting worse.
+
+    Effort, not velocity: the breath comes faster, and a voice creeps into the
+    out-breath as it works harder, the way a person's does. It is the only
+    voice here that sounds like the robot would rather you slowed down.
+    """
+
+    slug = "panting"
+    label = "Out of Breath"
+    blurb = "the robot pants harder the faster you push it"
+    trim = 0.61
+
+    RATE = (1.1, 4.6)
+    F0 = (150.0, 205.0)
+    MOUTH: Vowel = ((600.0, 320.0, 1.0), (1500.0, 500.0, 0.5), (2600.0, 600.0, 0.18))
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._breath_phase = 0.0
+        self._voice_phase = 0.0
+        self._pitch = Glide(self.F0[0])
+        self._air = Stream(bandpass_kernel(sample_rate, 380.0, 2500.0))
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        low, high = self.RATE
+        rate = low + (high - low) * drive.speed_frac
+        breath, self._breath_phase = _phase(self._breath_phase, np.full(drive.frames, rate), self.sample_rate)
+        position = _cycle(breath)
+
+        # Out on the first half, in on the second and quieter -- a pant is not
+        # symmetric, and swapping the two makes it sound like a sigh.
+        out_breath = np.sin(np.pi * np.clip(position / 0.45, 0.0, 1.0)) ** 1.4
+        in_breath = 0.55 * np.sin(np.pi * np.clip((position - 0.5) / 0.5, 0.0, 1.0)) ** 1.6
+        air = self._air(self._noise(drive.frames)) * (out_breath + in_breath)
+
+        f_low, f_high = self.F0
+        freq = self._pitch.to(f_low + (f_high - f_low) * drive.speed_frac, drive.frames)
+        phase, self._voice_phase = _phase(self._voice_phase, freq, self.sample_rate)
+        harmonics = min(MAX_HARMONICS, max(4, int(3200.0 / max(freq[0], 1.0))))
+        voiced = _voiced(phase, freq, harmonics, self.MOUTH) * out_breath * (0.15 + 0.85 * drive.speed_frac)
+        return 1.5 * air + 1.1 * voiced
+
+
+class Throat(AccelVoice):
+    """Khoomei: one throat holding a drone and whistling a melody above it.
+
+    The drone never moves. What climbs is a single very narrow resonance
+    sliding up through its harmonics, picking them out one at a time, so the
+    melody is not a second voice -- it is the same voice, filtered. Speed
+    chooses which harmonic is singing.
+    """
+
+    slug = "throat"
+    label = "Throat Singing"
+    blurb = "one drone, and a whistling overtone climbing through its harmonics"
+    trim = 0.91
+
+    F0 = (92.0, 116.0)
+    WHISTLE = (480.0, 2050.0)
+    WHISTLE_WIDTH = 52.0
+    """Narrow enough to isolate one harmonic at a time -- widen it and the
+    overtone stops being a whistle and becomes a vowel."""
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._pitch = Glide(self.F0[0])
+        self._drone_phase = 0.0
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        low, high = self.F0
+        freq = self._pitch.to(low + (high - low) * drive.speed_frac, drive.frames)
+        whistle_low, whistle_high = self.WHISTLE
+        whistle_hz = whistle_low + (whistle_high - whistle_low) * drive.speed_frac
+
+        vowel: Vowel = ((330.0, 260.0, 0.55), (whistle_hz, self.WHISTLE_WIDTH, 2.4))
+        phase, self._drone_phase = _phase(self._drone_phase, freq, self.sample_rate)
+        harmonics = min(MAX_HARMONICS, max(8, int(2600.0 / max(freq[0], 1.0))))
+        return 2.2 * _voiced(phase, freq, harmonics, vowel)
+
+
+class Gamelan(AccelVoice):
+    """Bronze, and two of everything.
+
+    Gamelan instruments are tuned in pairs a few hertz apart so the pair beats
+    against itself -- ombak, the wave. Every note here is struck twice for that
+    reason, and the partials are deliberately not whole-number multiples,
+    because struck bronze is not.
+    """
+
+    slug = "gamelan"
+    label = "Gamelan"
+    blurb = "shimmering bronze, every note struck twice so the pair beats"
+    trim = 1.34
+
+    SCALE = (0.0, 2.4, 4.8, 7.2, 9.6, 12.0, 14.4, 16.8)
+    """Roughly equidistant steps, after slendro -- which is not a subset of the
+    twelve-tone scale and sounds wrong quantised into one."""
+    ROOT_HZ = 330.0
+    OMBAK = 0.007
+    RATE = (1.4, 6.2)
+    PARTIALS = ((1.0, 1.0, 1.1), (2.76, 0.55, 1.8), (5.4, 0.25, 2.6), (8.93, 0.12, 3.4))
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._metronome = Metronome()
+        self._bank = PluckBank(sample_rate, self.PARTIALS, life=3.0)
+        self._step = 0
+
+    def _quiet(self, dt: float) -> None:
+        self._bank.clear()
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        low, high = self.RATE
+        for _ in range(self._metronome.tick(low + (high - low) * drive.speed_frac, drive.dt)):
+            top = drive.speed_frac * (len(self.SCALE) - 3)
+            ornament = (0, 2, 1, 3)[self._step % 4]
+            semitones = self.SCALE[min(int(top) + ornament, len(self.SCALE) - 1)]
+            freq = self.ROOT_HZ * 2.0 ** (semitones / 12.0)
+            self._bank.strike(freq, amp=0.5)
+            self._bank.strike(freq * (1.0 + self.OMBAK), amp=0.5)
+            self._step += 1
+        return 0.42 * self._bank.render(drive.frames)
+
+
+class Heartbeat(AccelVoice):
+    """Lub-dub, and the robot's pulse is the speedometer.
+
+    A real heart is around 50 Hz, well under what the speaker can radiate, so
+    this one is pitched up until it can be heard and given the falling pitch
+    that makes a thump read as weight rather than a beep.
+    """
+
+    slug = "heartbeat"
+    label = "Heartbeat"
+    blurb = "its pulse is your speed. 57 bpm parked, 192 flat out"
+    trim = 1.4
+
+    RATE = (0.95, 3.2)
+    DUB_AT = 0.32
+
+    def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
+        super().__init__(sample_rate, feel, seed)
+        self._beat_phase = 0.0
+        self._thump_phase = 0.0
+        self._body = Stream(bandpass_kernel(sample_rate, 170.0, 700.0, taps=127))
+
+    def _voice(self, drive: Drive) -> np.ndarray:
+        low, high = self.RATE
+        rate = low + (high - low) * drive.speed_frac
+        beat, self._beat_phase = _phase(self._beat_phase, np.full(drive.frames, rate), self.sample_rate)
+
+        lub = np.exp(-_cycle(beat) * 17.0)
+        dub = 0.68 * np.exp(-_cycle(beat - 2.0 * np.pi * self.DUB_AT) * 23.0)
+        envelope = lub + dub
+
+        freq = 96.0 + 105.0 * envelope
+        phase, self._thump_phase = _phase(self._thump_phase, freq, self.sample_rate)
+        thud = self._body(self._noise(drive.frames)) * envelope * 0.45
+        return 1.7 * (np.sin(phase) * envelope + thud)
+
+
 VOICES: dict[str, type[AccelVoice]] = {
     voice.slug: voice
     for voice in (
@@ -1221,6 +1700,16 @@ VOICES: dict[str, type[AccelVoice]] = {
         SteamTrain,
         Bagpipe,
         Kazoo,
+        Shepard,
+        Risset,
+        Doppler,
+        Tape,
+        SpokeCard,
+        Geiger,
+        Panting,
+        Throat,
+        Gamelan,
+        Heartbeat,
     )
 }
 

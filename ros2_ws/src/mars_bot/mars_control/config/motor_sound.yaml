@@ -22,10 +22,20 @@
       #   disco        four on the floor, BPM tied to road speed
       #   chiptune     8-bit racer
       #   bagpipe      fixed drone, climbing chanter
+      #   gamelan      shimmering bronze, struck in beating pairs
       #   purr         a large cat, pleased about the speed
       #   steam_train  chuffs that quicken, whistle at the top
       #   theremin     wavering swoop, sliding into every pitch
       #   hyperdrive   detuned saws opening up
+      #   throat       one drone, a whistling overtone climbing its harmonics
+      #   shepard      a tone that rises forever and never gets higher
+      #   risset       a beat that speeds up forever and never arrives
+      #   doppler      it flies past you, over and over
+      #   tape         a tape transport settling as it comes up to speed
+      #   spoke_card   a playing card in the wheel, flapping into a buzz
+      #   geiger       randomly spaced clicks, denser with speed
+      #   panting      the robot is out of breath, and getting worse
+      #   heartbeat    its pulse is your speedometer
       voice: "motor"
 
       volume: 0.50                # 0..1, before the ALSA softvol Master level
