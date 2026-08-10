@@ -8,6 +8,11 @@
       # character. Switchable live, no rebuild:
       #   ros2 param set /motor_sound motor_sound.voice purr
       #
+      # lip_trill is the default: a mouth going brrrrrr. It is the one voice
+      # nobody can hear as a *wrong* motor, because it never claimed to be one,
+      # and it needs no shipped asset -- so it cannot be silenced by a missing
+      # file. Everything from base_hz down tunes "motor" only.
+      #
       #   motor        the electric whine (below tunes only this one)
       #   lip_trill    a mouth going brrrrrr
       #   mars_voice   the robot's own voice, flapped into that trill
@@ -43,7 +48,7 @@
       #   whale        a humpback, pitched up until the speaker carries it
       #   f1           a real race engine
       #   crowd        a stadium cheering, louder with speed
-      voice: "motor"
+      voice: "lip_trill"
 
       volume: 0.50                # 0..1, before the ALSA softvol Master level
       idle_when_stopped: true     # keep the motor rumbling while parked (in Mad mode)

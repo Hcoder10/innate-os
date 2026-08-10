@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""Plays an electric motor whine through the robot's speaker, driven by speed.
+"""Plays an acceleration sound through the robot's speaker, driven by speed.
 
-The synthesis itself lives in ``motor_synth`` and knows nothing about ROS.
-This node's only jobs are to work out how hard the motor is working
-and to keep the audio device fed:
+*Which* sound is the ``voice`` parameter, and it defaults to ``lip_trill`` -- a
+mouth going brrrrrr. The electric whine in ``motor_synth`` is still there under
+``voice: motor``, but a synthesised motor is a claim about what the robot is,
+and one everybody is equipped to hear as slightly wrong; a mouth noise makes no
+such claim, so nothing about it can be wrong. ``accel_voices`` holds the rest.
+
+The synthesis knows nothing about ROS. This node's only jobs are to work out
+how hard the robot is working and to keep the audio device fed:
 
 * road speed and throttle both come from ``/cmd_vel``. Commanded speed *is*
   road speed on this base -- the wheel controller tracks its setpoint, and
@@ -93,7 +98,7 @@ class MotorSoundNode(Node):
             namespace="",
             parameters=[
                 ("motor_sound.enabled", True),
-                ("motor_sound.voice", "motor"),
+                ("motor_sound.voice", "lip_trill"),
                 ("motor_sound.volume", 0.5),
                 ("motor_sound.idle_when_stopped", True),
                 ("motor_sound.only_in_mad_mode", True),
