@@ -158,7 +158,7 @@ class MicroInput(InputDevice):
         elif etype == "insufficient_audio_activity":
             pass  # expected whenever the room is quiet — not worth a log line
         elif etype in ELEVENLABS_ERROR_TYPES:
-            self.logger.error(f"❌ ElevenLabs error ({etype}): {event.get('message', event)}")
+            self.logger.error(f"❌ ElevenLabs error ({etype}): {event.get('error', event)}")
         else:
             self.logger.info(f"📨 ElevenLabs event: {etype}")
 
@@ -207,23 +207,26 @@ class MicroInput(InputDevice):
 
     def _on_openai_open(self):
         """Handle WebSocket open event - send session configuration."""
-        transcribe_model = self.proxy.config.get("openai_transcribe_model", "gpt-4o-mini-transcribe")
-        vad_threshold = 0.3  # Lower = more sensitive to speech
+        cfg = self.proxy.config
+        transcribe_model = cfg.get("openai_transcribe_model", "gpt-4o-mini-transcribe")
+        language = self._stt_language()
+        vad_threshold = float(cfg.get("stt_vad_threshold", 0.3))
+        silence_secs = float(cfg.get("stt_vad_silence_secs", 0.7))
 
         self.logger.info("📤 WebSocket opened, sending session.update...")
         session_update = {
             "type": "session.update",
             "session": {
                 "input_audio_format": "pcm16",
-                "input_audio_transcription": {"model": transcribe_model, "language": "en"},
+                "input_audio_transcription": {"model": transcribe_model, "language": language},
                 "turn_detection": {
                     "type": "server_vad",
-                    "threshold": float(vad_threshold),
+                    "threshold": vad_threshold,
                     "prefix_padding_ms": 300,
-                    "silence_duration_ms": 700,
+                    "silence_duration_ms": int(silence_secs * 1000),
                     "create_response": False,
                 },
-                "instructions": "Transcribe user audio only in English; do not reply.",
+                "instructions": "Transcribe user audio only; do not reply.",
             },
         }
         self.logger.info(f"📤 Session config: model={transcribe_model}, vad_threshold={vad_threshold}")
@@ -245,6 +248,11 @@ class MicroInput(InputDevice):
 
         # Start reconnection in background thread
         self._schedule_reconnect()
+
+    def _stt_language(self) -> str:
+        # `or` (not a .get default): a blank setting must fall back too, or it
+        # reaches the wire as an empty language code and the session is refused.
+        return str(self.proxy.config.get("stt_language") or "en")
 
     def _connect_via_proxy(self):
         """Connect to the configured STT backend via proxy."""
@@ -280,7 +288,7 @@ class MicroInput(InputDevice):
         self.client = self.proxy.elevenlabs.realtime.connect_sync(
             model_id=model,
             audio_format=ELEVENLABS_AUDIO_FORMAT,
-            language_code=cfg.get("stt_language", "en"),
+            language_code=self._stt_language(),
             commit_strategy="vad",
             vad_threshold=vad_threshold,
             vad_silence_threshold_secs=silence_secs,
@@ -313,7 +321,7 @@ class MicroInput(InputDevice):
 
         def reconnect_loop():
             while not self._stop_evt.is_set() and not self._is_connected:
-                self.logger.info(f"🔄 Reconnecting to OpenAI in {self._reconnect_delay}s...")
+                self.logger.info(f"🔄 Reconnecting to {self._backend} STT in {self._reconnect_delay}s...")
 
                 # Wait before reconnecting (interruptible)
                 if self._stop_evt.wait(timeout=self._reconnect_delay):
