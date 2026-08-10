@@ -38,6 +38,8 @@ CHUNK_DURATION_SEC = 0.02
 # transcript comes out time-warped.
 ELEVENLABS_AUDIO_FORMAT = f"pcm_{DEFAULT_SAMPLE_RATE}"
 
+STT_BACKENDS = frozenset({"elevenlabs", "openai"})
+
 ELEVENLABS_ERROR_TYPES = frozenset(
     {
         "error",
@@ -256,7 +258,13 @@ class MicroInput(InputDevice):
 
     def _connect_via_proxy(self):
         """Connect to the configured STT backend via proxy."""
-        self._backend = str(self.proxy.config.get("stt_backend") or "elevenlabs").lower()
+        backend = str(self.proxy.config.get("stt_backend") or "elevenlabs").strip().lower()
+        if backend not in STT_BACKENDS:
+            self.logger.error(
+                f"❌ Unknown stt_backend {backend!r} — using 'elevenlabs' (options: {sorted(STT_BACKENDS)})"
+            )
+            backend = "elevenlabs"
+        self._backend = backend
 
         if self._backend == "openai":
             model = self._connect_openai()
