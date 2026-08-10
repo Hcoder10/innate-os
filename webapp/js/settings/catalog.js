@@ -83,6 +83,11 @@ const VOICE_OPTIONS = [
   { value: "79f8b5fb-2cc8-479a-80df-29f7a7cf1a3e", label: "Nonfiction Man" },
 ];
 
+const STT_BACKEND_OPTIONS = [
+  { value: "elevenlabs", label: "ElevenLabs Scribe" },
+  { value: "openai", label: "OpenAI Realtime" },
+];
+
 /** @type {SettingsPage[]} */
 export const SETTINGS_PAGES = [
   {
@@ -282,11 +287,16 @@ export const SETTINGS_PAGES = [
       },
       {
         title: "AI models",
-        note: "The brain and the realtime-voice path use separate models. Keep the realtime-voice pair in sync.",
+        note: "The brain and the speech-to-text path use separate models. The transcribe backend picks which STT model knob applies.",
         knobs: [
           { path: ["brain_client_node", P, "gemini_model"], label: "Brain model", default: "gemini-3.6-flash", type: "string", doc: "Gemini model powering the local brain", subsection: "Brain" },
-          { path: ["input_manager_node", P, "openai_realtime_model"], label: "Realtime model", default: "gpt-4o-realtime-preview", type: "string", doc: "OpenAI realtime model", subsection: "Realtime voice" },
-          { path: ["input_manager_node", P, "openai_transcribe_model"], label: "Transcribe model", default: "gpt-4o-mini-transcribe", type: "string", doc: "OpenAI transcription model", subsection: "Realtime voice" },
+          { path: ["input_manager_node", P, "stt_backend"], label: "Transcribe backend", default: "elevenlabs", type: "string", options: STT_BACKEND_OPTIONS, doc: "Which service transcribes the microphone", subsection: "Speech to text" },
+          { path: ["input_manager_node", P, "elevenlabs_stt_model"], label: "Scribe model", default: "scribe_v2_realtime", type: "string", doc: "ElevenLabs realtime STT model", subsection: "Speech to text" },
+          { path: ["input_manager_node", P, "stt_language"], label: "Language", default: "en", type: "string", doc: "Transcription language code", subsection: "Speech to text" },
+          { path: ["input_manager_node", P, "stt_vad_threshold"], label: "VAD threshold", default: 0.3, type: "float", doc: "Lower is more sensitive to speech", subsection: "Speech to text" },
+          { path: ["input_manager_node", P, "stt_vad_silence_secs"], label: "Silence to end turn", default: 0.7, type: "float", unit: "s", doc: "Silence that closes an utterance", subsection: "Speech to text" },
+          { path: ["input_manager_node", P, "openai_realtime_model"], label: "Realtime model", default: "gpt-4o-realtime-preview", type: "string", doc: "OpenAI realtime model (openai backend only)", subsection: "Realtime voice" },
+          { path: ["input_manager_node", P, "openai_transcribe_model"], label: "Transcribe model", default: "gpt-4o-mini-transcribe", type: "string", doc: "OpenAI transcription model (openai backend only)", subsection: "Realtime voice" },
         ],
       },
       {

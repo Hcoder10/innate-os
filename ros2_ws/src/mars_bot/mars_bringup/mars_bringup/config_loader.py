@@ -191,6 +191,9 @@ _SETTINGS_DOUBLE_KEYS = frozenset(
         "idle_turn_interval",
         "supervision_turn_interval",
         "scan_stale_after_sec",
+        # input_manager_node
+        "stt_vad_threshold",
+        "stt_vad_silence_secs",
         # uninavid_node
         "forward_speed",
         "turn_speed",

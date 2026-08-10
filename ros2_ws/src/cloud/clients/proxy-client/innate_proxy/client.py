@@ -72,6 +72,7 @@ class ProxyClient:
         self._async_client: httpx.AsyncClient | None = None
         self._cartesia: Any = None
         self._openai: Any = None
+        self._elevenlabs: Any = None
 
     # -- Availability ---------------------------------------------------------
 
@@ -199,6 +200,15 @@ class ProxyClient:
 
             self._openai = ProxyOpenAIClient(self, auth=self._auth)
         return self._openai
+
+    @property
+    def elevenlabs(self) -> Any:
+        """Lazy ElevenLabs adapter (Scribe realtime STT)."""
+        if self._elevenlabs is None:
+            from innate_proxy.adapters.elevenlabs import ProxyElevenLabsClient
+
+            self._elevenlabs = ProxyElevenLabsClient(self, auth=self._auth)
+        return self._elevenlabs
 
     # -- Lifecycle ------------------------------------------------------------
 
