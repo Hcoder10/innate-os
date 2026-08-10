@@ -72,6 +72,12 @@ SCAN_HZ = 6.0  # lidar.launch.py throttle
 JOINT_STATE_HZ = 30.0
 ARM_STATE_HZ = 20.0
 HEAD_POSITION_HZ = 10.0
+# rmw_zenoh can leave an executor asleep after dynamic graph/action churn even
+# though its timers are ready. A non-executor guard-condition wake is cheap and
+# specifically repairs that stale wait set; only intervene after a full second
+# of missed 30 Hz odometry callbacks.
+EXECUTOR_STALL_S = 1.0
+EXECUTOR_WATCHDOG_PERIOD_S = 0.5
 
 LIDAR_N_RAYS = 360
 LIDAR_RANGE_MIN = 0.15  # rplidar A-series
@@ -182,7 +188,7 @@ class VirtualMarsNode(Node):
             self.create_service(Trigger, f"/mars/arm/{name}", self._on_trigger_noop, callback_group=services)
         self.create_service(Trigger, "/mars/head/set_ai_position", self._on_head_ai_position, callback_group=services)
 
-        self.create_timer(1.0 / ODOM_HZ, self._publish_odom)
+        self._odom_timer = self.create_timer(1.0 / ODOM_HZ, self._publish_odom)
         self.create_timer(1.0 / SCAN_HZ, self._publish_scan)
         self.create_timer(1.0 / DEPTH_FPS, self._publish_camera_info)
         self.create_timer(1.0 / JOINT_STATE_HZ, self._publish_joint_states)
@@ -205,6 +211,35 @@ class VirtualMarsNode(Node):
             fn()
         except (OSError, RuntimeError) as exc:
             self.get_logger().warning(f"{what} dropped: world server unavailable ({exc})", throttle_duration_sec=5.0)
+
+    def executor_watchdog_loop(self, executor: MultiThreadedExecutor) -> None:
+        """Wake a stale ROS wait set from outside the executor.
+
+        Rendering and this watchdog have their own threads, so they remain
+        observable when every ROS timer/subscription callback stops. `wake()`
+        triggers rclpy's executor guard condition; it does not recreate the
+        node, alter commands, or touch simulation state.
+        """
+        last_warning = 0.0
+        while rclpy.ok():
+            time.sleep(EXECUTOR_WATCHDOG_PERIOD_S)
+            try:
+                until_ns = self._odom_timer.time_until_next_call()
+                overdue_s = 0.0 if until_ns is None or until_ns >= 0 else -until_ns / 1_000_000_000
+                if overdue_s < EXECUTOR_STALL_S:
+                    continue
+                now = time.monotonic()
+                if now - last_warning >= 5.0:
+                    last_warning = now
+                    print(
+                        f"[virtual_mars] ROS executor timer overdue by {overdue_s:.1f}s; waking wait set",
+                        flush=True,
+                    )
+                executor.wake()
+            except Exception as exc:  # noqa: BLE001 -- watchdog must never take down the driver
+                if time.monotonic() - last_warning >= 5.0:
+                    last_warning = time.monotonic()
+                    print(f"[virtual_mars] executor watchdog error: {exc!r}", flush=True)
 
     def _on_cmd_vel(self, msg: Twist) -> None:
         with self._lock:
@@ -641,6 +676,7 @@ def main() -> None:
     node = VirtualMarsNode()
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
+    threading.Thread(target=node.executor_watchdog_loop, args=(executor,), daemon=True).start()
     try:
         executor.spin()
     except KeyboardInterrupt:

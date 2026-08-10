@@ -19,6 +19,10 @@ const RECONNECT_BASE_MS = 1_000;
 const MAX_ORPHANED_GOALS = 8;
 const RECONNECT_CAP_MS = 10_000;
 const SUB_RETRY_CAP_MS = 30_000;
+// WebSocket ping/pong cannot detect an rws client whose socket is alive while
+// its ROS executor subscriptions have stopped delivering. Once a connection
+// has demonstrably flowed, 15 seconds with zero frames is a silent stall.
+const SILENT_STALL_MS = 15_000;
 
 /**
  * True when a value carries no actual data: null/undefined, or an object/array
@@ -89,6 +93,9 @@ export class RosClient {
   /** True once the current target IP has had a successful open; gates the
    * reconnect-forever loop so a typo'd address fails fast instead. */
   #everConnected = false;
+  #flowFrames = 0;
+  #lastFrameAt = 0;
+  #stallClosing = false;
 
   constructor() {
     // Safety net: a hidden or closing page must never leave the robot
@@ -103,6 +110,8 @@ export class RosClient {
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") publishZero();
     });
+    // Some zero-DOM unit tests provide only the window methods they exercise.
+    window.setInterval?.(() => this.#checkSilentStall(), 5000);
   }
 
   /** @returns {ConnState} */
@@ -332,6 +341,9 @@ export class RosClient {
       this.#clearConnectTimer();
       this.#reconnectDelay = RECONNECT_BASE_MS;
       this.#everConnected = true;
+      this.#flowFrames = 0;
+      this.#lastFrameAt = 0;
+      this.#stallClosing = false;
       try {
         localStorage.setItem(LAST_IP_KEY, ip);
       } catch {
@@ -355,7 +367,10 @@ export class RosClient {
 
     ws.onmessage = (event) => {
       if (this.#ws !== ws) return;
-      this.#handleFrame(String(event.data));
+      const raw = String(event.data);
+      this.#flowFrames += 1;
+      this.#lastFrameAt = performance.now();
+      this.#handleFrame(raw);
     };
 
     ws.onclose = () => {
@@ -519,6 +534,22 @@ export class RosClient {
   #send(payload) {
     if (this.#ws?.readyState === WebSocket.OPEN) {
       this.#ws.send(JSON.stringify(payload));
+    }
+  }
+
+  #checkSilentStall() {
+    const now = performance.now();
+    const frameAgeMs = this.#lastFrameAt ? now - this.#lastFrameAt : null;
+    if (
+      !this.#stallClosing &&
+      this.#state === "connected" &&
+      this.#ws?.readyState === WebSocket.OPEN &&
+      this.#flowFrames >= 10 &&
+      frameAgeMs !== null &&
+      frameAgeMs >= SILENT_STALL_MS
+    ) {
+      this.#stallClosing = true;
+      this.#ws.close(4000, "ROS frame stream stalled");
     }
   }
 
