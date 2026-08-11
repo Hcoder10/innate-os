@@ -54,11 +54,18 @@ def rms_level(chunk: bytes) -> float:
     return math.sqrt(sum(s * s for s in samples) / len(samples)) / 32768.0
 
 
-def energy_detector(threshold: float) -> VoicedDetector:
-    def is_voiced(chunk: bytes) -> bool:
-        return rms_level(chunk) >= threshold
+class EnergyDetector:
+    """Voiced = RMS above a fixed threshold; `level` is the last chunk's RMS."""
 
-    return is_voiced
+    def __init__(self, threshold: float):
+        self.threshold = threshold
+        self.level = 0.0
+        self.voiced = False
+
+    def __call__(self, chunk: bytes) -> bool:
+        self.level = rms_level(chunk)
+        self.voiced = self.level >= self.threshold
+        return self.voiced
 
 
 def pcm_to_wav(pcm: bytes, sample_rate: int, channels: int = 1) -> bytes:
@@ -88,6 +95,14 @@ class Endpointer:
         self._in_speech = False
         self._silence_bytes = 0
         self._voiced_bytes = 0
+
+    @property
+    def in_speech(self) -> bool:
+        return self._in_speech
+
+    @property
+    def utterance_secs(self) -> float:
+        return len(self._utterance) / self._bytes_per_sec
 
     def feed(self, chunk: bytes) -> bytes | None:
         """Consume one chunk; returns the finished utterance's PCM when one closes."""
@@ -238,6 +253,8 @@ class BatchSttSession:
         self._endpointer = Endpointer(sample_rate=sample_rate, is_voiced=is_voiced, silence_secs=silence_secs)
         self._utterances: queue.Queue[bytes | None] = queue.Queue()
         self._worker: threading.Thread | None = None
+        self.utterance_count = 0
+        self.failure_count = 0
 
     def start(self) -> None:
         self._worker = threading.Thread(target=self._transcribe_loop, daemon=True)
@@ -250,7 +267,16 @@ class BatchSttSession:
         utterance = self._endpointer.feed(chunk)
         if utterance is not None:
             self._logger.info(f"🎤 Utterance closed ({len(utterance) / (self._sample_rate * 2):.1f}s), transcribing...")
+            self.utterance_count += 1
             self._utterances.put(utterance)
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "utterance_open": self._endpointer.in_speech,
+            "utterance_secs": round(self._endpointer.utterance_secs, 2),
+            "utterances": self.utterance_count,
+            "failures": self.failure_count,
+        }
 
     def stop(self) -> None:
         self._utterances.put(None)
@@ -266,6 +292,7 @@ class BatchSttSession:
             try:
                 text = self._transcriber(pcm_to_wav(utterance, self._sample_rate))
             except Exception as e:  # noqa: BLE001 — one failed call must not kill the mic
+                self.failure_count += 1
                 self._logger.error(f"❌ Batch transcription failed: {e}")
                 continue
             if text:

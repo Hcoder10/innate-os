@@ -36,9 +36,9 @@ from brain_client.brain.transport import pick_rest
 from brain_client.common.logging import UniversalLogger
 from brain_client.inputs.batch_stt import (
     BatchSttSession,
+    EnergyDetector,
     elevenlabs_direct_transcriber,
     elevenlabs_proxy_transcriber,
-    energy_detector,
     gemini_transcriber,
 )
 from brain_client.inputs.types import InputDevice
@@ -58,6 +58,9 @@ DEFAULT_STT_BACKEND = "elevenlabs_batch"
 
 VAD_ENGINES = frozenset({"silero", "energy"})
 DEFAULT_VAD_ENGINE = "silero"
+
+# One vad_status frame per this many mic chunks (20 ms each) — 5 Hz on the wire.
+VAD_STATUS_EVERY_CHUNKS = 10
 
 ELEVENLABS_ERROR_TYPES = frozenset(
     {
@@ -93,6 +96,8 @@ class MicroInput(InputDevice):
         self.mic = None
         self.client = None
         self._backend = DEFAULT_STT_BACKEND
+        self._vad_engine = DEFAULT_VAD_ENGINE
+        self._vad_detector = None
         self._stop_evt = threading.Event()
         self._audio_thread = None
         self._is_robot_talking = False  # For ducking (mic-specific)
@@ -354,10 +359,31 @@ class MicroInput(InputDevice):
         if engine == "silero":
             threshold = float(cfg.get("stt_vad_threshold", 0.3))
             detector = silero_detector(threshold, DEFAULT_SAMPLE_RATE, self.logger)
-            if detector is not None:
-                return detector, "silero"
-            engine = "energy"  # silero_detector logged why
-        return energy_detector(float(cfg.get("stt_energy_threshold", 0.01))), engine
+            if detector is None:
+                engine = "energy"  # silero_detector logged why
+        if engine == "energy":
+            detector = EnergyDetector(float(cfg.get("stt_energy_threshold", 0.01)))
+        self._vad_detector, self._vad_engine = detector, engine
+        return detector, engine
+
+    def _send_vad_status(self):
+        """One vad_status frame for the webapp's voice panel (batch backends only)."""
+        detector = self._vad_detector
+        if detector is None:
+            return
+        self.send_data(
+            {
+                "kind": "vad_status",
+                "backend": self._backend,
+                "engine": self._vad_engine,
+                "threshold": detector.threshold,
+                "level": round(detector.level, 4),
+                "voiced": detector.voiced,
+                "ducking": self._is_robot_talking,
+                **self.client.status(),
+            },
+            data_type="custom",
+        )
 
     def _connect_elevenlabs(self) -> str:
         """Open a Scribe realtime session. Returns the model id."""
@@ -472,6 +498,7 @@ class MicroInput(InputDevice):
             self.logger.info("🎧 Audio streaming thread started")
 
             chunks_sent = 0
+            chunks_seen = 0
             empty_count = 0
             ducking_logged = False
             while not self._stop_evt.is_set():
@@ -488,6 +515,12 @@ class MicroInput(InputDevice):
                     # Skip sending if not connected (reconnection in progress)
                     if not self._is_connected:
                         continue
+
+                    # Status rides the chunk cadence even while ducking, so the
+                    # panel's DUCKING chip stays live while audio is suppressed.
+                    chunks_seen += 1
+                    if self._backend in BATCH_BACKENDS and chunks_seen % VAD_STATUS_EVERY_CHUNKS == 0:
+                        self._send_vad_status()
 
                     # Skip sending while ducking (robot is speaking)
                     if self._is_robot_talking:

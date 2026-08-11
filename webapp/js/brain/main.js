@@ -241,6 +241,33 @@ export function createBrainMonitor(root, opts = {}) {
   }
 
   /** @param {boolean} on */
+  let vadAt = 0; // performance.now() of the last vad_status — 0 until one arrives
+
+  /** @param {any} d */
+  function onVadStatus(d) {
+    if (d.kind !== "vad_status" || d.input_device !== "micro") return;
+    vadAt = performance.now();
+    const threshold = d.threshold ?? 0;
+    $(".br-vad-sub").textContent = `${d.engine} vad · ${d.backend}`;
+    $(".br-vad-fill").style.width = (Math.min(1, d.level ?? 0) * 100).toFixed(1) + "%";
+    $(".br-vad-tick").style.left = (Math.min(1, threshold) * 100).toFixed(1) + "%";
+    $(".br-vad-lvl").textContent = (d.level ?? 0).toFixed(2) + " ≷ " + threshold.toFixed(2);
+    $(".br-vad-speech").classList.toggle("live", !!d.voiced);
+    $(".br-vad-utt").classList.toggle("live", !!d.utterance_open);
+    $(".br-vad-utt b").textContent = d.utterance_open ? (d.utterance_secs ?? 0).toFixed(1) + "s" : "—";
+    $(".br-vad-duck").classList.toggle("talk", !!d.ducking);
+    $(".br-vad-count").textContent = String(d.utterances ?? 0);
+    const fails = d.failures ?? 0;
+    const failTile = $(".br-vad-fail");
+    failTile.textContent = String(fails);
+    failTile.classList.toggle("bad", fails > 0);
+  }
+
+  /** @param {any} d */
+  function onChatIn(d) {
+    if (d.text) $(".br-vad-heard").textContent = d.text;
+  }
+
   function setSpeaking(on) {
     $(".br-chip-voice").classList.toggle("talk", on);
   }
@@ -694,6 +721,9 @@ export function createBrainMonitor(root, opts = {}) {
       sub.classList.remove("err");
     } else if (S.phase !== "error" && sub.textContent.startsWith("▶")) sub.textContent = "";
 
+    // Telemetry rides the mic chunk cadence, so silence = the mic is closed.
+    $(".br-panel-voice").classList.toggle("stale", vadAt !== 0 && t - vadAt > 2500);
+
     $(".br-turn").textContent = "TURN " + S.turn;
     if (S.uptimeAt) {
       const up = S.uptime + (t - S.uptimeAt) / 1000;
@@ -762,6 +792,8 @@ export function createBrainMonitor(root, opts = {}) {
       ros.subscribe("/brain/websocket_status", jsonHandler(onBrainStatus), 0, "std_msgs/msg/String"),
       ros.subscribe("/brain/skill_status_update", jsonHandler(onSkill), 0, "std_msgs/msg/String"),
       ros.subscribe("/tts/is_playing", (msg) => setSpeaking(msg.data === "true"), 0, "std_msgs/msg/String"),
+      ros.subscribe("/input_manager/custom", jsonHandler(onVadStatus), 0, "std_msgs/msg/String"),
+      ros.subscribe("/brain/chat_in", jsonHandler(onChatIn), 0, "std_msgs/msg/String"),
       ros.subscribe(
         "/odom",
         (msg) => {
@@ -871,6 +903,24 @@ function template() {
     <section class="br-panel br-panel-queue">
       <h2>Event queue <span class="sub">what the next look will carry</span></h2>
       <div class="br-feed br-queue"><div class="br-empty">quiet — heartbeat looks only</div></div>
+    </section>
+
+    <section class="br-panel br-panel-voice">
+      <h2>Voice input <span class="sub br-vad-sub">waiting for VAD telemetry</span></h2>
+      <div class="br-gauge br-vad-meter" title="Live speech level against the VAD threshold — /input_manager/custom">
+        <div class="bar"><div class="fill br-vad-fill"></div><div class="br-vad-tick"></div></div>
+        <div class="lab"><span>speech level</span><span class="br-vad-lvl">—</span></div>
+      </div>
+      <div class="br-vad-chips">
+        <div class="br-chip br-vad-speech" title="The detector currently classifies the audio as speech"><span class="led"></span><span>speech</span></div>
+        <div class="br-chip br-vad-utt" title="An utterance is open and recording"><span class="led"></span><span>utterance <b>—</b></span></div>
+        <div class="br-chip br-vad-duck" title="Mic suppressed while the robot speaks"><span class="led"></span><span>ducking</span></div>
+      </div>
+      <div class="br-tiles br-vad-tiles">
+        <div class="br-tile" title="Utterances closed and sent to transcription"><div class="v br-vad-count">0</div><div class="l">utterances</div></div>
+        <div class="br-tile" title="Transcription requests that failed"><div class="v br-vad-fail">0</div><div class="l">failed</div></div>
+      </div>
+      <div class="br-vad-last" title="Last transcript — /brain/chat_in"><span class="l">heard</span><span class="t br-vad-heard">—</span></div>
     </section>
 
     <section class="br-panel br-panel-vitals">

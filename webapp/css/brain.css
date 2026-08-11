@@ -119,8 +119,8 @@
   display: grid;
   gap: 12px;
   grid-template-columns: minmax(320px, 380px) 1fr;
-  grid-template-rows: minmax(0, 1.35fr) minmax(0, 1fr) auto;
-  grid-template-areas: "loop vision" "actions queue" "vitals vitals";
+  grid-template-rows: minmax(0, 1.35fr) minmax(0, 1fr) auto auto;
+  grid-template-areas: "loop vision" "actions queue" "voice voice" "vitals vitals";
 }
 /* Breakpoints are viewport-keyed but the monitor only gets the viewport minus
    the 64px rail and its own 420px of padding (the docked panel) — so the
@@ -132,10 +132,13 @@
   .br-grid {
     grid-template-columns: 1fr;
     grid-template-rows: none;
-    grid-template-areas: "loop" "vision" "actions" "queue" "vitals";
+    grid-template-areas: "loop" "vision" "actions" "queue" "voice" "vitals";
   }
   .br-panel {
     height: 420px;
+  }
+  .br-panel-voice {
+    height: auto;
   }
 }
 @media (max-width: 640px) {
@@ -179,6 +182,88 @@
 .br-panel-vision { grid-area: vision; }
 .br-panel-actions { grid-area: actions; }
 .br-panel-queue { grid-area: queue; }
+
+/* Voice input as a status strip above vitals: engine label, live level meter
+   with the VAD threshold as a tick, state chips, counters, last transcript. */
+.br-panel-voice {
+  grid-area: voice;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 18px;
+}
+.br-panel-voice h2 {
+  margin: 0;
+  white-space: nowrap;
+}
+.br-panel-voice.stale > :not(h2) {
+  opacity: 0.35;
+}
+.br-panel-voice.stale h2 .sub::after {
+  content: " · telemetry lost — mic closed?";
+  color: var(--danger);
+}
+.br-vad-meter {
+  flex: 1 1 200px;
+  min-width: 140px;
+  margin-top: 0;
+}
+.br-vad-meter .bar {
+  position: relative;
+  overflow: visible;
+}
+.br-vad-meter .fill {
+  transition: width 0.15s linear;
+}
+.br-vad-tick {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--br-orange);
+  border-radius: 1px;
+}
+.br-vad-chips {
+  display: flex;
+  gap: 8px;
+}
+.br-vad-tiles {
+  flex: none;
+  margin-bottom: 0;
+  grid-template-columns: repeat(2, minmax(84px, 108px));
+}
+.br-vad-fail.bad {
+  color: var(--danger);
+}
+.br-vad-last {
+  flex: 1 1 180px;
+  min-width: 140px;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  overflow: hidden;
+}
+.br-vad-last .l {
+  color: var(--muted);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.br-vad-last .t {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 1280px) {
+  .br-panel-voice {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .br-vad-tiles {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
 
 /* Vitals as a bottom status strip: label, tiles, sparkline, history gauge in
    one row, wrapping rather than clipping when the row runs out of width

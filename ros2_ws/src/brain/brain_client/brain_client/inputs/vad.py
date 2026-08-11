@@ -81,23 +81,24 @@ class SileroDetector:
 
     def __init__(self, model: Callable[[np.ndarray], float], threshold: float):
         self._model = model
-        self._enter = threshold
+        self.threshold = threshold
+        self.level = 0.0
         self._exit = max(threshold - EXIT_THRESHOLD_DELTA, 0.01)
         self._buffer = np.empty(0, dtype=np.float32)
-        self._voiced = False
+        self.voiced = False
 
     def __call__(self, chunk: bytes) -> bool:
         self._buffer = np.concatenate([self._buffer, resample_24k_to_16k(pcm16_to_f32(chunk))])
         while len(self._buffer) >= WINDOW_SAMPLES:
             window, self._buffer = self._buffer[:WINDOW_SAMPLES], self._buffer[WINDOW_SAMPLES:]
-            prob = self._model(window)
-            self._voiced = prob >= (self._exit if self._voiced else self._enter)
-        return self._voiced
+            self.level = self._model(window)
+            self.voiced = self.level >= (self._exit if self.voiced else self.threshold)
+        return self.voiced
 
 
 def silero_detector(
     threshold: float, sample_rate: int, logger: UniversalLogger, model_path: Path = MODEL_PATH
-) -> Callable[[bytes], bool] | None:
+) -> SileroDetector | None:
     """Build the Silero chunk detector, or None (reason logged) so the caller can fall back."""
     if sample_rate != MIC_SAMPLE_RATE:
         logger.error(f"Silero VAD needs {MIC_SAMPLE_RATE} Hz input, got {sample_rate} — falling back to energy VAD")

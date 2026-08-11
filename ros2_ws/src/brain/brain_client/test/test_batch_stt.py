@@ -22,9 +22,9 @@ from brain_client.inputs.batch_stt import (
     NO_SPEECH,
     BatchSttSession,
     Endpointer,
+    EnergyDetector,
     elevenlabs_direct_transcriber,
     elevenlabs_proxy_transcriber,
-    energy_detector,
     gemini_transcriber,
     pcm_to_wav,
     rms_level,
@@ -40,7 +40,7 @@ WAV = pcm_to_wav(LOUD * 10, SAMPLE_RATE)
 
 
 def make_endpointer(silence_secs: float = 0.3) -> Endpointer:
-    return Endpointer(sample_rate=SAMPLE_RATE, is_voiced=energy_detector(0.01), silence_secs=silence_secs)
+    return Endpointer(sample_rate=SAMPLE_RATE, is_voiced=EnergyDetector(0.01), silence_secs=silence_secs)
 
 
 def feed_seconds(ep: Endpointer, chunk: bytes, seconds: float) -> list[bytes]:
@@ -66,6 +66,12 @@ class NullLogger:
 def test_rms_level_scales():
     assert rms_level(QUIET) == 0.0
     assert 0.2 < rms_level(LOUD) < 0.3
+
+
+def test_energy_detector_tracks_level():
+    detector = EnergyDetector(0.01)
+    assert detector(LOUD) is True and detector.level > 0.2
+    assert detector(QUIET) is False and detector.level == 0.0
 
 
 # ---------- endpointer ----------
@@ -240,7 +246,7 @@ def make_session(transcriber, transcripts: list, done: threading.Event) -> Batch
     return BatchSttSession(
         transcriber=transcriber,
         sample_rate=SAMPLE_RATE,
-        is_voiced=energy_detector(0.01),
+        is_voiced=EnergyDetector(0.01),
         silence_secs=0.3,
         on_transcript=on_transcript,
         logger=NullLogger(),
@@ -264,6 +270,16 @@ def test_session_transcribes_closed_utterance():
     finally:
         session.stop()
     assert transcripts == ["bring me the sock"]
+    assert session.status() == {"utterance_open": False, "utterance_secs": 0.0, "utterances": 1, "failures": 0}
+
+
+def test_session_status_tracks_open_utterance():
+    session = make_session(lambda wav: "", [], threading.Event())
+    for _ in range(50):
+        session.feed(LOUD)
+    status = session.status()
+    assert status["utterance_open"] is True
+    assert status["utterance_secs"] > 0.9  # ~1 s fed + pre-roll
 
 
 def test_session_survives_transcription_error():
