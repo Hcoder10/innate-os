@@ -171,7 +171,11 @@ class MemoryRecorder:
         self._map_name = msg.data
 
     def _on_map_saved(self, msg: String) -> None:
-        promoted = self._store.promote_mapping_session(msg.data)
+        try:
+            promoted = self._store.promote_mapping_session(msg.data)
+        except Exception as error:  # noqa: BLE001 — a full disk must not take the brain node down
+            self._logger.error(f"[Memory] promoting the mapping session to {msg.data} failed: {error!r}")
+            return
         if promoted:
             self._logger.info(f"[Memory] promoted {promoted} mapping-session memories to {msg.data}")
 

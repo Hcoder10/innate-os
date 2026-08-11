@@ -425,7 +425,30 @@ def test_promote_hands_the_stage_to_the_saved_map(data_dir):
     assert [m.id for m in snapshot.memories] == [1, 2] and snapshot.fingerprint
     path = store.image_path(1)
     assert path is not None and path.read_bytes() == b"jpg-one"
-    assert not (data_dir / "spatial_memory" / MAPPING_SESSION).exists()
+    # The stage outlives the promotion (a re-save must re-promote the whole
+    # tour); the next session's entry wipes it.
+    assert (data_dir / "spatial_memory" / MAPPING_SESSION / "1.jpg").exists()
+
+
+def test_a_resave_promotes_the_whole_tour_again(data_dir):
+    # A failed mode switch leaves the robot mapping and the webapp retries the
+    # save. The second promotion must carry the whole tour — not replace the
+    # first batch with just the frames staged since.
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-v1")
+    assert store.promote_mapping_session("tour.yaml") == 1
+
+    store.add(3.0, 2.0, 0.5, 1001.0, b"jpg-two")
+    (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-v2")  # SLAM kept refining
+    assert store.promote_mapping_session("tour.yaml") == 2
+
+    store.switch_map("tour.yaml")
+    snapshot = store.snapshot()
+    assert [m.id for m in snapshot.memories] == [1, 2] and snapshot.fingerprint
+    path = store.image_path(1)
+    assert path is not None and path.read_bytes() == b"jpg-one"
 
 
 def test_promote_replaces_the_names_previous_memories(data_dir):
@@ -458,6 +481,25 @@ def test_promote_without_a_readable_map_keeps_the_stage(data_dir):
     assert store.promote_mapping_session("ghost.yaml") is None
     snapshot = store.snapshot()
     assert snapshot.map_name == MAPPING_SESSION and len(snapshot.memories) == 1
+
+
+def test_promote_reaches_a_stage_the_store_left(data_dir):
+    # Mid mode-switch the tick can land the store back on the previous map
+    # ("switching" republishes it) before the save announcement arrives; the
+    # stage is promoted from disk and picked up on the eventual switch.
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    store.switch_map("A.yaml")
+    (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-map-content")
+    assert store.promote_mapping_session("tour.yaml") == 1
+    assert store.snapshot().map_name == "A.yaml"  # the detour is undisturbed
+
+    store.switch_map("tour.yaml")
+    snapshot = store.snapshot()
+    assert len(snapshot.memories) == 1 and snapshot.fingerprint
+    path = store.image_path(1)
+    assert path is not None and path.read_bytes() == b"jpg-one"
 
 
 def test_the_session_survives_its_every_tick_call(data_dir):
@@ -888,6 +930,39 @@ def test_a_saved_map_adopts_the_mapping_memories(data_dir, clock):
     snapshot = store.snapshot()
     assert snapshot.map_name == "tour.yaml" and len(snapshot.memories) == 1
     assert stored_image(store, snapshot.memories[0].id) == GOOD_JPEG
+
+
+def test_a_promotion_landing_after_the_mode_switch_still_adopts(data_dir, clock):
+    # /nav/map_saved and /nav/current_mode arrive on independent topics: the
+    # tick may switch the store onto the just-saved map (finding it empty)
+    # before the save announcement is handled. The tour must survive the race.
+    recorder, store = make_recorder(data_dir)
+    see_mapping_world(recorder)
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    assert len(store.snapshot().memories) == 1
+
+    (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-map-content")
+    recorder._on_nav_mode(SimpleNamespace(data="navigation"))
+    recorder._on_current_map(SimpleNamespace(data="tour.yaml"))
+    recorder.tick()  # the switch wins the race: empty store on the new map
+    assert store.snapshot().memories == ()
+    recorder._on_map_saved(SimpleNamespace(data="tour.yaml"))  # save lands late
+    snapshot = store.snapshot()
+    assert snapshot.map_name == "tour.yaml" and len(snapshot.memories) == 1
+    assert stored_image(store, snapshot.memories[0].id) == GOOD_JPEG
+
+
+def test_a_failing_promotion_never_escapes_the_callback(data_dir, clock):
+    # brain_client_node's spin loop re-raises what escapes a callback: a full
+    # disk mid-promotion must log, not kill the node.
+    recorder, store = make_recorder(data_dir)
+
+    def full_disk(_name):
+        raise OSError("disk full")
+
+    store.promote_mapping_session = full_disk
+    recorder._on_map_saved(SimpleNamespace(data="tour.yaml"))
 
 
 def test_an_abandoned_session_is_wiped_when_the_next_begins(data_dir, clock):

@@ -10,10 +10,10 @@ a new frame, and the stale memories are wiped rather than trusted.
 
 Memories recorded *during* mapping have no saved map yet: they stage under
 ``spatial_memory/.mapping/`` (a name save_map's validation can never produce)
-and are promoted into the saved map's directory when the save lands. A stage
-never promoted — mapping abandoned, or the robot restarted mid-tour — is wiped
-when the next session begins: its coordinates only meant anything in the SLAM
-frame that made them.
+and are copied into the saved map's directory when the save lands. The stage
+outlives the promotion — a re-saved map re-promotes the whole tour — and is
+wiped when the next session begins: its coordinates only meant anything in
+the SLAM frame that made them.
 
 Thread contract: mutations come from the recorder's timer (executor thread);
 :meth:`snapshot` serves readers on the agent loop and search threads. Every
@@ -118,35 +118,46 @@ class MemoryStore:
 
     def promote_mapping_session(self, map_name: str) -> int | None:
         """Hand the staged mapping-session memories to the just-saved map:
-        stamp its fingerprint into the index and move the directory into
-        place, replacing whatever the name held before (the room was just
-        re-mapped, so its old memories lie). Returns how many were promoted;
-        None when nothing is staged or the saved map can't be fingerprinted.
+        copy the stage into the map's directory with its fingerprint stamped,
+        replacing whatever the name held before (the room was just re-mapped,
+        so its old memories lie). Works from the stage on disk, not the live
+        attachment — the save announcement races the mode-driven switch_map
+        through independent topics, and a lost race must not lose the tour.
+        The stage itself stays behind: a re-save — the webapp retrying after
+        a failed mode switch — promotes the whole tour again. Returns how
+        many were promoted; None when nothing is staged or the saved map
+        can't be fingerprinted.
         """
         with self._lock:
-            if self._map_name != MAPPING_SESSION or self._dir is None or not self._memories:
+            stage = self._root / MAPPING_SESSION
+            count = _staged_count(stage)
+            if count == 0:
                 return None
             fingerprint = _map_fingerprint(self._maps_dir, map_name)
             if not fingerprint:
                 return None
-            count = len(self._memories)
-            self._map_name = map_name
-            self._fingerprint = fingerprint
-            self._commit_locked()
+            # Build the copy aside and swap it in whole: the proxy reads these
+            # files without the lock and must never see a half-copied frame.
+            # Dot-prefixed like the stage, so no saved map name can collide.
+            tmp = self._root / f"{MAPPING_SESSION}.promote"
+            if tmp.is_dir():
+                shutil.rmtree(tmp)
+            shutil.copytree(stage, tmp)
+            index = json.loads((tmp / "index.json").read_text())
+            index["map"] = map_name
+            index["fingerprint"] = fingerprint
+            (tmp / "index.json").write_text(json.dumps(index))
             target = self._root / Path(map_name).stem
             if target.is_dir():
                 shutil.rmtree(target)
-            os.replace(self._dir, target)
-            # Detach: the next switch_map (the recorder tick) reloads the
-            # promoted index from its new home.
-            self._map_name = None
-            self._dir = None
-            self._memories = []
-            self._next_id = 1
-            self._fingerprint = ""
-            self._stat_sig = None
-            self._revision += 1
-            self.last_change_monotonic = time.monotonic()
+            os.replace(tmp, target)
+            if self._map_name == map_name:
+                # The switch won the race and loaded an empty store; adopt the
+                # promoted memories now — no later tick would reload them.
+                self._fingerprint = fingerprint
+                self._load_locked()
+                self._revision += 1
+                self.last_change_monotonic = time.monotonic()
             return count
 
     def snapshot(self) -> MemorySnapshot:
@@ -288,6 +299,19 @@ class MemoryStore:
         os.replace(tmp, self._dir / "index.json")
         self._revision += 1
         self.last_change_monotonic = time.monotonic()
+
+
+def _staged_count(stage: Path) -> int:
+    """How many memories the on-disk stage holds; 0 when absent or unreadable.
+    Every mutation commits inside the store lock, so the disk index is never
+    behind the live session."""
+    try:
+        index = json.loads((stage / "index.json").read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return 0
+    if not isinstance(index, dict) or index.get("version") != _INDEX_VERSION or index.get("map") != MAPPING_SESSION:
+        return 0
+    return len(index.get("memories") or [])
 
 
 def _map_source(maps_dir: Path, map_name: str) -> Path:
