@@ -8,6 +8,13 @@ map they were recorded on, so each map gets its own directory, and the index
 carries a fingerprint of the map file — re-mapping under the same name yields
 a new frame, and the stale memories are wiped rather than trusted.
 
+Memories recorded *during* mapping have no saved map yet: they stage under
+``spatial_memory/.mapping/`` (a name save_map's validation can never produce)
+and are promoted into the saved map's directory when the save lands. A stage
+never promoted — mapping abandoned, or the robot restarted mid-tour — is wiped
+when the next session begins: its coordinates only meant anything in the SLAM
+frame that made them.
+
 Thread contract: mutations come from the recorder's timer (executor thread);
 :meth:`snapshot` serves readers on the agent loop and search threads. Every
 index access takes the store lock; image files are read without it, so a
@@ -19,12 +26,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from threading import Lock
 
 _INDEX_VERSION = 1
+MAPPING_SESSION = ".mapping"
 
 
 @dataclass(frozen=True)
@@ -92,6 +101,53 @@ class MemoryStore:
             self.last_change_monotonic = time.monotonic()
             if self._dir is not None:
                 self._load_locked()
+
+    def use_mapping_session(self) -> None:
+        """Point the store at the mapping-session stage. Idempotent per tick;
+        actually entering wipes whatever a previous session left behind."""
+        with self._lock:
+            if self._map_name == MAPPING_SESSION:
+                return
+            self._map_name = MAPPING_SESSION
+            self._dir = self._root / MAPPING_SESSION
+            self._stat_sig = None
+            self._fingerprint = ""
+            self._wipe_locked()
+            self._revision += 1
+            self.last_change_monotonic = time.monotonic()
+
+    def promote_mapping_session(self, map_name: str) -> int | None:
+        """Hand the staged mapping-session memories to the just-saved map:
+        stamp its fingerprint into the index and move the directory into
+        place, replacing whatever the name held before (the room was just
+        re-mapped, so its old memories lie). Returns how many were promoted;
+        None when nothing is staged or the saved map can't be fingerprinted.
+        """
+        with self._lock:
+            if self._map_name != MAPPING_SESSION or self._dir is None or not self._memories:
+                return None
+            fingerprint = _map_fingerprint(self._maps_dir, map_name)
+            if not fingerprint:
+                return None
+            count = len(self._memories)
+            self._map_name = map_name
+            self._fingerprint = fingerprint
+            self._commit_locked()
+            target = self._root / Path(map_name).stem
+            if target.is_dir():
+                shutil.rmtree(target)
+            os.replace(self._dir, target)
+            # Detach: the next switch_map (the recorder tick) reloads the
+            # promoted index from its new home.
+            self._map_name = None
+            self._dir = None
+            self._memories = []
+            self._next_id = 1
+            self._fingerprint = ""
+            self._stat_sig = None
+            self._revision += 1
+            self.last_change_monotonic = time.monotonic()
+            return count
 
     def snapshot(self) -> MemorySnapshot:
         with self._lock:

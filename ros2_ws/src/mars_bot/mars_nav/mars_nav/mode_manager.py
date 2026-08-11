@@ -168,6 +168,10 @@ class ModeManager(Node):
         # Publisher to announce current map
         self.current_map_publisher = self.create_publisher(String, "/nav/current_map", 10)
 
+        # Announces each successful map save (the saved yaml name); brain_client's
+        # memory recorder promotes its staged mapping-session memories on this.
+        self.map_saved_publisher = self.create_publisher(String, "/nav/map_saved", 10)
+
         # Pre-create service clients for all nodes and service types we'll use
         self._init_service_clients()
 
@@ -1184,6 +1188,7 @@ class ModeManager(Node):
                     action_word = "overwritten" if is_overwriting else "saved"
                     response.message = f"Successfully {action_word} map as '{map_name}.yaml'"
                     self.get_logger().info(response.message)
+                    self.map_saved_publisher.publish(String(data=map_yaml_name))
 
                     # Refresh available maps list
                     self.available_maps = self.discover_maps()

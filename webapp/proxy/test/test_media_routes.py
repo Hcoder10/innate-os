@@ -172,6 +172,14 @@ async def test_memory_image_serves_and_fences(tmp_path, monkeypatch):
         assert (await s.get(base + "/memory/image", params={"map": "../etc", "id": "3"})).status == 404
         assert (await s.get(base + "/memory/image", params={"map": "Home", "id": "../3"})).status == 404
         assert (await s.get(base + "/memory/image", params={"map": "Home", "id": "9"})).status == 404
+        # the in-progress mapping session is the one dotted name that serves
+        (memories / ".mapping").mkdir()
+        (memories / ".mapping" / "1.jpg").write_bytes(b"\xff\xd8staged")
+        assert (
+            await (await s.get(base + "/memory/image", params={"map": ".mapping", "id": "1"})).read()
+            == b"\xff\xd8staged"
+        )
+        assert (await s.get(base + "/memory/image", params={"map": ".hidden", "id": "1"})).status == 404
 
 
 @sync

@@ -5,9 +5,13 @@
 Always on, independent of brain activation: a webapp teleop tour must build
 memories too, so the recorder owns its own lightweight subscriptions instead
 of borrowing the brain's activation-gated sensors. One rule governs capture —
-record only what a well-localized robot saw: AMCL's covariance must hold below
-the webapp's "confident" thresholds for a few seconds straight, then the
-admission policy (memory/selection.py) decides novelty, refresh, and eviction.
+record only what a well-localized robot saw. In navigation that means AMCL's
+covariance holding below the webapp's "confident" thresholds for a few seconds
+straight; in mapping there is no AMCL, so the SLAM estimate is taken at its
+word while a fresh grid proves slam_toolbox is alive, and the memories stage
+under the store's mapping session until ``/nav/map_saved`` hands them to the
+saved map. Then the admission policy (memory/selection.py) decides novelty,
+refresh, and eviction.
 Novelty is visibility paint: each memory paints the floor its camera saw, and
 a new picture is taken while the wedge ahead is mostly unpainted. A kept
 viewpoint's picture refreshes only from a frame aimed the same way with
@@ -65,6 +69,10 @@ _FRESH_FRAME_SEC = 2.5  # the compressed feed runs ~7.5 Hz; older means it died
 # alive. Older means AMCL died — TF keeps composing odom motion while the last
 # good covariance stays latched, and those poses are vouched for by nothing.
 _COVARIANCE_FRESH_SEC = 5.0
+# Mapping's analogue: slam_toolbox republishes /map every 0.5 s
+# (map_update_interval). An older grid means SLAM died, and TF's map frame is
+# coasting on odom alone.
+_GRID_FRESH_SEC = 5.0
 _MIN_HEAD_PITCH_DEG = -25.0  # looking further down films the floor, not the room
 
 
@@ -109,6 +117,7 @@ class MemoryRecorder:
         self._head_pitch = 0.0
         self._confident_since: float | None = None
         self._grid: Map | None = None  # sight-line + paint truth for admissions and refreshes
+        self._grid_at = 0.0  # monotonic arrival of the last /map message
         self._coverage = Coverage()
 
         image_qos = QoSProfile(
@@ -127,6 +136,7 @@ class MemoryRecorder:
         node.create_subscription(String, config.current_nav_mode_topic, self._on_nav_mode, 10)
         node.create_subscription(String, config.current_map_topic, self._on_current_map, 10)
         node.create_subscription(PoseWithCovarianceStamped, config.amcl_pose_topic, self._on_amcl_pose, latched_qos)
+        node.create_subscription(String, config.map_saved_topic, self._on_map_saved, 10)
         node.create_subscription(OccupancyGrid, "/map", self._on_map, latched_qos)
         node.create_subscription(String, "/mars/head/current_position", self._on_head, 10)
         node.create_timer(_TICK_SEC, self.tick)
@@ -150,6 +160,8 @@ class MemoryRecorder:
             self._candidate = _Candidate(time.monotonic(), *pose, sharpness, jpeg)
 
     def _recordable_moment(self) -> bool:
+        if self._nav_mode == "mapping":
+            return self._slam_alive()
         return self._nav_mode == "navigation" and bool(self._map_name) and self._confident()
 
     def _on_nav_mode(self, msg: String) -> None:
@@ -158,12 +170,18 @@ class MemoryRecorder:
     def _on_current_map(self, msg: String) -> None:
         self._map_name = msg.data
 
+    def _on_map_saved(self, msg: String) -> None:
+        promoted = self._store.promote_mapping_session(msg.data)
+        if promoted:
+            self._logger.info(f"[Memory] promoted {promoted} mapping-session memories to {msg.data}")
+
     def _on_amcl_pose(self, msg: PoseWithCovarianceStamped) -> None:
         covariance = msg.pose.covariance
         self._covariance = (covariance[0], covariance[7], covariance[35])
         self._covariance_at = time.monotonic()
 
     def _on_map(self, msg: OccupancyGrid) -> None:
+        self._grid_at = time.monotonic()
         self._grid = Map(
             resolution=msg.info.resolution,
             width=msg.info.width,
@@ -183,7 +201,10 @@ class MemoryRecorder:
     # --- the 1 Hz tick ---
     def tick(self) -> None:
         try:
-            self._store.switch_map(self._map_name or None)
+            if self._nav_mode == "mapping":
+                self._store.use_mapping_session()
+            else:
+                self._store.switch_map(self._map_name or None)
             self._maybe_record()
             self._publish_positions()
             if self._warm_search is not None:
@@ -200,7 +221,7 @@ class MemoryRecorder:
         self._record(candidate.x, candidate.y, candidate.theta, candidate.jpeg)
 
     def _localized_long_enough(self) -> bool:
-        if self._nav_mode != "navigation" or not self._map_name or not self._confident():
+        if not self._recordable_moment():
             self._confident_since = None
             return False
         now = time.monotonic()
@@ -213,6 +234,9 @@ class MemoryRecorder:
             return False
         var_x, var_y, var_yaw = self._covariance
         return max(var_x, var_y) <= _POSITION_VAR_MAX and var_yaw <= _YAW_VAR_MAX
+
+    def _slam_alive(self) -> bool:
+        return self._grid is not None and time.monotonic() - self._grid_at <= _GRID_FRESH_SEC
 
     def _record(self, x: float, y: float, theta: float, jpeg: bytes) -> None:
         plan = plan_admission(self._store.snapshot().memories, x, y, theta, time.time(), self._grid, self._coverage)
@@ -230,12 +254,16 @@ class MemoryRecorder:
             self._logger.info(f"[Memory] recorded viewpoint {memory.id} at ({x:.2f}, {y:.2f}){evicted}")
 
     def _publish_positions(self) -> None:
+        snapshot = self._store.snapshot()
         payload = {
-            "map": self._map_name,
+            # The store's identity, not /nav/current_map: during mapping the
+            # positions live in the SLAM frame under the session name, and mid
+            # map-verification the store still holds the previous map.
+            "map": snapshot.map_name or "",
             # The webapp keys its per-map state on map+fingerprint: a same-name
             # re-map wipes the store and restarts ids, and only the fingerprint
             # betrays that to a client watching the name.
-            "fingerprint": self._store.fingerprint[:12],
+            "fingerprint": snapshot.fingerprint[:12],
             "cache": self._cache_state() if self._cache_state is not None else "off",
             "positions": self._store.positions(),
         }

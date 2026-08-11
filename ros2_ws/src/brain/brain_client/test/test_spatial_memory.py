@@ -26,7 +26,7 @@ from brain_client.memory.coverage import Coverage, wedge_mask
 from brain_client.memory.quality import MIN_SHARPNESS, frame_sharpness, frame_worth_keeping
 from brain_client.memory.recorder import MemoryRecorder
 from brain_client.memory.selection import MAX_MEMORIES, plan_admission
-from brain_client.memory.store import Memory, MemoryStore
+from brain_client.memory.store import MAPPING_SESSION, Memory, MemoryStore
 from brain_client.state.map import Map
 
 
@@ -412,6 +412,72 @@ def test_without_a_map_nothing_is_recorded(data_dir):
     assert store.snapshot().memories == ()
 
 
+def test_promote_hands_the_stage_to_the_saved_map(data_dir):
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    store.add(4.0, 2.0, 0.5, 1001.0, b"jpg-two")
+    (data_dir / "maps" / "new.pgm").write_bytes(b"new-map-content")
+    assert store.promote_mapping_session("new.yaml") == 2
+
+    store.switch_map("new.yaml")
+    snapshot = store.snapshot()
+    assert [m.id for m in snapshot.memories] == [1, 2] and snapshot.fingerprint
+    path = store.image_path(1)
+    assert path is not None and path.read_bytes() == b"jpg-one"
+    assert not (data_dir / "spatial_memory" / MAPPING_SESSION).exists()
+
+
+def test_promote_replaces_the_names_previous_memories(data_dir):
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(9.0, 9.0, 0.0, 900.0, b"jpg-old")
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-new")
+    assert store.promote_mapping_session("A.yaml") == 1
+
+    store.switch_map("A.yaml")
+    (memory,) = store.snapshot().memories
+    assert memory.id == 1 and memory.x == 1.0
+    path = store.image_path(1)
+    assert path is not None and path.read_bytes() == b"jpg-new"
+
+
+def test_promote_with_nothing_staged_is_a_noop(data_dir):
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    assert store.promote_mapping_session("A.yaml") is None
+    assert len(store.snapshot().memories) == 1
+
+
+def test_promote_without_a_readable_map_keeps_the_stage(data_dir):
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    assert store.promote_mapping_session("ghost.yaml") is None
+    snapshot = store.snapshot()
+    assert snapshot.map_name == MAPPING_SESSION and len(snapshot.memories) == 1
+
+
+def test_the_session_survives_its_every_tick_call(data_dir):
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    store.use_mapping_session()  # the recorder's every-tick call must not wipe
+    assert len(store.snapshot().memories) == 1
+
+
+def test_entering_a_session_wipes_the_previous_ones_leftovers(data_dir):
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    store.switch_map("A.yaml")  # mapping abandoned without a save
+    store.use_mapping_session()
+    assert store.snapshot().memories == ()
+    assert list((data_dir / "spatial_memory" / MAPPING_SESSION).glob("*.jpg")) == []
+
+
 def test_a_transiently_unreadable_map_file_never_wipes(data_dir):
     store = MemoryStore(data_dir)
     store.switch_map("A.yaml")
@@ -464,6 +530,7 @@ def make_recorder(
         current_nav_mode_topic="/nav/current_mode",
         current_map_topic="/nav/current_map",
         amcl_pose_topic="/amcl_pose",
+        map_saved_topic="/nav/map_saved",
     )
     pose = pose if pose is not None else SimpleNamespace(xyt=(1.0, 2.0, 0.5))
     cache = cache if cache is not None else SimpleNamespace(state="warm")
@@ -554,10 +621,10 @@ def test_a_silent_amcl_stops_recording(data_dir, clock):
     assert len(store.snapshot().memories) == 1  # only the pre-death viewpoint
 
 
-def test_only_navigation_mode_records(data_dir, clock):
+def test_mapfree_never_records(data_dir, clock):
     recorder, store = make_recorder(data_dir)
     see_confident_world(recorder, clock)
-    recorder._on_nav_mode(SimpleNamespace(data="mapping"))
+    recorder._on_nav_mode(SimpleNamespace(data="mapfree"))
     for _ in range(5):
         recorder.tick()
         clock.now += 2.0
@@ -757,6 +824,98 @@ def test_bad_frames_never_overwrite_a_view(data_dir, clock):
     assert stored_image(store, 1) == frame(1)
     observe(recorder, clock, frame(2))  # the first keepable frame lands it
     assert stored_image(store, 1) == frame(2)
+
+
+# ================= recording while mapping =================
+
+
+def see_mapping_world(recorder):
+    """Feed the recorder everything a mapping-mode record needs: SLAM's live
+    grid stands in for AMCL confidence."""
+    recorder._on_nav_mode(SimpleNamespace(data="mapping"))
+    recorder._on_map(grid_msg(open_room(40)))
+    recorder._on_head(SimpleNamespace(data=json.dumps({"current_position": -10.0})))
+    recorder._on_image(SimpleNamespace(data=GOOD_JPEG))
+
+
+def mapping_observe(recorder, clock, jpeg: bytes, advance: float = 1.0):
+    """One mapping tick seeing this frame; re-feeds the grid like the live
+    slam_toolbox does (map_update_interval 0.5 s)."""
+    clock.now += advance
+    recorder._on_map(grid_msg(open_room(40)))
+    recorder._on_image(SimpleNamespace(data=jpeg))
+    recorder.tick()
+
+
+def test_mapping_records_into_the_session_stage(data_dir, clock):
+    recorder, store = make_recorder(data_dir)
+    see_mapping_world(recorder)
+    recorder.tick()  # starts the hold
+    assert store.snapshot().memories == ()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    snapshot = store.snapshot()
+    assert snapshot.map_name == MAPPING_SESSION and len(snapshot.memories) == 1
+
+
+def test_a_silent_slam_stops_recording(data_dir, clock):
+    # slam_toolbox republishes /map twice a second while alive. When it dies
+    # mid-tour, TF keeps composing odom motion in the map frame — those
+    # unvouched poses must not become memories.
+    recorder, store = make_recorder(data_dir)
+    see_mapping_world(recorder)
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    assert len(store.snapshot().memories) == 1
+    clock.now += 6.0  # the grid has gone stale
+    recorder._on_image(SimpleNamespace(data=frame(2)))
+    recorder.tick()
+    assert len(store.snapshot().memories) == 1
+
+
+def test_a_saved_map_adopts_the_mapping_memories(data_dir, clock):
+    recorder, store = make_recorder(data_dir)
+    see_mapping_world(recorder)
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    assert len(store.snapshot().memories) == 1
+
+    # The webapp's save sequence: save_map, then navigation on the new map.
+    (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-map-content")
+    recorder._on_map_saved(SimpleNamespace(data="tour.yaml"))
+    recorder._on_nav_mode(SimpleNamespace(data="navigation"))
+    recorder._on_current_map(SimpleNamespace(data="tour.yaml"))
+    recorder.tick()
+    snapshot = store.snapshot()
+    assert snapshot.map_name == "tour.yaml" and len(snapshot.memories) == 1
+    assert stored_image(store, snapshot.memories[0].id) == GOOD_JPEG
+
+
+def test_an_abandoned_session_is_wiped_when_the_next_begins(data_dir, clock):
+    recorder, store = make_recorder(data_dir)
+    see_mapping_world(recorder)
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    assert len(store.snapshot().memories) == 1
+
+    recorder._on_nav_mode(SimpleNamespace(data="navigation"))  # left without saving
+    recorder._on_current_map(SimpleNamespace(data="A.yaml"))
+    recorder.tick()
+    recorder._on_nav_mode(SimpleNamespace(data="mapping"))
+    recorder.tick()
+    snapshot = store.snapshot()
+    assert snapshot.map_name == MAPPING_SESSION and snapshot.memories == ()
+    assert list((data_dir / "spatial_memory" / MAPPING_SESSION).glob("*.jpg")) == []
+
+
+def test_mapping_positions_mirror_carries_the_session_identity(data_dir, clock):
+    published: list = []
+    recorder, store = make_recorder(data_dir, published)
+    see_mapping_world(recorder)
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    payload = json.loads(published[-1].data)
+    assert payload["map"] == MAPPING_SESSION and payload["fingerprint"] == ""
+    assert len(payload["positions"]) == 1
 
 
 # ================= memory search =================

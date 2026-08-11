@@ -36,6 +36,9 @@ def _under_skills_root(p: Path) -> bool:
 MAPS_DIR = (Path(_INNATE_OS_ROOT) / "data" / "maps").resolve()
 # mode_manager's save_map name validation, mirrored.
 _MAP_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+# brain_client's in-progress mapping session stages memories under this
+# literal — dot-prefixed exactly so no saved map name can collide with it.
+_MAPPING_SESSION = ".mapping"
 
 
 def _plain(status: int, reason: str, text: str) -> web.Response:
@@ -223,8 +226,9 @@ def memory_image_response(request: web.Request) -> web.Response:
     if name.endswith(".yaml"):
         name = name[:-5]
     memory_id = (qs.get("id") or [""])[0]
-    # The map-name charset and a numeric id make the joined path traversal-proof.
-    if not _MAP_NAME_RE.match(name) or not memory_id.isdigit():
+    # The map-name charset (or the session literal) and a numeric id make the
+    # joined path traversal-proof.
+    if (name != _MAPPING_SESSION and not _MAP_NAME_RE.match(name)) or not memory_id.isdigit():
         return _plain(404, "Not Found", "no such memory")
     try:
         data = (MEMORY_DIR / name / f"{int(memory_id)}.jpg").read_bytes()
