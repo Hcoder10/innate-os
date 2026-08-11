@@ -10,27 +10,16 @@ from pathlib import Path
 
 from config import (
     CLI_SIM,
-    CLOUD_AGENT_DIR_NAME,
-    CLOUD_AGENT_GIT_URL,
     ENV_PATH,
     GEMINI_API_KEY,
+    INNATE_SERVICE_KEY,
     SECRET_ENV_KEYS,
-    WORKSPACE_ROOT,
     is_configured_secret_value,
-    log,
     success,
     warn,
 )
 from dashboard import BOLD, CYAN, DIM, GREEN, NC, YELLOW
-from runtime import (
-    UV_INSTALL_COMMAND,
-    cloud_agent_checkout_pinned,
-    cloud_agent_git_status,
-    cloud_agent_lock,
-    find_uv,
-)
-
-INNATE_SERVICE_KEY = "INNATE_SERVICE_KEY"
+from runtime import UV_INSTALL_COMMAND, find_uv
 
 
 def is_interactive_terminal() -> bool:
@@ -317,7 +306,7 @@ def _configure_service_key(config: dict[str, object]) -> None:
         service_key = _prompt_secret(f"Paste {INNATE_SERVICE_KEY}")
         if is_configured_secret(service_key):
             _save_service_key(config, service_key)
-            print(f"{GREEN}Hosted brain credentials are ready.{NC}")
+            print(f"{GREEN}Innate proxy credentials are ready.{NC}")
             return
         warn("Service key cannot be empty. Press Ctrl+C to cancel.")
 
@@ -345,70 +334,6 @@ def ensure_uv_prerequisite() -> None:
         warn(f"uv installation did not complete. Install it manually: {UV_INSTALL_COMMAND}")
 
 
-def ensure_cloud_agent_repo(config: dict[str, object]) -> None:
-    """Make the local cloud-agent source match sim/cloud-agent.lock -- the
-    revision this innate-os is tested against. A fresh clone lands on the
-    pin; an existing checkout on any other commit gets a warning and an
-    offer to align (never forced: forks and deliberate experiments answer
-    "no" and are left alone)."""
-    lock = cloud_agent_lock(config)
-
-    path: Path | None = None
-    existing = config.get("cloud_repo")
-    if existing and Path(str(existing)).exists():
-        path = Path(str(existing))
-    elif (WORKSPACE_ROOT / CLOUD_AGENT_DIR_NAME).exists():
-        path = WORKSPACE_ROOT / CLOUD_AGENT_DIR_NAME
-
-    if path is not None:
-        status = cloud_agent_git_status(path)
-        if status is None or lock is None:
-            success(f"Cloud-agent source present at {path}.")
-            return
-        if not status["official"]:
-            log(f"Using custom cloud-agent source at {path} ({status['short']}).")
-            return
-        if status["sha"] == lock["commit"]:
-            success(f"Cloud-agent source present at {path} (tested revision {status['short']}).")
-            return
-        warn(
-            f"Cloud-agent at {path} is at {status['short']}; this innate-os is tested "
-            f"against {lock['commit'][:9]}. Other revisions may crash the agent."
-        )
-        if status["dirty"]:
-            warn(
-                f"Checkout has local changes -- align manually: git -C {path} stash && git -C {path} checkout {lock['commit'][:9]}"
-            )
-            return
-        if is_interactive_terminal() and _prompt_yes_no("Check out the tested revision now?", default=True):
-            if cloud_agent_checkout_pinned(path, lock["commit"]):
-                success(f"Cloud-agent aligned to {lock['commit'][:9]}.")
-            else:
-                warn(
-                    f"Could not check out {lock['commit'][:9]} -- align manually with git -C {path} fetch && git -C {path} checkout {lock['commit'][:9]}."
-                )
-        else:
-            warn("Keeping the current revision.")
-        return
-
-    target = WORKSPACE_ROOT / CLOUD_AGENT_DIR_NAME
-    log(f"Cloning innate-cloud-agent into {target}...")
-    result = subprocess.run(
-        ["git", "clone", CLOUD_AGENT_GIT_URL, str(target)],
-        stdin=subprocess.DEVNULL,
-        check=False,
-    )
-    if result.returncode != 0:
-        warn(
-            f"Could not clone {CLOUD_AGENT_GIT_URL}. Clone it manually to {target} "
-            "(needs GitHub SSH access to innate-inc)."
-        )
-        return
-    if lock is not None and not cloud_agent_checkout_pinned(target, lock["commit"]):
-        warn(f"Cloned, but could not check out the tested revision {lock['commit'][:9]}; using the default branch.")
-    success(f"Cloned innate-cloud-agent to {target}" + (f" (tested revision {lock['commit'][:9]})." if lock else "."))
-
-
 def _disable_keys(config: dict[str, object], keys: list[str]) -> None:
     """Comment out the given keys in .env (only if currently configured) so the
     selected backend isn't overridden by a leftover key, and forget them for this
@@ -433,28 +358,27 @@ def report_configured_keys(config: dict[str, object]) -> None:
 
 
 def configure_brain_backend(config: dict[str, object]) -> None:
-    """Pick the brain backend and collect the matching key.
+    """Pick how the robot's brain reaches Gemini, and collect the matching key.
 
-    Local needs a Gemini key (and the cloud-agent source); hosted needs an Innate
-    service key; none runs the sim without an agent. Switching backends just
-    uncomments the relevant key and comments out the others, so you can toggle
-    back and forth without re-pasting. Non-interactively, just report what
-    auto-detection will pick.
+    The agent loop itself always runs on the robot (brain_client); the key only
+    decides which way out it takes -- straight to Google with a Gemini key, or
+    through the Innate proxy with a service key. Switching just uncomments the
+    relevant key and comments out the others, so you can toggle back and forth
+    without re-pasting. Non-interactively, just report what the robot will pick.
     """
     user_env: dict[str, str] = config["user_env"]  # type: ignore[assignment]
     has_gemini = is_configured_secret_value(GEMINI_API_KEY, user_env.get(GEMINI_API_KEY))
     has_service_key = is_configured_secret(user_env.get(INNATE_SERVICE_KEY))
 
     if not is_interactive_terminal():
-        if has_gemini:
-            ensure_cloud_agent_repo(config)
-            success("Local brain selected (GEMINI_API_KEY detected).")
-        elif has_service_key:
-            success("Hosted brain selected (INNATE_SERVICE_KEY detected).")
+        if has_service_key:
+            success("Innate proxy selected (INNATE_SERVICE_KEY detected).")
+        elif has_gemini:
+            success("Direct Gemini access selected (GEMINI_API_KEY detected).")
         else:
             warn(
-                "No brain backend configured. Add GEMINI_API_KEY (local brain) or "
-                f"INNATE_SERVICE_KEY (hosted) to {ENV_PATH}."
+                f"No brain key configured. Add GEMINI_API_KEY (your own Gemini key) or "
+                f"INNATE_SERVICE_KEY (Innate proxy) to {ENV_PATH}."
             )
         report_configured_keys(config)
         return
@@ -462,16 +386,16 @@ def configure_brain_backend(config: dict[str, object]) -> None:
     print()
     print(f"{CYAN}{BOLD}Cloud LLM Access{NC}")
     print(
-        f"{DIM}The robot's agent uses a cloud LLM to think. Choose how to reach it:\n"
-        f"  - Your own Gemini key: clones the open-source agent\n"
-        f"    (https://github.com/innate-inc/innate-cloud-agent) and runs it on this\n"
-        f"    machine. Everything works except voice.\n"
-        f"  - Innate service key (ships with a MARS robot): the same agent, run by\n"
-        f"    Innate. Full experience, including the robot's voice.\n"
+        f"{DIM}The robot's agent runs on the robot, but thinks with a cloud LLM.\n"
+        f"Choose how it reaches one:\n"
+        f"  - Your own Gemini key: the agent calls Google directly. Everything\n"
+        f"    works except voice.\n"
+        f"  - Innate service key (ships with a MARS robot): the agent calls Gemini\n"
+        f"    through Innate's proxy. Full experience, including the robot's voice.\n"
         f"  - None: drive, navigate, and trigger skills manually, with no agent.{NC}"
     )
     print()
-    default_choice = "1" if has_gemini else ("2" if has_service_key else "1")
+    default_choice = "2" if has_service_key else "1"
     choice = _prompt_choice(
         "How would you like to access the cloud LLM?",
         {
@@ -483,7 +407,6 @@ def configure_brain_backend(config: dict[str, object]) -> None:
     )
     if choice == "1":
         _configure_gemini_key(config)
-        ensure_cloud_agent_repo(config)
         _disable_keys(config, [INNATE_SERVICE_KEY])
     elif choice == "2":
         _configure_service_key(config)

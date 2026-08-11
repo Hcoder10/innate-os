@@ -14,17 +14,14 @@ if sys.version_info < (3, 10):  # noqa: UP036
 from config import (
     CLI_SIM,
     ENV_PATH,
-    HOSTED_MODE,
-    LOCAL_MODES,
     LOG_TARGETS,
-    NONE_MODE,
+    NO_BACKEND,
     OS_SESSION_LOG_PATH,
     SETTINGS_PATH,
     SHOW_LIVE_DASHBOARD_DEFAULT,
     SIM_CONFIG_PATH,
     STATE_DIR,
     StackError,
-    build_cloud_env,
     build_os_env,
     get_config,
     log,
@@ -41,11 +38,9 @@ from dashboard import (
     watch_dashboard,
 )
 from runtime import (
-    capture_agent_logs,
     capture_os_brain_logs,
     clean_runtime,
     collect_status_snapshot,
-    down_cloud_agent,
     down_os,
     ensure_docker_available,
     ensure_os_container,
@@ -57,8 +52,8 @@ from runtime import (
     ensure_world_server,
     open_os_container_shell,
     print_startup_checks,
+    remove_legacy_cloud_agent,
     runtime_already_running,
-    start_cloud_agent,
     stop_world_server,
     tail_file,
     wait_for_os_runtime_ready,
@@ -74,8 +69,6 @@ from setup_wizard import (
 )
 
 DASHBOARD_OPTIONS = DashboardOptions(
-    hosted_mode=HOSTED_MODE,
-    local_modes=LOCAL_MODES,
     cli_sim=CLI_SIM,
     state_dir=STATE_DIR,
 )
@@ -85,7 +78,6 @@ def dashboard_callbacks() -> DashboardCallbacks:
     return DashboardCallbacks(
         collect_status_snapshot=collect_status_snapshot,
         capture_os_brain_logs=capture_os_brain_logs,
-        capture_agent_logs=capture_agent_logs,
         success=success,
     )
 
@@ -128,7 +120,6 @@ def cmd_up(
             return
 
         os_env_file = build_os_env(config)
-        cloud_env_file = build_cloud_env(config)
         if offline:
             log("Offline: skipping sim/skill asset downloads.")
         else:
@@ -146,7 +137,7 @@ def cmd_up(
 
         started = True
         try:
-            start_cloud_agent(config, cloud_env_file)
+            remove_legacy_cloud_agent()
             ensure_os_container(config, os_env_file, offline=offline)
         except StackError as exc:
             if offline:
@@ -187,10 +178,10 @@ def cmd_up(
                 f"Stop everything with `{CLI_SIM} down`."
             )
             return
-        if config["mode"] == NONE_MODE:
-            warn("No brain backend configured — the sim is running WITHOUT an agent.")
+        if config["brain_backend"] == NO_BACKEND:
+            warn("No cloud LLM key configured — the sim is running WITHOUT an agent.")
             warn(
-                "Add GEMINI_API_KEY (local brain) or INNATE_SERVICE_KEY (hosted) to "
+                "Add GEMINI_API_KEY (your own Gemini key) or INNATE_SERVICE_KEY (Innate proxy) to "
                 f"{ENV_PATH}, or run `{CLI_SIM} setup`, then restart."
             )
         success("Innate sim runtime is up.")
@@ -214,7 +205,7 @@ def cmd_up(
 
 
 def cmd_down(config: dict[str, object]) -> None:
-    down_cloud_agent()
+    remove_legacy_cloud_agent()
     down_os(config)
     stop_world_server()
     log("Innate sim runtime is down.")
@@ -251,7 +242,7 @@ def cmd_clean(config: dict[str, object], *, assume_yes: bool = False) -> None:
 def cmd_logs(target: str, lines: int | None = None) -> None:
     if target == "startup":
         found_logs = False
-        for name in ("bootstrap", "world-server", "compose", "cloud-agent", "os-build", "viewer-build", "os-session"):
+        for name in ("bootstrap", "world-server", "compose", "os-build", "viewer-build", "os-session"):
             path = LOG_TARGETS[name]
             if path.exists():
                 found_logs = True
@@ -265,13 +256,6 @@ def cmd_logs(target: str, lines: int | None = None) -> None:
     if target == "brain":
         config = get_config()
         print("\n".join(capture_os_brain_logs(config, lines=lines or 60)))
-        return
-
-    if target == "cloud-agent":
-        # Live container logs, matching the dashboard's agent pane. The build/startup
-        # output is still available via `logs startup`.
-        config = get_config()
-        print("\n".join(capture_agent_logs(config, lines=lines or 60)))
         return
 
     path = LOG_TARGETS[target]

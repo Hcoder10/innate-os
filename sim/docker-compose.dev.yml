@@ -59,14 +59,6 @@ services:
       # (innate foxglove status) can print the address that actually works
       # from the host. Must match the ports entry below.
       - SIM_FOXGLOVE_PORT=${SIM_FOXGLOVE_PORT:-8765}
-      # Brain ("agent") websocket the robot connects to. With
-      # COMPOSE_PROFILES=local-brain the in-compose cloud-agent service starts and
-      # the brain client is pointed at it over the shared x11 network. With no
-      # profile this resolves empty and the brain client just idles (no brain);
-      # set BRAIN_WEBSOCKET_URI explicitly to pin a hosted/remote agent. The
-      # launcher (`./innate-sim up`) overlays its own value via the mounted .env,
-      # which wins — so this default only affects raw `docker compose` runs.
-      - BRAIN_WEBSOCKET_URI=${BRAIN_WEBSOCKET_URI:-${COMPOSE_PROFILES:+ws://cloud-agent:8765}}
     ports:
       # rosbridge (rws). Loopback by default: publishing on 0.0.0.0 invites
       # internet probes that open, send nothing, and disconnect, spamming the
@@ -81,9 +73,7 @@ services:
       - "${SIM_HTTP_PORT:-80}:80"
       # Foxglove bridge websocket (auto-started by launch_sim_in_tmux.zsh).
       # Loopback by default, like rosbridge; SIM_FOXGLOVE_BIND=0.0.0.0 opens it
-      # to the LAN. The launcher publishes 8766 instead when the local brain is
-      # active (cloud-agent owns host 8765) — set SIM_FOXGLOVE_PORT yourself for
-      # raw `docker compose --profile local-brain` runs.
+      # to the LAN.
       - "${SIM_FOXGLOVE_BIND:-127.0.0.1}:${SIM_FOXGLOVE_PORT:-8765}:8765"
 
     volumes:
@@ -155,45 +145,6 @@ services:
       - x11
     extra_hosts:
       - "host.docker.internal:host-gateway"
-
-  # Local "brain" for the robot. Only started when the local-brain profile is
-  # active, e.g.:
-  #   COMPOSE_PROFILES=local-brain docker compose -f sim/docker-compose.dev.yml up
-  # The innate container's BRAIN_WEBSOCKET_URI then points here (ws://cloud-agent:8765)
-  # over the shared x11 network. Reads GEMINI_API_KEY from the same .env the innate
-  # container uses. The source repo lives OUTSIDE this repo (cloned by `./innate-sim
-  # setup`); INNATE_CLOUD_AGENT_DIR overrides the location (the launcher sets it).
-  cloud-agent:
-    profiles: ["local-brain"]
-    image: ${INNATE_CLOUD_AGENT_IMAGE:-innate-os-cloud-agent:latest}
-    build:
-      context: ${INNATE_CLOUD_AGENT_DIR:-../../innate-cloud-agent}
-      dockerfile: Dockerfile
-      # Build on the host network namespace for DNS during `pip install`, matching
-      # the innate service (systemd-resolved hosts can't resolve over bridge DNS).
-      network: host
-    container_name: innate-cloud-agent
-    working_dir: /app
-    env_file:
-      # Same secrets file as the innate container — supplies GEMINI_API_KEY.
-      - ${INNATE_OS_ENV_FILE:-../.env}
-    environment:
-      - PORT=8765
-      # Robot model the brain configures itself for (camera FOV, thresholds, ...).
-      - ROBOT_TYPE=${ROBOT_TYPE:-sim}
-      # Local dev: bypass the hosted auth handshake. SKIP_AUTH needs these three set.
-      - SKIP_AUTH=true
-      - DEFAULT_ROBOT_TOKEN=local-dev-robot-token
-      - DEFAULT_USER_ID=local-dev-user
-      - DEFAULT_SERVICE_KEY=local-dev-service-key
-    volumes:
-      # Live source for dev, mirroring the launcher's local-source mode.
-      - ${INNATE_CLOUD_AGENT_DIR:-../../innate-cloud-agent}:/app
-    command: python -u run_server.py
-    ports:
-      - "${SIM_CLOUD_AGENT_PORT:-8765}:8765"
-    networks:
-      - x11
 
 volumes:
   ros2_ws_build:
