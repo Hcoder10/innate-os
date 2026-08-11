@@ -256,6 +256,24 @@ class MemorySearch:
 
         threading.Thread(target=run, name="memory-cache-forget", daemon=True).start()
 
+    def forget_frame(self, memory: Memory) -> None:
+        """The user forgot one memory: delete its server-side upload and drop
+        the context cache embedding the frame — a retire note only shadows it,
+        and the handle would otherwise serve the view until its 12 h TTL. The
+        other uploads stay, so the next warm() rebuild references them cheaply."""
+        self._files.forget(memory.id)
+        cache = self._cache
+        if cache is None or all(m.id != memory.id for m in cache.memories):
+            return
+        if self._cache is cache:
+            self._cache = None
+
+        def run() -> None:
+            with contextlib.suppress(Exception):
+                self._rest.delete(f"/v1beta/{cache.name}")
+
+        threading.Thread(target=run, name="memory-cache-forget", daemon=True).start()
+
     # --- cache management (under _flight, except the read-only probes) ---
     def _cache_matches(self, snapshot: MemorySnapshot) -> bool:
         cache = self._cache

@@ -1,0 +1,10 @@
+# Request — forget one remembered viewpoint on the current map. Ids restart
+# from 1 after a same-name re-map, so the request carries the map fingerprint
+# from /brain/memory_positions — a stale client must not delete the new map's
+# memories. Empty fingerprint skips the check (CLI callers).
+int32 memory_id
+string fingerprint
+---
+# Response
+bool success
+string message
