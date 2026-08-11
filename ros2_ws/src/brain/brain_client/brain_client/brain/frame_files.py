@@ -97,6 +97,24 @@ class FrameFiles:
 
         threading.Thread(target=run, name="memory-file-purge", daemon=True).start()
 
+    def forget(self, memory_id: int) -> None:
+        """One memory was forgotten: best-effort delete its server-side copy now.
+        The registry prune (:meth:`_save_locked`) would otherwise drop the URI
+        while the upload lives on until Gemini's 48 h expiry."""
+        with self._lock:
+            self._sync_map_locked()
+            record = self._records.pop(memory_id, None)
+            if record is not None:
+                self._save_locked()
+        if record is None:
+            return
+
+        def run() -> None:
+            with contextlib.suppress(Exception):  # best effort; expiry is the backstop
+                self._rest.delete("/v1beta/files/" + record.uri.rsplit("/", 1)[-1])
+
+        threading.Thread(target=run, name="memory-file-forget", daemon=True).start()
+
     def maintain(self) -> None:
         """Upload new/refreshed/aging frames in the background; returns immediately."""
         if self.unsupported or time.monotonic() < self._retry_at:

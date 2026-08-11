@@ -347,7 +347,8 @@ def test_forget_removes_the_memory_and_its_image(data_dir):
     store.switch_map("A.yaml")
     added = store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
     assert added is not None
-    assert store.forget(added.id, store.fingerprint) == added
+    # The truncated digest from /brain/memory_positions — what a client sends.
+    assert store.forget(added.id, store.fingerprint[:12]) == added
     path = store.image_path(added.id)
     assert path is not None and not path.exists()
     assert store.snapshot().memories == ()
@@ -963,6 +964,32 @@ def test_a_busy_search_returns_a_typed_verdict_instead_of_queuing(data_dir, monk
         search._flight.release()
     assert not verdict.found and "still running" in verdict.error
     assert fake.generates == []  # never reached the network
+
+
+def test_forget_frame_purges_its_upload_and_the_cache_embedding_it(data_dir):
+    search, fake, store = make_search(data_dir, frames=6)
+    upload_frames(search)
+    build_cache(search)
+    memory = memory_with_id(store, 2)
+    assert store.forget(memory.id) == memory
+    search.forget_frame(memory)
+    assert search._cache is None
+    assert 2 not in search._files._records and len(search._files._records) == 5
+    deadline = time.time() + 2.0
+    while len(fake.deletes) < 2 and time.time() < deadline:
+        time.sleep(0.01)
+    assert "/v1beta/cachedContents/c1" in fake.deletes
+    assert "/v1beta/files/f2" in fake.deletes
+    assert len(fake.deletes) == 2  # the other five uploads survive for the next rebuild
+
+
+def test_forget_frame_keeps_a_cache_that_never_embedded_it(data_dir):
+    search, fake, store = make_search(data_dir, frames=6)
+    build_cache(search)
+    added = store.add(30.0, 0.0, 0.0, 2000.0, b"jpg-late")  # id 7, after the build
+    assert added is not None and store.forget(added.id) == added
+    search.forget_frame(added)
+    assert search._cache is not None and fake.deletes == []
 
 
 def test_forget_drops_the_cache_and_purges_the_uploads(data_dir):

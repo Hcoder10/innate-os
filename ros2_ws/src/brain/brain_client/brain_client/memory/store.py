@@ -166,9 +166,10 @@ class MemoryStore:
     def forget(self, memory_id: int, fingerprint: str = "") -> Memory | None:
         """Evict one memory by id, returning it — None when the id is unknown
         or the caller's fingerprint is stale (a re-map restarts ids, so a stale
-        client must not delete the new map's memories; empty skips the check)."""
+        client must not delete the new map's memories; empty skips the check).
+        Prefix-matched: the positions payload publishes a truncated digest."""
         with self._lock:
-            if self._dir is None or (fingerprint and fingerprint != self._fingerprint):
+            if self._dir is None or (fingerprint and not self._fingerprint.startswith(fingerprint)):
                 return None
             memory = next((m for m in self._memories if m.id == memory_id), None)
             if memory is None:
