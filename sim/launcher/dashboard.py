@@ -680,56 +680,26 @@ def render_log_box(
     return [top, *body, bottom]
 
 
-def print_log_columns(columns: list[tuple[str, list[str], tuple[int, int, int]]], *, available_height: int) -> None:
-    width = shutil.get_terminal_size((150, 40)).columns
+def print_log_pane(
+    title: str,
+    lines: list[str],
+    border_rgb: tuple[int, int, int],
+    *,
+    available_height: int,
+) -> None:
     if available_height < 3:
         print(
             colorize(
-                "Terminal too short for live log panes. Enlarge the window to show them.",
+                "Terminal too short for the live log pane. Enlarge the window to show it.",
                 fg=THEME["dim"],
                 dim=True,
             )
         )
         return
 
-    if len(columns) == 1 or width < 120:
-        gap_lines = 1 if available_height >= len(columns) * 5 else 0
-        total_gap_lines = gap_lines * max(len(columns) - 1, 0)
-        remaining_for_boxes = max(available_height - total_gap_lines, len(columns))
-        box_height = remaining_for_boxes // len(columns)
-        if box_height < 3:
-            print(
-                colorize(
-                    "Terminal too short for stacked log panes. Enlarge the window to show them.",
-                    fg=THEME["dim"],
-                    dim=True,
-                )
-            )
-            return
-
-        for index, (title, lines, border_rgb) in enumerate(columns):
-            if index > 0 and gap_lines:
-                print()
-            for row in render_log_box(title, lines, width=width, height=box_height, border_rgb=border_rgb):
-                print(row)
-        return
-
-    gap = 2
-    box_height = max(available_height, 3)
-    inner_width = max((width - gap * (len(columns) - 1)) // len(columns), 24)
-    rendered_columns = [
-        render_log_box(
-            title,
-            lines,
-            width=inner_width,
-            height=box_height,
-            border_rgb=border_rgb,
-        )
-        for title, lines, border_rgb in columns
-    ]
-
-    for row_index in range(box_height):
-        print("  ".join(column[row_index] for column in rendered_columns))
+    width = shutil.get_terminal_size((150, 40)).columns
+    for row in render_log_box(title, lines, width=width, height=available_height, border_rgb=border_rgb):
+        print(row)
 
 
 def runtime_is_down(snapshot: dict[str, object]) -> bool:
@@ -865,14 +835,7 @@ def render_status(
         if cached_logs is not None and "brain" in cached_logs
         else callbacks.capture_os_brain_logs(config, lines=visible_log_rows)
     )
-    log_columns = [
-        (
-            "OS BRAIN LOGS",
-            brain_lines,
-            THEME["log_brain"],
-        ),
-    ]
-    print_log_columns(log_columns, available_height=available_height)
+    print_log_pane("OS BRAIN LOGS", brain_lines, THEME["log_brain"], available_height=available_height)
     if verbose:
         print()
         print(divider_line(term_width))

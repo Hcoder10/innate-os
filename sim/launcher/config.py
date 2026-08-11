@@ -151,6 +151,10 @@ SIM_ASSET_UNITS = SIM_ASSET_UNITS_DERIVED + SIM_ASSET_UNITS_AUTHORED
 # tests/test_assets_image_inputs.py holds the dockerignore (which IS hashed)
 # EQUAL to this set; weaken it to a subset check and that stops being true.
 OS_CONTAINER_SERVICE = "innate"
+# Must match `container_name:` / `name:` in sim/docker-compose.dev.yml.
+OS_CONTAINER_NAME = "innate-dev"
+COMPOSE_PROJECT_NAME = "innate-os"
+LEGACY_CLOUD_AGENT_CONTAINER = "innate-cloud-agent"
 OS_CONTAINER_TMUX_CMD = "./scripts/launch_sim_in_tmux.zsh --detach"
 SECRET_ENV_KEYS = (INNATE_SERVICE_KEY, GEMINI_API_KEY)
 LOG_TARGETS = {
@@ -350,41 +354,15 @@ def resolve_brain_backend(env: dict[str, str]) -> str:
     """Which key the in-process brain (brain_client) will use to reach Gemini.
 
     The service key wins: it also buys voice, which a Gemini key does not.
+    brain_client's `Backend` (brain/transport.py) makes the real choice and owns
+    this precedence; the launcher runs on the host and cannot import it, so this
+    restates the rule. Change one and change the other.
     """
     if is_configured_secret_value(INNATE_SERVICE_KEY, env.get(INNATE_SERVICE_KEY, "")):
         return INNATE_BACKEND
     if is_configured_secret_value(GEMINI_API_KEY, env.get(GEMINI_API_KEY, "")):
         return GEMINI_BACKEND
     return NO_BACKEND
-
-
-def resolve_brain_client_version(repo_root: Path) -> str:
-    def git_output(*args: str) -> str:
-        try:
-            result = subprocess.run(
-                ["git", *args],
-                cwd=repo_root,
-                text=True,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                check=False,
-                timeout=10.0,
-            )
-        except subprocess.TimeoutExpired:
-            return ""
-        if result.returncode != 0:
-            return ""
-        return result.stdout.strip()
-
-    exact_tag = git_output("describe", "--exact-match", "--tags", "HEAD")
-    if exact_tag:
-        return exact_tag.splitlines()[0].strip()
-
-    tags = git_output("tag", "--list", "--sort=-version:refname")
-    if tags:
-        return f"{tags.splitlines()[0].strip()}-dev"
-
-    return "0.3.0-dev"
 
 
 def require_path(path: Path, label: str) -> Path:
@@ -593,6 +571,13 @@ def get_config() -> dict[str, object]:
         if is_configured_secret_value(key, value):
             raw_env[key] = value
     sim_config = parse_toml_file(SIM_CONFIG_PATH)
+    if "cloud_agent" in sim_config:
+        # An existing config.toml is never rewritten (and `clean` preserves it),
+        # so the dead section outlives the code that validated it.
+        warn(
+            f"{SIM_CONFIG_PATH} still has a [cloud_agent] section. It is ignored -- the brain now runs "
+            "inside brain_client. Delete the section to silence this."
+        )
 
     merged_env = dict(raw_env)
     merged_env.setdefault("ROSBRIDGE_URI", "ws://localhost:9090")
@@ -618,7 +603,6 @@ def get_config() -> dict[str, object]:
         "os_repo": os_repo,
         "sim_repo": sim_repo,
         "foxglove_port": foxglove_port,
-        "brain_client_version": resolve_brain_client_version(os_repo),
         "os_image": os_image,
         "os_image_auto": os_image_auto,
         "os_pull_image": os_pull_image if os_pull_image is not None else True,

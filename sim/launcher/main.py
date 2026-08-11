@@ -111,6 +111,9 @@ def cmd_up(
         # workspace dirs for the invoking user (root-owned bind-mount dirs on
         # Linux otherwise), and warns if an earlier run already claimed them.
         ensure_workspace_dirs(config)
+        # Before the fast path, not after it: the container it removes is
+        # exactly what an upgrade from a still-running older stack leaves behind.
+        remove_legacy_cloud_agent()
         if runtime_already_running(config):
             # A code update can leave a stale world server running (frozen
             # 3D view); ensure_world_server restarts it.
@@ -137,7 +140,6 @@ def cmd_up(
 
         started = True
         try:
-            remove_legacy_cloud_agent()
             ensure_os_container(config, os_env_file, offline=offline)
         except StackError as exc:
             if offline:

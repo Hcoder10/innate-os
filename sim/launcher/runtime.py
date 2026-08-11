@@ -24,11 +24,14 @@ from config import (
     ASSETS_IMAGE_LAYERS,
     CLI_SIM,
     COMPOSE_LOG_PATH,
+    COMPOSE_PROJECT_NAME,
     DOWN_LOG_PATH,
     GENERATED_OS_ENV_PATH,
     INNATE_BACKEND,
+    LEGACY_CLOUD_AGENT_CONTAINER,
     NO_BACKEND,
     OS_BUILD_LOG_PATH,
+    OS_CONTAINER_NAME,
     OS_CONTAINER_SERVICE,
     OS_CONTAINER_TMUX_CMD,
     OS_SESSION_LOG_PATH,
@@ -493,13 +496,45 @@ def ensure_home_mount_sources() -> None:
             ssh_dir.mkdir(mode=0o700)
 
 
+def os_container_foxglove_port_current(config: dict[str, object]) -> bool:
+    """False when a running OS container publishes the Foxglove bridge on a host
+    port other than the one the launcher now advertises.
+
+    Checkouts that ran the brain in a cloud-agent container shifted the publish
+    to 8766 (the agent owned 8765); a running container's published ports cannot
+    be changed in place, so such a container has to be recreated. An unanswered
+    probe reports "current" -- a flaky answer must not cost a recreate.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "port", OS_CONTAINER_NAME, "8765"],
+            text=True,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+            timeout=DOCKER_PROBE_TIMEOUT_S,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    if result.returncode != 0:
+        return True
+    published = str(config["foxglove_port"])
+    return any(line.strip().endswith(f":{published}") for line in result.stdout.splitlines())
+
+
 def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline: bool = False) -> None:
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     os_image = str(config["os_image"]).strip()
     os_image_auto = bool(config["os_image_auto"])
-    container_was_running = container_running("innate-dev")
+    reuse_running_container = container_running(OS_CONTAINER_NAME)
+    if reuse_running_container and not os_container_foxglove_port_current(config):
+        log(
+            "The running OS container publishes Foxglove on an older host port; "
+            f"recreating it to serve ws://localhost:{config['foxglove_port']}."
+        )
+        reuse_running_container = False
 
-    if container_was_running:
+    if reuse_running_container:
         log("Innate OS dev container already running.")
     else:
         up_cmd = docker_compose_cmd("up", "-d")
@@ -616,7 +651,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
     )
     ros_install_already_validated = False
     if ros_install_marker_matches and not bool(config["os_always_build"]):
-        ros_install_already_validated = container_was_running or command_succeeds(
+        ros_install_already_validated = reuse_running_container or command_succeeds(
             os_compose_zsh_cmd("test -f ~/innate-os/ros2_ws/install/setup.zsh"),
             cwd=os_repo,
             env=compose_env,
@@ -637,14 +672,10 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
         ROS_INSTALL_STATE_PATH.write_text(f"{ros_inputs_hash}\n", encoding="utf-8")
 
     log("Launching ROS simulation nodes inside the OS container...")
-    brain_client_version = str(config.get("brain_client_version", "")).strip()
-    brain_client_version_arg = ""
-    if brain_client_version:
-        brain_client_version_arg = f" --brain-client-version {shlex.quote(brain_client_version)}"
     launch_script = (
         "INNATE_SIM_TMUX_SETTLE_SECONDS=${INNATE_SIM_TMUX_SETTLE_SECONDS:-0} "
         "INNATE_SIM_TMUX_CLEANUP_SETTLE_SECONDS=${INNATE_SIM_TMUX_CLEANUP_SETTLE_SECONDS:-0} "
-        f"{OS_CONTAINER_TMUX_CMD}{brain_client_version_arg}"
+        f"{OS_CONTAINER_TMUX_CMD}"
     )
     launch_wrapper = (
         "rm -f /tmp/innate-os-session.log; "
@@ -714,13 +745,45 @@ def clean_runtime(config: dict[str, object]) -> None:
     down_os(config, remove_volumes=True)
     # Belt-and-suspenders: force-remove named containers that may linger outside
     # the compose project (e.g. after a partial or failed startup).
-    subprocess.run(
-        ["docker", "rm", "-f", "innate-dev"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
+    force_remove_container(OS_CONTAINER_NAME)
+
+
+def force_remove_container(name: str) -> bool:
+    """Best-effort `docker rm -f`; True when a container was actually removed.
+
+    Never raises: this runs first in the teardown paths, where a wedged daemon
+    must not swallow the shutdown (or the startup error that triggered it).
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "rm", "-f", name],
+            text=True,
+            stdin=subprocess.DEVNULL,
+            check=False,
+            capture_output=True,
+            timeout=DOCKER_PROBE_TIMEOUT_S,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        warn(f"Docker did not answer `docker rm -f {name}` within {DOCKER_PROBE_TIMEOUT_S:.0f}s; check `docker ps`.")
+        return False
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def container_in_compose_project(name: str) -> bool:
+    """True when `name` is a container this launcher's compose project created,
+    rather than a hand-started one that happens to share the name."""
+    try:
+        result = subprocess.run(
+            ["docker", "inspect", "-f", '{{index .Config.Labels "com.docker.compose.project"}}', name],
+            text=True,
+            stdin=subprocess.DEVNULL,
+            check=False,
+            capture_output=True,
+            timeout=DOCKER_PROBE_TIMEOUT_S,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and result.stdout.strip() == COMPOSE_PROJECT_NAME
 
 
 def remove_legacy_cloud_agent() -> None:
@@ -728,15 +791,12 @@ def remove_legacy_cloud_agent() -> None:
 
     It is no longer a service of this compose project, so `down` cannot see it,
     and it holds host port 8765 -- which the Foxglove bridge now publishes on.
+    Only a container this launcher started is removed: the same name run by hand
+    (an own fork, or one serving a physical MARS) is left alone.
     """
-    result = subprocess.run(
-        ["docker", "rm", "-f", "innate-cloud-agent"],
-        text=True,
-        stdin=subprocess.DEVNULL,
-        check=False,
-        capture_output=True,
-    )
-    if result.returncode == 0 and result.stdout.strip():
+    if not container_in_compose_project(LEGACY_CLOUD_AGENT_CONTAINER):
+        return
+    if force_remove_container(LEGACY_CLOUD_AGENT_CONTAINER):
         log("Removed the leftover cloud-agent container; the brain now runs inside brain_client.")
 
 
@@ -792,9 +852,9 @@ def open_os_container_shell() -> int:
     Uses an interactive (TTY) shell so ~/.zshrc runs and sources ROS — a
     non-interactive `zsh -lc` would leave `ros2` and the workspace unsourced.
     """
-    if not container_running("innate-dev"):
+    if not container_running(OS_CONTAINER_NAME):
         raise StackError(f"Innate OS dev container is not running.\nStart it with `{CLI_SIM} up` first.")
-    return subprocess.run(["docker", "exec", "-it", "innate-dev", "zsh"]).returncode
+    return subprocess.run(["docker", "exec", "-it", OS_CONTAINER_NAME, "zsh"]).returncode
 
 
 def capture_command_output(
@@ -876,7 +936,7 @@ def websocket_port_open(port: int) -> bool:
 
 
 def collect_os_process_status(config: dict[str, object]) -> dict[str, bool]:
-    os_running = container_running("innate-dev")
+    os_running = container_running(OS_CONTAINER_NAME)
     status = {
         "os_running": os_running,
         "os_session_running": False,
@@ -947,7 +1007,7 @@ _virtual_mars_confirmed = False
 
 def virtual_mars_ready(config: dict[str, object]) -> bool:
     """True if the virtual MARS driver is publishing /odom in the container."""
-    if not container_running("innate-dev"):
+    if not container_running(OS_CONTAINER_NAME):
         return False
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     output = capture_command_output(
@@ -1026,7 +1086,10 @@ def wait_for_virtual_mars(config: dict[str, object], *, timeout_seconds: float =
 
 
 def runtime_already_running(config: dict[str, object]) -> bool:
-    return os_runtime_ready(config)
+    """The running stack is both complete and current. A container from an older
+    checkout serves the Foxglove bridge on a host port the dashboard no longer
+    prints, and only a recreate can move it -- so that stack is not reusable."""
+    return os_runtime_ready(config) and os_container_foxglove_port_current(config)
 
 
 def format_startup_check(ok: bool, label: str, detail: str) -> str:
@@ -1107,7 +1170,7 @@ def print_startup_checks(
 
 
 def capture_os_brain_logs(config: dict[str, object], lines: int = 18) -> list[str]:
-    if not container_running("innate-dev"):
+    if not container_running(OS_CONTAINER_NAME):
         return ["OS container offline."]
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     compose_env = os_compose_env()
