@@ -25,7 +25,6 @@ Uses proxy services via self.proxy (injected by InputManager).
 
 import base64
 import json
-import os
 import queue
 import re
 import subprocess
@@ -37,7 +36,6 @@ from brain_client.common.logging import UniversalLogger
 from brain_client.inputs.batch_stt import (
     BatchSttSession,
     EnergyDetector,
-    elevenlabs_direct_transcriber,
     elevenlabs_proxy_transcriber,
     gemini_transcriber,
 )
@@ -311,15 +309,7 @@ class MicroInput(InputDevice):
     def _connect_elevenlabs_batch(self) -> str:
         """Start a batch-transcription session on ElevenLabs Scribe. Returns the model id."""
         model = self.proxy.config.get("elevenlabs_batch_stt_model", "scribe_v2")
-
-        # The robot's own key is the verified path; the proxy passthrough for
-        # this endpoint needs server-side support, so it's the fallback.
-        api_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
-        if api_key:
-            transcriber = elevenlabs_direct_transcriber(api_key, model, self._stt_language())
-        else:
-            transcriber = elevenlabs_proxy_transcriber(self.proxy, model, self._stt_language())
-
+        transcriber = elevenlabs_proxy_transcriber(self.proxy, model, self._stt_language())
         self._start_batch_session(transcriber, model)
         return model
 
