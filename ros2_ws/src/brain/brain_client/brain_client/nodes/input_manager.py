@@ -44,10 +44,13 @@ class InputManagerNode(Node):
 
     def _init_proxy(self):
         # Credentials come from env (INNATE_PROXY_URL, INNATE_SERVICE_KEY); config from params.
-        self.declare_parameter("stt_backend", "elevenlabs")
+        self.declare_parameter("stt_backend", "elevenlabs_batch")
         self.declare_parameter("stt_language", "en")
         self.declare_parameter("stt_vad_threshold", 0.3)
         self.declare_parameter("stt_vad_silence_secs", 0.7)
+        self.declare_parameter("stt_energy_threshold", 0.01)
+        self.declare_parameter("elevenlabs_batch_stt_model", "scribe_v2")
+        self.declare_parameter("gemini_stt_model", "gemini-3.6-flash")
         self.declare_parameter("elevenlabs_stt_model", "scribe_v2_realtime")
         self.declare_parameter("openai_realtime_model", "gpt-4o-realtime-preview")
         self.declare_parameter("openai_realtime_url", "wss://api.openai.com/v1/realtime")
@@ -58,6 +61,9 @@ class InputManagerNode(Node):
             "stt_language": self.get_parameter("stt_language").value,
             "stt_vad_threshold": self.get_parameter("stt_vad_threshold").value,
             "stt_vad_silence_secs": self.get_parameter("stt_vad_silence_secs").value,
+            "stt_energy_threshold": self.get_parameter("stt_energy_threshold").value,
+            "elevenlabs_batch_stt_model": self.get_parameter("elevenlabs_batch_stt_model").value,
+            "gemini_stt_model": self.get_parameter("gemini_stt_model").value,
             "elevenlabs_stt_model": self.get_parameter("elevenlabs_stt_model").value,
             "openai_realtime_model": self.get_parameter("openai_realtime_model").value,
             "openai_realtime_url": self.get_parameter("openai_realtime_url").value,

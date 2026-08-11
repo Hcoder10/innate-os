@@ -4,30 +4,41 @@
 """
 Microphone Input Device
 
-Connects to microphone hardware and a realtime speech-to-text backend to get
-voice transcripts. This is a pure Python class with NO ROS dependencies.
+Connects to microphone hardware and a speech-to-text backend to get voice
+transcripts. This is a pure Python class with NO ROS dependencies.
 
-Two backends, selected by the ``stt_backend`` setting:
+Four backends, selected by the ``stt_backend`` setting:
 
-- ``elevenlabs`` — ElevenLabs Scribe realtime (default)
-- ``openai``     — OpenAI Realtime transcription sessions
+- ``elevenlabs_batch`` — ElevenLabs Scribe batch, one POST per utterance (default)
+- ``gemini``           — Gemini generateContent, one call per utterance
+- ``elevenlabs``       — ElevenLabs Scribe realtime WebSocket
+- ``openai``           — OpenAI Realtime transcription sessions
 
-They differ in how a session is configured (query string vs. a session.update
-frame), in the audio frame shape, and in the transcript event names; the
-microphone, ducking, and reconnect machinery is shared.
+The realtime backends stream audio over a WebSocket and let the vendor do the
+voice-activity detection; the batch backends detect utterances locally and ship
+each one whole (see ``brain_client.inputs.batch_stt``). The microphone,
+ducking, and reconnect machinery is shared.
 
 Uses proxy services via self.proxy (injected by InputManager).
 """
 
 import base64
 import json
+import os
 import queue
 import re
 import subprocess
 import threading
 import time
 
+from brain_client.brain.transport import pick_rest
 from brain_client.common.logging import UniversalLogger
+from brain_client.inputs.batch_stt import (
+    BatchSttSession,
+    elevenlabs_direct_transcriber,
+    elevenlabs_proxy_transcriber,
+    gemini_transcriber,
+)
 from brain_client.inputs.types import InputDevice
 
 DEFAULT_SAMPLE_RATE = 24_000
@@ -38,7 +49,9 @@ CHUNK_DURATION_SEC = 0.02
 # transcript comes out time-warped.
 ELEVENLABS_AUDIO_FORMAT = f"pcm_{DEFAULT_SAMPLE_RATE}"
 
-STT_BACKENDS = frozenset({"elevenlabs", "openai"})
+STT_BACKENDS = frozenset({"elevenlabs_batch", "gemini", "elevenlabs", "openai"})
+BATCH_BACKENDS = frozenset({"elevenlabs_batch", "gemini"})
+DEFAULT_STT_BACKEND = "elevenlabs_batch"
 
 ELEVENLABS_ERROR_TYPES = frozenset(
     {
@@ -73,7 +86,7 @@ class MicroInput(InputDevice):
         super().__init__()
         self.mic = None
         self.client = None
-        self._backend = "elevenlabs"
+        self._backend = DEFAULT_STT_BACKEND
         self._stop_evt = threading.Event()
         self._audio_thread = None
         self._is_robot_talking = False  # For ducking (mic-specific)
@@ -258,15 +271,19 @@ class MicroInput(InputDevice):
 
     def _connect_via_proxy(self):
         """Connect to the configured STT backend via proxy."""
-        backend = str(self.proxy.config.get("stt_backend") or "elevenlabs").strip().lower()
+        backend = str(self.proxy.config.get("stt_backend") or DEFAULT_STT_BACKEND).strip().lower()
         if backend not in STT_BACKENDS:
             self.logger.error(
-                f"❌ Unknown stt_backend {backend!r} — using 'elevenlabs' (options: {sorted(STT_BACKENDS)})"
+                f"❌ Unknown stt_backend {backend!r} — using {DEFAULT_STT_BACKEND!r} (options: {sorted(STT_BACKENDS)})"
             )
-            backend = "elevenlabs"
+            backend = DEFAULT_STT_BACKEND
         self._backend = backend
 
-        if self._backend == "openai":
+        if self._backend == "elevenlabs_batch":
+            model = self._connect_elevenlabs_batch()
+        elif self._backend == "gemini":
+            model = self._connect_gemini()
+        elif self._backend == "openai":
             model = self._connect_openai()
         else:
             model = self._connect_elevenlabs()
@@ -279,6 +296,48 @@ class MicroInput(InputDevice):
         self._is_connected = True
         self._reconnect_delay = 1  # Reset delay on successful connection
         self.logger.info(f"✅ Connected to {self._backend} STT (model: {model})")
+
+    def _connect_elevenlabs_batch(self) -> str:
+        """Start a batch-transcription session on ElevenLabs Scribe. Returns the model id."""
+        model = self.proxy.config.get("elevenlabs_batch_stt_model", "scribe_v2")
+
+        # The robot's own key is the verified path; the proxy passthrough for
+        # this endpoint needs server-side support, so it's the fallback.
+        api_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+        if api_key:
+            transcriber = elevenlabs_direct_transcriber(api_key, model, self._stt_language())
+        else:
+            transcriber = elevenlabs_proxy_transcriber(self.proxy, model, self._stt_language())
+
+        self._start_batch_session(transcriber, model)
+        return model
+
+    def _connect_gemini(self) -> str:
+        """Start a batch-transcription session on Gemini. Returns the model id."""
+        model = self.proxy.config.get("gemini_stt_model", "gemini-3.6-flash")
+
+        rest = pick_rest(self.proxy)
+        if rest is None:
+            raise RuntimeError("no Gemini access: proxy unavailable and GEMINI_API_KEY unset")
+
+        self._start_batch_session(gemini_transcriber(rest, model, self._stt_language()), model)
+        return model
+
+    def _start_batch_session(self, transcriber, model: str):
+        cfg = self.proxy.config
+        energy_threshold = float(cfg.get("stt_energy_threshold", 0.01))
+        silence_secs = float(cfg.get("stt_vad_silence_secs", 0.7))
+        self.logger.info(
+            f"📤 Batch STT config: model={model}, energy_threshold={energy_threshold}, silence={silence_secs}s"
+        )
+        self.client = BatchSttSession(
+            transcriber=transcriber,
+            sample_rate=DEFAULT_SAMPLE_RATE,
+            energy_threshold=energy_threshold,
+            silence_secs=silence_secs,
+            on_transcript=self._on_transcript_if_active,
+            logger=self.logger,
+        )
 
     def _connect_elevenlabs(self) -> str:
         """Open a Scribe realtime session. Returns the model id."""
@@ -365,12 +424,21 @@ class MicroInput(InputDevice):
         self._reconnect_thread = threading.Thread(target=reconnect_loop, daemon=True)
         self._reconnect_thread.start()
 
-    def _audio_frame(self, chunk: bytes) -> dict:
-        """Wrap a raw PCM chunk in the backend's audio-append frame."""
+    def _on_transcript_if_active(self, text: str):
+        if self.is_active():
+            self._on_transcript(text)
+
+    def _send_chunk(self, chunk: bytes):
+        """Hand one PCM chunk to the backend: fed locally (batch) or framed onto the wire."""
+        if self._backend in BATCH_BACKENDS:
+            self.client.feed(chunk)
+            return
         audio = base64.b64encode(chunk).decode("ascii")
         if self._backend == "openai":
-            return {"type": "input_audio_buffer.append", "audio": audio}
-        return {"message_type": "input_audio_chunk", "audio_base_64": audio}
+            frame = {"type": "input_audio_buffer.append", "audio": audio}
+        else:
+            frame = {"message_type": "input_audio_chunk", "audio_base_64": audio}
+        self.client.send_json(frame)
 
     def _start_audio_thread(self):
         """Start the audio streaming thread."""
@@ -409,7 +477,7 @@ class MicroInput(InputDevice):
                         continue
                     ducking_logged = False
 
-                    self.client.send_json(self._audio_frame(chunk))
+                    self._send_chunk(chunk)
                     chunks_sent += 1
 
                     # Log periodically (much less frequently)

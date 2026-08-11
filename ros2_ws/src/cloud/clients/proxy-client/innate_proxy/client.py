@@ -108,6 +108,8 @@ class ProxyClient:
         json: dict[str, Any] | None = None,
         data: bytes | None = None,
         params: dict[str, Any] | None = None,
+        files: dict[str, Any] | None = None,
+        form: dict[str, Any] | None = None,
     ):
         """Return a context manager that yields an ``httpx.Response`` with streaming.
 
@@ -131,6 +133,10 @@ class ProxyClient:
             kwargs["json"] = json
         elif data is not None:
             kwargs["content"] = data
+        if files is not None:
+            kwargs["files"] = files
+            if form is not None:
+                kwargs["data"] = form  # multipart form fields, not raw content
 
         # Auth (incl. 401 retry) is handled by InnateBearerAuth on the client
         return self.get_sync_client().stream(**kwargs)

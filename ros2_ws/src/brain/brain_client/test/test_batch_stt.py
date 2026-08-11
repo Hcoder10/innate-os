@@ -1,0 +1,287 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
+"""Unit tests for the batch STT backends (no ROS, no network).
+
+The endpointer is a pure state machine over PCM chunks, so it's driven with
+synthetic audio; each vendor transcriber is exercised against a capturing fake
+asserting the exact request shape.
+"""
+
+import base64
+import io
+import json
+import threading
+import wave
+
+import httpx
+
+from brain_client.brain.transport import GeminiRest
+from brain_client.inputs.batch_stt import (
+    ELEVENLABS_PROXY_ENDPOINT,
+    MAX_UTTERANCE_SECS,
+    NO_SPEECH,
+    BatchSttSession,
+    EnergyEndpointer,
+    elevenlabs_direct_transcriber,
+    elevenlabs_proxy_transcriber,
+    gemini_transcriber,
+    pcm_to_wav,
+    rms_level,
+)
+
+SAMPLE_RATE = 24_000
+CHUNK_SAMPLES = 480  # 20 ms
+
+LOUD = (b"\x40\x1f" + b"\xc0\xe0") * (CHUNK_SAMPLES // 2)  # ±8000 square wave, RMS ~0.24
+QUIET = b"\x00\x00" * CHUNK_SAMPLES
+
+WAV = pcm_to_wav(LOUD * 10, SAMPLE_RATE)
+
+
+def make_endpointer(silence_secs: float = 0.3) -> EnergyEndpointer:
+    return EnergyEndpointer(sample_rate=SAMPLE_RATE, energy_threshold=0.01, silence_secs=silence_secs)
+
+
+def feed_seconds(ep: EnergyEndpointer, chunk: bytes, seconds: float) -> list[bytes]:
+    utterances = []
+    for _ in range(int(seconds * 50)):
+        utt = ep.feed(chunk)
+        if utt is not None:
+            utterances.append(utt)
+    return utterances
+
+
+class NullLogger:
+    def info(self, msg):
+        pass
+
+    def error(self, msg):
+        pass
+
+
+# ---------- energy ----------
+
+
+def test_rms_level_scales():
+    assert rms_level(QUIET) == 0.0
+    assert 0.2 < rms_level(LOUD) < 0.3
+
+
+# ---------- endpointer ----------
+
+
+def test_utterance_closes_after_silence_and_includes_pre_roll():
+    ep = make_endpointer(silence_secs=0.3)
+    feed_seconds(ep, QUIET, 1.0)
+    assert feed_seconds(ep, LOUD, 1.0) == []
+    utterances = feed_seconds(ep, QUIET, 0.5)
+
+    assert len(utterances) == 1
+    # ~0.4s pre-roll + 1.0s speech + 0.3s trailing silence (±1 chunk of trim slack)
+    assert 1.6 <= len(utterances[0]) / (SAMPLE_RATE * 2) <= 1.75
+
+
+def test_short_blip_is_dropped():
+    ep = make_endpointer(silence_secs=0.3)
+    ep.feed(LOUD)  # 20 ms of "speech" — far under MIN_VOICED_SECS
+    assert feed_seconds(ep, QUIET, 1.0) == []
+
+
+def test_long_utterance_capped():
+    ep = make_endpointer(silence_secs=0.3)
+    utterances = feed_seconds(ep, LOUD, MAX_UTTERANCE_SECS + 2)
+    assert len(utterances) >= 1
+    assert len(utterances[0]) >= int(MAX_UTTERANCE_SECS * SAMPLE_RATE) * 2
+
+
+def test_endpointer_resets_between_utterances():
+    ep = make_endpointer(silence_secs=0.3)
+    feed_seconds(ep, LOUD, 1.0)
+    first = feed_seconds(ep, QUIET, 0.5)
+    feed_seconds(ep, LOUD, 0.5)
+    second = feed_seconds(ep, QUIET, 0.5)
+
+    assert len(first) == len(second) == 1
+    assert len(second[0]) < len(first[0])  # no leftover audio from the first
+
+
+def test_ducking_gap_does_not_count_as_silence():
+    # Time is audio fed, not wall clock: with no chunks arriving, the
+    # utterance must stay open no matter how long the gap.
+    ep = make_endpointer(silence_secs=0.3)
+    feed_seconds(ep, LOUD, 0.5)
+    assert ep.feed(LOUD) is None  # still open after an arbitrary pause
+
+
+# ---------- wav ----------
+
+
+def test_pcm_to_wav_round_trip():
+    pcm = LOUD * 50
+    with wave.open(io.BytesIO(pcm_to_wav(pcm, SAMPLE_RATE)), "rb") as wav:
+        assert wav.getframerate() == SAMPLE_RATE
+        assert wav.getnchannels() == 1
+        assert wav.getsampwidth() == 2
+        assert wav.readframes(wav.getnframes()) == pcm
+
+
+# ---------- elevenlabs transcribers ----------
+
+
+def test_elevenlabs_direct_request_shape_and_reply():
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"text": " hello robot "})
+
+    transcribe = elevenlabs_direct_transcriber("test-key", "scribe_v2", "en", transport=httpx.MockTransport(handler))
+    assert transcribe(WAV) == "hello robot"
+
+    request = requests[0]
+    assert request.url == "https://api.elevenlabs.io/v1/speech-to-text"
+    assert request.headers["xi-api-key"] == "test-key"
+    assert request.headers["content-type"].startswith("multipart/form-data")
+    body = request.read()
+    assert WAV in body
+    assert b'name="model_id"' in body and b"scribe_v2" in body
+    assert b'name="language_code"' in body
+
+
+def test_elevenlabs_direct_http_error_raises():
+    transcribe = elevenlabs_direct_transcriber(
+        "test-key", "scribe_v2", "en", transport=httpx.MockTransport(lambda r: httpx.Response(401, text="denied"))
+    )
+    try:
+        transcribe(WAV)
+        raise AssertionError("expected RuntimeError")
+    except RuntimeError as e:
+        assert "401" in str(e)
+
+
+class FakeProxyResponse:
+    status_code = 200
+
+    def read(self):
+        return json.dumps({"text": "via proxy"}).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        pass
+
+
+class FakeProxy:
+    def __init__(self):
+        self.calls = []
+
+    def request_stream(self, service, endpoint, **kwargs):
+        self.calls.append((service, endpoint, kwargs))
+        return FakeProxyResponse()
+
+
+def test_elevenlabs_proxy_request_shape_and_reply():
+    proxy = FakeProxy()
+    transcribe = elevenlabs_proxy_transcriber(proxy, "scribe_v2", "en")
+
+    assert transcribe(WAV) == "via proxy"
+    service, endpoint, kwargs = proxy.calls[0]
+    assert service == "elevenlabs"
+    assert endpoint == ELEVENLABS_PROXY_ENDPOINT
+    assert kwargs["files"]["file"] == ("utterance.wav", WAV, "audio/wav")
+    assert kwargs["form"] == {"model_id": "scribe_v2", "language_code": "en"}
+
+
+# ---------- gemini transcriber ----------
+
+
+def fake_rest(reply_text: str, calls: list | None = None) -> GeminiRest:
+    def post(path, body):
+        if calls is not None:
+            calls.append((path, body))
+        return {"candidates": [{"content": {"parts": [{"text": reply_text}]}}]}
+
+    return GeminiRest(post=post, delete=lambda path: {}, upload=lambda path, data, mime: {})
+
+
+def test_gemini_request_shape_and_reply():
+    calls = []
+    transcribe = gemini_transcriber(fake_rest("hello robot", calls), "gemini-3.6-flash", "en")
+
+    assert transcribe(WAV) == "hello robot"
+    path, body = calls[0]
+    assert path == "/v1beta/models/gemini-3.6-flash:generateContent"
+    audio_part, text_part = body["contents"][0]["parts"]
+    assert audio_part["inlineData"]["mimeType"] == "audio/wav"
+    assert base64.b64decode(audio_part["inlineData"]["data"]) == WAV
+    assert "en" in text_part["text"]
+    assert body["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "minimal"
+
+
+def test_gemini_no_speech_sentinel_maps_to_empty():
+    assert gemini_transcriber(fake_rest(NO_SPEECH), "gemini-3.6-flash", "en")(b"wav") == ""
+
+
+def test_gemini_empty_candidates():
+    rest = GeminiRest(post=lambda path, body: {}, delete=lambda p: {}, upload=lambda p, d, m: {})
+    assert gemini_transcriber(rest, "gemini-3.6-flash", "en")(b"wav") == ""
+
+
+# ---------- session ----------
+
+
+def make_session(transcriber, transcripts: list, done: threading.Event) -> BatchSttSession:
+    def on_transcript(text):
+        transcripts.append(text)
+        done.set()
+
+    return BatchSttSession(
+        transcriber=transcriber,
+        sample_rate=SAMPLE_RATE,
+        energy_threshold=0.01,
+        silence_secs=0.3,
+        on_transcript=on_transcript,
+        logger=NullLogger(),
+    )
+
+
+def feed_utterance(session: BatchSttSession):
+    for _ in range(50):
+        session.feed(LOUD)
+    for _ in range(25):
+        session.feed(QUIET)
+
+
+def test_session_transcribes_closed_utterance():
+    transcripts, done = [], threading.Event()
+    session = make_session(lambda wav: "bring me the sock", transcripts, done)
+    session.start()
+    try:
+        feed_utterance(session)
+        assert done.wait(timeout=2.0)
+    finally:
+        session.stop()
+    assert transcripts == ["bring me the sock"]
+
+
+def test_session_survives_transcription_error():
+    calls = []
+
+    def transcriber(wav):
+        calls.append(wav)
+        if len(calls) == 1:
+            raise RuntimeError("HTTP 500")
+        return "second try"
+
+    transcripts, done = [], threading.Event()
+    session = make_session(transcriber, transcripts, done)
+
+    session.start()
+    try:
+        feed_utterance(session)
+        feed_utterance(session)
+        assert done.wait(timeout=2.0)
+    finally:
+        session.stop()
+    assert transcripts == ["second try"]
