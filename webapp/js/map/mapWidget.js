@@ -25,6 +25,7 @@ import {
   MAPPING_POSE_TOPIC,
   MEMORY_POSITIONS_TOPIC,
   MEMORY_SEARCH_TOPIC,
+  FORGET_MEMORY_SERVICE,
 } from "../constants.js";
 import { MEMORY_COLOR, SEARCH_REPLAY_FRESH_S, ageAlpha, ageText, headerSkew, memoryImageUrl, parseMemories, parseSearch, withAlpha } from "./memories.js";
 
@@ -546,12 +547,34 @@ export function createMap(root, opts = {}) {
       closeMemPopup();
       publishGoal(m.x, m.y, m.theta);
     });
+    const forget = document.createElement("button");
+    forget.type = "button";
+    forget.className = "mem-card-btn mem-card-btn-forget";
+    forget.textContent = "Forget";
+    forget.title = `${FORGET_MEMORY_SERVICE} — permanently forget this remembered view`;
+    const fingerprint = memState.fingerprint;
+    forget.addEventListener("click", () => {
+      if (!window.confirm("Forget this remembered view? The robot re-learns the spot next time it looks around there.")) {
+        return;
+      }
+      forget.disabled = true;
+      ros
+        .callService(FORGET_MEMORY_SERVICE, { memory_id: m.id, fingerprint })
+        .then((res) => {
+          if (res && res.success === false) throw new Error(res.message || "forget failed");
+          closeMemPopup(); // the dot and thumbnail leave when the positions topic republishes
+        })
+        .catch((err) => {
+          forget.disabled = false;
+          window.alert(`Couldn't forget this view: ${err.message}`);
+        });
+    });
     const close = document.createElement("button");
     close.type = "button";
     close.className = "mem-card-btn";
     close.textContent = "Close";
     close.addEventListener("click", closeMemPopup);
-    actions.append(goHere, close);
+    actions.append(goHere, forget, close);
     memPopup.append(img, meta, actions);
     memPopup.hidden = false;
     placeMemCard(memPopup, m);

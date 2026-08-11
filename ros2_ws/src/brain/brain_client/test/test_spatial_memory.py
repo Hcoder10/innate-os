@@ -342,6 +342,34 @@ def test_eviction_removes_the_image_file(data_dir):
     assert store.snapshot().memories == ()
 
 
+def test_forget_removes_the_memory_and_its_image(data_dir):
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    added = store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    assert added is not None
+    assert store.forget(added.id, store.fingerprint) == added
+    path = store.image_path(added.id)
+    assert path is not None and not path.exists()
+    assert store.snapshot().memories == ()
+
+
+def test_forget_with_a_stale_fingerprint_is_refused(data_dir):
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    added = store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    assert added is not None
+    assert store.forget(added.id, "fingerprint-of-the-old-map") is None
+    assert len(store.snapshot().memories) == 1
+
+
+def test_forget_an_unknown_id_is_a_noop(data_dir):
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    assert store.forget(99) is None
+    assert len(store.snapshot().memories) == 1
+
+
 def test_replace_keeps_the_slot_and_updates_everything_else(data_dir):
     store = MemoryStore(data_dir)
     store.switch_map("A.yaml")

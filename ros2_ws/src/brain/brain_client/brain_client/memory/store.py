@@ -161,12 +161,22 @@ class MemoryStore:
             return cleared
 
     def evict(self, memory: Memory) -> None:
+        self.forget(memory.id)
+
+    def forget(self, memory_id: int, fingerprint: str = "") -> Memory | None:
+        """Evict one memory by id, returning it — None when the id is unknown
+        or the caller's fingerprint is stale (a re-map restarts ids, so a stale
+        client must not delete the new map's memories; empty skips the check)."""
         with self._lock:
-            if self._dir is None or all(m.id != memory.id for m in self._memories):
-                return
-            self._memories = [m for m in self._memories if m.id != memory.id]
-            (self._dir / f"{memory.id}.jpg").unlink(missing_ok=True)
+            if self._dir is None or (fingerprint and fingerprint != self._fingerprint):
+                return None
+            memory = next((m for m in self._memories if m.id == memory_id), None)
+            if memory is None:
+                return None
+            self._memories = [m for m in self._memories if m.id != memory_id]
+            (self._dir / f"{memory_id}.jpg").unlink(missing_ok=True)
             self._commit_locked()
+            return memory
 
     # --- locked internals ---
     def _load_locked(self) -> None:

@@ -135,6 +135,10 @@ export const MAPPING_POSE_TOPIC = "/mapping_pose";
 // /memory/image?map=…&id=… (webapp/proxy/media_routes.py).
 export const MEMORY_POSITIONS_TOPIC = "/brain/memory_positions";
 export const CLEAR_MEMORIES_SERVICE = "/brain/clear_memories";
+// Per-memory delete (brain_messages/ForgetMemory: memory_id + the positions
+// payload's fingerprint — a stale tab must not delete from a re-made map
+// whose ids restarted).
+export const FORGET_MEMORY_SERVICE = "/brain/forget_memory";
 // One latched message per finished memory search (std_msgs/String JSON:
 // {query, found, id?, x?, y?, theta?, seen_stamp?, explanation?, error?,
 // latency_sec?, cached?, stamp}). Latched so a page opened just after the

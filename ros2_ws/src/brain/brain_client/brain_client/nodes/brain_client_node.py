@@ -16,7 +16,7 @@ import threading
 import time
 
 import rclpy
-from brain_messages.srv import GetAvailableDirectives, GetChatHistory, ReloadSkillsAgents, ResetBrain
+from brain_messages.srv import ForgetMemory, GetAvailableDirectives, GetChatHistory, ReloadSkillsAgents, ResetBrain
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
@@ -243,6 +243,7 @@ class BrainClientNode(Node):
         self.create_service(SetBool, "/brain/set_brain_active", self._svc_set_brain_active)
         self.create_service(Trigger, "/brain/reload", self._svc_reload)
         self.create_service(Trigger, "/brain/clear_memories", self._svc_clear_memories)
+        self.create_service(ForgetMemory, "/brain/forget_memory", self._svc_forget_memory)
         self.create_service(ReloadSkillsAgents, "/brain/reload_skills_agents", self._svc_reload_skills_agents)
         self.create_service(GetAvailableDirectives, "/brain/get_available_directives", self._svc_get_directives)
 
@@ -491,6 +492,21 @@ class BrainClientNode(Node):
         self.get_logger().info(f"[BrainClient] Cleared {cleared} spatial memories on user request")
         response.success = True
         response.message = f"Forgot {cleared} remembered views"
+        return response
+
+    def _svc_forget_memory(
+        self, request: ForgetMemory.Request, response: ForgetMemory.Response
+    ) -> ForgetMemory.Response:
+        # Unlike clear, no memory_search.forget(): a single eviction reaches
+        # the cached search as a retire note on its next query (_delta_parts).
+        memory = self.memory_store.forget(request.memory_id, request.fingerprint)
+        if memory is None:
+            response.success = False
+            response.message = "No such memory — the map may have been re-made; refresh and retry"
+            return response
+        self.get_logger().info(f"[BrainClient] Forgot spatial memory {memory.id} on user request")
+        response.success = True
+        response.message = f"Forgot the view at x {memory.x:.2f}, y {memory.y:.2f}"
         return response
 
     def _svc_reload(self, request, response):

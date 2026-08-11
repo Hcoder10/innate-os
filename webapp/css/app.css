@@ -7184,6 +7184,16 @@ select.skill-input {
   border-color: rgb(180 140 255 / 80%);
 }
 
+.mem-card-btn-forget:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: rgb(217 106 90 / 60%);
+}
+
+.mem-card-btn-forget:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* The recall verdict — floats in from the top of the scene, dismisses itself. */
 .mem-search-card {
   position: absolute;
