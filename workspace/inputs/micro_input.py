@@ -382,7 +382,7 @@ class MicroInput(InputDevice):
                 "ducking": self._is_robot_talking,
                 **self.client.status(),
             },
-            data_type="custom",
+            data_type="telemetry",
         )
 
     def _connect_elevenlabs(self) -> str:

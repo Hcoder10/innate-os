@@ -792,7 +792,7 @@ export function createBrainMonitor(root, opts = {}) {
       ros.subscribe("/brain/websocket_status", jsonHandler(onBrainStatus), 0, "std_msgs/msg/String"),
       ros.subscribe("/brain/skill_status_update", jsonHandler(onSkill), 0, "std_msgs/msg/String"),
       ros.subscribe("/tts/is_playing", (msg) => setSpeaking(msg.data === "true"), 0, "std_msgs/msg/String"),
-      ros.subscribe("/input_manager/custom", jsonHandler(onVadStatus), 0, "std_msgs/msg/String"),
+      ros.subscribe("/input_manager/telemetry", jsonHandler(onVadStatus), 0, "std_msgs/msg/String"),
       ros.subscribe("/brain/chat_in", jsonHandler(onChatIn), 0, "std_msgs/msg/String"),
       ros.subscribe(
         "/odom",
@@ -907,7 +907,7 @@ function template() {
 
     <section class="br-panel br-panel-voice">
       <h2>Voice input <span class="sub br-vad-sub">waiting for VAD telemetry</span></h2>
-      <div class="br-gauge br-vad-meter" title="Live speech level against the VAD threshold — /input_manager/custom">
+      <div class="br-gauge br-vad-meter" title="Live speech level against the VAD threshold — /input_manager/telemetry">
         <div class="bar"><div class="fill br-vad-fill"></div><div class="br-vad-tick"></div></div>
         <div class="lab"><span>speech level</span><span class="br-vad-lvl">—</span></div>
       </div>
