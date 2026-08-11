@@ -1,7 +1,9 @@
 // @ts-check
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Innate Inc
-// Brain page — a live window into the local Gemini agent loop.
+// Brain monitor — a live window into the local Gemini agent loop. Not a page:
+// the Agent page embeds it as its deep view (createBrainMonitor), flipped in
+// over the camera stage while the agent panel stays docked alongside.
 //
 // Deep telemetry rides /brain/trace (JSON on std_msgs/String, published by
 // brain_client's BrainAgent): turn lifecycle with every image the model was
@@ -9,16 +11,16 @@
 // system instruction, tool calls with args + outcomes, think latencies, the
 // event queue, and a 1 Hz snapshot heartbeat. Recent turns are kept so any
 // turn row can be opened in the inspector overlay — the complete model input
-// and output for that turn. Everything else (mind stream, skill runs, pose,
-// live camera fallback) comes from the public topics, so the page degrades
-// gracefully on robots without the trace publisher — the deep panels just
-// stay quiet.
+// and output for that turn. Everything else (skill runs, pose, live camera
+// fallback) comes from the public topics, so the monitor degrades gracefully
+// on robots without the trace publisher — the deep panels just stay quiet.
+// The mind stream lives in the agent panel next door, not here.
 //
-// ?demo drives the whole page from a scripted synthetic brain (demo.js) —
+// ?demo drives the whole monitor from a scripted synthetic brain (demo.js) —
 // useful for UI work with no robot.
 
 import { ros } from "../rosClient.js";
-import { mountPage } from "../pageMount.js";
+import { isTypingContext } from "../shell.js";
 
 const CAM_TOPIC = "/mars/main_camera/left/image_raw/compressed";
 const HIST_MAX = 60; // brain_client default history_max_entries
@@ -39,16 +41,17 @@ const NODE_ANGLE = { look: -90, think: 30, act: 150 };
 const RING_R = 112;
 const RING_C = 2 * Math.PI * RING_R;
 
-/** @param {HTMLElement} stage */
-export function mount(stage) {
-  return mountPage(stage, "brain-page", buildView);
-}
-
 /**
+ * Build the monitor into `root` (the Agent page's brain layer) and start its
+ * feeds. `onRequestClose` is the monitor asking to flip back to the live view
+ * (Escape with no inspector open). While hidden (`setVisible(false)`) the trace
+ * feeds stay live so turn history keeps accumulating, but the animation loop
+ * and the wire-heavy live-camera fallback pause.
  * @param {HTMLElement} root
- * @returns {{ destroy: () => void }}
+ * @param {{ onRequestClose?: () => void }} [opts]
+ * @returns {{ destroy: () => void, setVisible: (visible: boolean) => void }}
  */
-function buildView(root) {
+export function createBrainMonitor(root, opts = {}) {
   root.innerHTML = template();
   /** @param {string} sel */
   const $ = (sel) => /** @type {HTMLElement} */ (root.querySelector(sel));
@@ -79,6 +82,7 @@ function buildView(root) {
   const TURNS_MAX = 24;
   let shownTurn = 0; // turn on the vision stage
   let inspecting = 0; // turn open in the inspector; 0 = closed
+  let visible = true; // built on first open, so the monitor starts on screen
 
   // One-shot UI timers (phase eases, queue drain), all cleared on destroy so
   // none fires against the wiped DOM after the page unmounts.
@@ -186,7 +190,6 @@ function buildView(root) {
     }
     if (d.ev === "event") {
       addQueueCard(d.kind, d.text);
-      if (d.kind === "user") addMsg("user", "USER", d.text.replace(/^The user says: "(.*)"$/s, "$1"));
       if (d.kind === "motion") motionCue();
     }
     if (d.ev === "snapshot") onSnapshot(d);
@@ -231,14 +234,6 @@ function buildView(root) {
     if (!S.haveTrace) $(".br-chip-backend b").textContent = d.backend || "—";
   }
 
-  /** @param {any} d */
-  function onChat(d) {
-    if (d.sender === "robot_thoughts") addMsg("thought", "THINKS", d.text, d.timestamp);
-    else if (d.sender === "robot") addMsg("speech", "SAYS", d.text, d.timestamp);
-    else if (d.sender === "system") addMsg("system", "SYSTEM", d.text, d.timestamp);
-    else if (d.sender === "skill_output") addMsg("system", "SKILL OUTPUT", d.text, d.timestamp);
-  }
-
   /** @param {number} x @param {number} y @param {number} yaw */
   function setPose(x, y, yaw) {
     $(".br-pose-txt").textContent = `x ${x.toFixed(2)}  y ${y.toFixed(2)}  θ ${((yaw * 180) / Math.PI).toFixed(0)}°`;
@@ -263,8 +258,6 @@ function buildView(root) {
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
-  /** @param {number} [ts] */
-  const hhmmss = (ts) => new Date((ts ?? Date.now() / 1000) * 1000).toLocaleTimeString([], { hour12: false });
 
   /** @param {string} panelSel @param {HTMLElement} el @param {number} [cap] */
   function prepend(panelSel, el, cap = 60) {
@@ -272,15 +265,6 @@ function buildView(root) {
     feed.querySelector(".br-empty")?.remove();
     feed.prepend(el);
     while (feed.children.length > cap) /** @type {Element} */ (feed.lastChild).remove();
-  }
-
-  /** @param {string} cls @param {string} who @param {string} text @param {number} [ts] */
-  function addMsg(cls, who, text, ts) {
-    const div = document.createElement("div");
-    div.className = "br-msg " + cls;
-    div.innerHTML = `<div class="who">${who}<span class="when">${hhmmss(ts)}</span></div><div class="txt"></div>`;
-    /** @type {HTMLElement} */ (div.querySelector(".txt")).textContent = text;
-    prepend(".br-mind", div);
   }
 
   /** @param {any} d */
@@ -614,7 +598,11 @@ function buildView(root) {
   $(".br-inspect-back").addEventListener("click", closeInspector);
   /** @param {KeyboardEvent} e */
   const onKey = (e) => {
-    if (e.key === "Escape" && inspecting) closeInspector();
+    // isTypingContext: Esc in the docked composer (IME/autocomplete dismiss)
+    // must not flip the stage under the user.
+    if (e.key !== "Escape" || !visible || isTypingContext()) return;
+    if (inspecting) closeInspector();
+    else opts.onRequestClose?.();
   };
   window.addEventListener("keydown", onKey);
 
@@ -735,18 +723,34 @@ function buildView(root) {
     if (d) fn(d);
   };
 
-  const handlers = { onTrace, onChat, onSkill, onAgentStatus, onBrainStatus, setPose, setSpeaking };
+  const handlers = { onTrace, onSkill, onAgentStatus, onBrainStatus, setPose, setSpeaking };
 
   /** @type {(() => void)[]} */
   let unsubs = [];
   /** @type {(() => void) | null} */
+  let camUnsub = null;
+  /** @type {(() => void) | null} */
   let demoStop = null;
   let destroyed = false;
+  const demoMode = new URLSearchParams(location.search).has("demo");
 
-  if (new URLSearchParams(location.search).has("demo")) {
+  // The live-camera fallback pulls base64 JPEGs over rosbridge, on a page that
+  // already streams WebRTC video — so it runs only while the monitor is on
+  // screen (see setVisible), unlike the cheap trace/status feeds.
+  const subscribeCam = () =>
+    ros.subscribe(
+      CAM_TOPIC,
+      (msg) => {
+        if (!S.haveTrace) showFrame("data:image/jpeg;base64," + msg.data, "live camera");
+      },
+      500,
+      "sensor_msgs/msg/CompressedImage",
+    );
+
+  if (demoMode) {
     // No robot in the picture: the socket's connect card would just sit over
-    // the synthetic show.
-    root.parentElement?.querySelector(".connect-layer")?.classList.add("br-hidden");
+    // the synthetic show. Restored while the monitor is hidden (setVisible).
+    document.querySelector(".connect-layer")?.classList.add("br-hidden");
     void import("./demo.js").then((m) => {
       if (destroyed) return; // the page unmounted before the chunk loaded
       demoStop = m.startDemo(handlers);
@@ -756,7 +760,6 @@ function buildView(root) {
       ros.subscribe("/brain/trace", jsonHandler(onTrace), 0, "std_msgs/msg/String"),
       ros.subscribe("/brain/agent_status", jsonHandler(onAgentStatus), 0, "std_msgs/msg/String"),
       ros.subscribe("/brain/websocket_status", jsonHandler(onBrainStatus), 0, "std_msgs/msg/String"),
-      ros.subscribe("/brain/chat_out", jsonHandler(onChat), 0, "std_msgs/msg/String"),
       ros.subscribe("/brain/skill_status_update", jsonHandler(onSkill), 0, "std_msgs/msg/String"),
       ros.subscribe("/tts/is_playing", (msg) => setSpeaking(msg.data === "true"), 0, "std_msgs/msg/String"),
       ros.subscribe(
@@ -768,18 +771,27 @@ function buildView(root) {
         200,
         "nav_msgs/msg/Odometry",
       ),
-      ros.subscribe(
-        CAM_TOPIC,
-        (msg) => {
-          if (!S.haveTrace) showFrame("data:image/jpeg;base64," + msg.data, "live camera");
-        },
-        500,
-        "sensor_msgs/msg/CompressedImage",
-      ),
     ];
+    camUnsub = subscribeCam();
+  }
+
+  /** @param {boolean} v */
+  function setVisible(v) {
+    if (v === visible) return;
+    visible = v;
+    if (demoMode) document.querySelector(".connect-layer")?.classList.toggle("br-hidden", v);
+    if (!v) {
+      cancelAnimationFrame(raf);
+      camUnsub?.();
+      camUnsub = null;
+      return;
+    }
+    raf = requestAnimationFrame(tickUI);
+    if (!demoMode) camUnsub = subscribeCam();
   }
 
   return {
+    setVisible,
     destroy() {
       destroyed = true;
       cancelAnimationFrame(raf);
@@ -788,7 +800,9 @@ function buildView(root) {
       for (const id of uiTimers) window.clearTimeout(id);
       window.removeEventListener("keydown", onKey);
       unsubs.forEach((u) => u());
+      camUnsub?.();
       demoStop?.();
+      document.querySelector(".connect-layer")?.classList.remove("br-hidden");
       root.innerHTML = "";
     },
   };
@@ -798,6 +812,7 @@ function template() {
   return `
   <div class="br-head">
     <h1 class="page-title">Brain</h1>
+    <span class="br-esc-hint"><kbd>esc</kbd> closes</span>
     <div class="br-chips">
       <div class="br-chip br-chip-active" title="/brain/agent_status"><span class="led"></span><span>brain <b>—</b></span></div>
       <div class="br-chip br-chip-directive" title="current directive — /brain/agent_status"><span>directive</span><b>—</b></div>
@@ -846,11 +861,6 @@ function template() {
           <span class="br-pose-txt">pose —</span>
         </span>
       </div>
-    </section>
-
-    <section class="br-panel br-panel-mind">
-      <h2>Mind stream <span class="sub">thoughts · speech · system</span></h2>
-      <div class="br-feed br-mind"></div>
     </section>
 
     <section class="br-panel br-panel-actions">
