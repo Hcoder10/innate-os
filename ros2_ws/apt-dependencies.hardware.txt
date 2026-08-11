@@ -95,6 +95,9 @@ portaudio19-dev
 python3-serial
 python3-pygame
 
+# Disk SMART health (innate_logger reads it hourly via sudo smartctl)
+smartmontools
+
 # On-robot convenience tools
 htop
 btop

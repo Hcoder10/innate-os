@@ -897,6 +897,9 @@ $ACTUAL_USER ALL=(ALL) NOPASSWD: $REPO_DIR/scripts/update/post_update.sh
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/nmcli
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /bin/nmcli
 
+# Disk SMART health (read hourly by innate_logger; SMART needs CAP_SYS_ADMIN)
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/sbin/smartctl
+
 # systemctl for ROS node management (called by innate CLI)
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl start ros-app.service
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop ros-app.service

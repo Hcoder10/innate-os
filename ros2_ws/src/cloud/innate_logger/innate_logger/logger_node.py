@@ -18,6 +18,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import BatteryState
 from std_msgs.msg import String
 
+from innate_logger import smart
 from innate_logger.client import TelemetryClient
 
 DEFAULT_TELEMETRY_URL = "https://logs.svc.innate.bot"
@@ -28,6 +29,9 @@ class LoggerNode(Node):
     """Subscribes to robot topics and logs telemetry at a throttled rate."""
 
     LOG_INTERVAL: float = 5.0  # seconds (0.2 Hz)
+    DISK_INTERVAL: float = 3600.0
+    # Sessions are often shorter than DISK_INTERVAL, so report once early too.
+    DISK_BOOT_DELAY: float = 90.0
 
     def __init__(self) -> None:
         super().__init__("logger_node")
@@ -83,6 +87,7 @@ class LoggerNode(Node):
         self._latest_diagnostics: DiagnosticArray | None = None
         self._robot_id: str | None = None
         self._mac_address: str | None = None
+        self._pending_disks: dict[str, object] | None = None
 
         self.create_subscription(BatteryState, "/battery_state", self._on_battery, 1)
         self.create_subscription(DiagnosticArray, "/diagnostics", self._on_diagnostics, 1)
@@ -91,6 +96,8 @@ class LoggerNode(Node):
 
         # Timer for vitals logging
         self.create_timer(self.LOG_INTERVAL, self._log_vitals)
+        self._disk_boot_timer = self.create_timer(self.DISK_BOOT_DELAY, self._collect_disk_health_once)
+        self.create_timer(self.DISK_INTERVAL, self._collect_disk_health)
 
     # ── Helpers ─────────────────────────────────────────────────────
 
@@ -143,6 +150,26 @@ class LoggerNode(Node):
         self.get_logger().info(f"Received directive: {msg.data}")
         self._client.log_directive(msg.data)
 
+    def _collect_disk_health_once(self) -> None:
+        self._disk_boot_timer.cancel()
+        self._collect_disk_health()
+
+    def _collect_disk_health(self) -> None:
+        """Read SMART/eMMC health and queue it for the next vitals tick.
+
+        Queued rather than posted directly so the report rides a complete vitals
+        row, and survives a send failure to retry on the following tick.
+        """
+        report = smart.collect()
+        if not report:
+            if smart.devices():
+                self.get_logger().info(
+                    "No disk health readable — install smartmontools and run `innate update reinstall`"
+                )
+            return
+        self._pending_disks = report
+        self.get_logger().info(f"disks: {smart.summarize(report)}")
+
     def _log_vitals(self) -> None:
         """Collect cached vitals and send to the cloud logger."""
         cpu_usage = psutil.cpu_percent(interval=None)
@@ -157,6 +184,9 @@ class LoggerNode(Node):
 
         if self._mac_address is not None:
             vitals["mac_address"] = self._mac_address
+
+        if self._pending_disks is not None:
+            vitals["disks"] = self._pending_disks
 
         summary = f"cpu {cpu_usage:.0f}%"
 
@@ -186,6 +216,9 @@ class LoggerNode(Node):
                 f"Telemetry unreachable — is {self._client.base_url} up?",
                 throttle_duration_sec=20.0,
             )
+            return
+
+        self._pending_disks = None
 
 
 def main(args: list[str] | None = None) -> None:
