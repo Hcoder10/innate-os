@@ -4,10 +4,11 @@
 
 The realtime backends (Scribe, OpenAI) do voice-activity detection server-side;
 a batch backend has no session to do it in, so the endpointing moves onto the
-robot. :class:`EnergyEndpointer` watches the PCM stream's energy and closes an
-utterance after enough silence; :class:`BatchSttSession` then ships the whole
-clip as WAV through a vendor transcriber — ElevenLabs Scribe batch or Gemini
-``generateContent``.
+robot. :class:`Endpointer` runs a voiced/unvoiced detector — Silero VAD
+(``brain_client.inputs.vad``) or the energy fallback — over the PCM stream and
+closes an utterance after enough silence; :class:`BatchSttSession` then ships
+the whole clip as WAV through a vendor transcriber — ElevenLabs Scribe batch or
+Gemini ``generateContent``.
 """
 
 from __future__ import annotations
@@ -37,6 +38,9 @@ if TYPE_CHECKING:
     Transcriber = Callable[[bytes], str]
     """WAV bytes -> transcript text; "" when nothing was said."""
 
+    VoicedDetector = Callable[[bytes], bool]
+    """One PCM chunk -> does it contain speech?"""
+
 PRE_ROLL_SECS = 0.4
 MAX_UTTERANCE_SECS = 30.0
 MIN_VOICED_SECS = 0.25
@@ -50,6 +54,13 @@ def rms_level(chunk: bytes) -> float:
     return math.sqrt(sum(s * s for s in samples) / len(samples)) / 32768.0
 
 
+def energy_detector(threshold: float) -> VoicedDetector:
+    def is_voiced(chunk: bytes) -> bool:
+        return rms_level(chunk) >= threshold
+
+    return is_voiced
+
+
 def pcm_to_wav(pcm: bytes, sample_rate: int, channels: int = 1) -> bytes:
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wav:
@@ -60,15 +71,15 @@ def pcm_to_wav(pcm: bytes, sample_rate: int, channels: int = 1) -> bytes:
     return buf.getvalue()
 
 
-class EnergyEndpointer:
-    """Cuts a continuous PCM stream into utterances by energy.
+class Endpointer:
+    """Cuts a continuous PCM stream into utterances by a voiced/unvoiced detector.
 
     Time is measured in audio fed, not wall clock — ducking pauses the stream,
     and a paused stream must not count as silence.
     """
 
-    def __init__(self, *, sample_rate: int, energy_threshold: float, silence_secs: float):
-        self._threshold = energy_threshold
+    def __init__(self, *, sample_rate: int, is_voiced: VoicedDetector, silence_secs: float):
+        self._is_voiced = is_voiced
         self._silence_secs = silence_secs
         self._bytes_per_sec = sample_rate * 2
         self._pre_roll: deque[bytes] = deque()
@@ -80,7 +91,7 @@ class EnergyEndpointer:
 
     def feed(self, chunk: bytes) -> bytes | None:
         """Consume one chunk; returns the finished utterance's PCM when one closes."""
-        voiced = rms_level(chunk) >= self._threshold
+        voiced = self._is_voiced(chunk)
 
         if not self._in_speech:
             self._buffer_pre_roll(chunk)
@@ -215,7 +226,7 @@ class BatchSttSession:
         *,
         transcriber: Transcriber,
         sample_rate: int,
-        energy_threshold: float,
+        is_voiced: VoicedDetector,
         silence_secs: float,
         on_transcript: Callable[[str], None],
         logger: UniversalLogger,
@@ -224,9 +235,7 @@ class BatchSttSession:
         self._sample_rate = sample_rate
         self._on_transcript = on_transcript
         self._logger = logger
-        self._endpointer = EnergyEndpointer(
-            sample_rate=sample_rate, energy_threshold=energy_threshold, silence_secs=silence_secs
-        )
+        self._endpointer = Endpointer(sample_rate=sample_rate, is_voiced=is_voiced, silence_secs=silence_secs)
         self._utterances: queue.Queue[bytes | None] = queue.Queue()
         self._worker: threading.Thread | None = None
 

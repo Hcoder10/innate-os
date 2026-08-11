@@ -21,9 +21,10 @@ from brain_client.inputs.batch_stt import (
     MAX_UTTERANCE_SECS,
     NO_SPEECH,
     BatchSttSession,
-    EnergyEndpointer,
+    Endpointer,
     elevenlabs_direct_transcriber,
     elevenlabs_proxy_transcriber,
+    energy_detector,
     gemini_transcriber,
     pcm_to_wav,
     rms_level,
@@ -38,11 +39,11 @@ QUIET = b"\x00\x00" * CHUNK_SAMPLES
 WAV = pcm_to_wav(LOUD * 10, SAMPLE_RATE)
 
 
-def make_endpointer(silence_secs: float = 0.3) -> EnergyEndpointer:
-    return EnergyEndpointer(sample_rate=SAMPLE_RATE, energy_threshold=0.01, silence_secs=silence_secs)
+def make_endpointer(silence_secs: float = 0.3) -> Endpointer:
+    return Endpointer(sample_rate=SAMPLE_RATE, is_voiced=energy_detector(0.01), silence_secs=silence_secs)
 
 
-def feed_seconds(ep: EnergyEndpointer, chunk: bytes, seconds: float) -> list[bytes]:
+def feed_seconds(ep: Endpointer, chunk: bytes, seconds: float) -> list[bytes]:
     utterances = []
     for _ in range(int(seconds * 50)):
         utt = ep.feed(chunk)
@@ -239,7 +240,7 @@ def make_session(transcriber, transcripts: list, done: threading.Event) -> Batch
     return BatchSttSession(
         transcriber=transcriber,
         sample_rate=SAMPLE_RATE,
-        energy_threshold=0.01,
+        is_voiced=energy_detector(0.01),
         silence_secs=0.3,
         on_transcript=on_transcript,
         logger=NullLogger(),

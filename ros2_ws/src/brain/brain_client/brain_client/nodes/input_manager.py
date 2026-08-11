@@ -45,6 +45,7 @@ class InputManagerNode(Node):
     def _init_proxy(self):
         # Credentials come from env (INNATE_PROXY_URL, INNATE_SERVICE_KEY); config from params.
         self.declare_parameter("stt_backend", "elevenlabs_batch")
+        self.declare_parameter("stt_vad_engine", "silero")
         self.declare_parameter("stt_language", "en")
         self.declare_parameter("stt_vad_threshold", 0.3)
         self.declare_parameter("stt_vad_silence_secs", 0.7)
@@ -58,6 +59,7 @@ class InputManagerNode(Node):
         self.declare_parameter("cartesia_voice_id", "9fdaae0b-f885-4813-b589-3c07cf9d5fea")
         proxy_config = {
             "stt_backend": self.get_parameter("stt_backend").value,
+            "stt_vad_engine": self.get_parameter("stt_vad_engine").value,
             "stt_language": self.get_parameter("stt_language").value,
             "stt_vad_threshold": self.get_parameter("stt_vad_threshold").value,
             "stt_vad_silence_secs": self.get_parameter("stt_vad_silence_secs").value,

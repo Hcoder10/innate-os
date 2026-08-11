@@ -15,8 +15,9 @@ Four backends, selected by the ``stt_backend`` setting:
 - ``openai``           — OpenAI Realtime transcription sessions
 
 The realtime backends stream audio over a WebSocket and let the vendor do the
-voice-activity detection; the batch backends detect utterances locally and ship
-each one whole (see ``brain_client.inputs.batch_stt``). The microphone,
+voice-activity detection; the batch backends detect utterances locally — Silero
+VAD by default, an RMS energy threshold as fallback (``stt_vad_engine``) — and
+ship each one whole (see ``brain_client.inputs.batch_stt``). The microphone,
 ducking, and reconnect machinery is shared.
 
 Uses proxy services via self.proxy (injected by InputManager).
@@ -37,9 +38,11 @@ from brain_client.inputs.batch_stt import (
     BatchSttSession,
     elevenlabs_direct_transcriber,
     elevenlabs_proxy_transcriber,
+    energy_detector,
     gemini_transcriber,
 )
 from brain_client.inputs.types import InputDevice
+from brain_client.inputs.vad import silero_detector
 
 DEFAULT_SAMPLE_RATE = 24_000
 DEFAULT_CHANNELS = 1
@@ -52,6 +55,9 @@ ELEVENLABS_AUDIO_FORMAT = f"pcm_{DEFAULT_SAMPLE_RATE}"
 STT_BACKENDS = frozenset({"elevenlabs_batch", "gemini", "elevenlabs", "openai"})
 BATCH_BACKENDS = frozenset({"elevenlabs_batch", "gemini"})
 DEFAULT_STT_BACKEND = "elevenlabs_batch"
+
+VAD_ENGINES = frozenset({"silero", "energy"})
+DEFAULT_VAD_ENGINE = "silero"
 
 ELEVENLABS_ERROR_TYPES = frozenset(
     {
@@ -325,19 +331,33 @@ class MicroInput(InputDevice):
 
     def _start_batch_session(self, transcriber, model: str):
         cfg = self.proxy.config
-        energy_threshold = float(cfg.get("stt_energy_threshold", 0.01))
         silence_secs = float(cfg.get("stt_vad_silence_secs", 0.7))
-        self.logger.info(
-            f"📤 Batch STT config: model={model}, energy_threshold={energy_threshold}, silence={silence_secs}s"
-        )
+        is_voiced, engine = self._make_vad(cfg)
+        self.logger.info(f"📤 Batch STT config: model={model}, vad={engine}, silence={silence_secs}s")
         self.client = BatchSttSession(
             transcriber=transcriber,
             sample_rate=DEFAULT_SAMPLE_RATE,
-            energy_threshold=energy_threshold,
+            is_voiced=is_voiced,
             silence_secs=silence_secs,
             on_transcript=self._on_transcript_if_active,
             logger=self.logger,
         )
+
+    def _make_vad(self, cfg):
+        """Build the voiced detector for the batch endpointer: (detector, engine name)."""
+        engine = str(cfg.get("stt_vad_engine") or DEFAULT_VAD_ENGINE).strip().lower()
+        if engine not in VAD_ENGINES:
+            self.logger.error(
+                f"❌ Unknown stt_vad_engine {engine!r} — using {DEFAULT_VAD_ENGINE!r} (options: {sorted(VAD_ENGINES)})"
+            )
+            engine = DEFAULT_VAD_ENGINE
+        if engine == "silero":
+            threshold = float(cfg.get("stt_vad_threshold", 0.3))
+            detector = silero_detector(threshold, DEFAULT_SAMPLE_RATE, self.logger)
+            if detector is not None:
+                return detector, "silero"
+            engine = "energy"  # silero_detector logged why
+        return energy_detector(float(cfg.get("stt_energy_threshold", 0.01))), engine
 
     def _connect_elevenlabs(self) -> str:
         """Open a Scribe realtime session. Returns the model id."""

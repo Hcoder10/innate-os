@@ -43,7 +43,12 @@ def generate_launch_description():
     stt_energy_threshold_arg = DeclareLaunchArgument(
         "stt_energy_threshold",
         default_value="0.01",
-        description="Batch backends: normalized RMS (0-1) above which a mic chunk counts as speech",
+        description="Batch backends: normalized RMS (0-1) above which a mic chunk counts as speech (energy engine)",
+    )
+    stt_vad_engine_arg = DeclareLaunchArgument(
+        "stt_vad_engine",
+        default_value="silero",
+        description="Batch backends' local voice detector: silero (neural) | energy (RMS threshold)",
     )
     elevenlabs_batch_stt_model_arg = DeclareLaunchArgument(
         "elevenlabs_batch_stt_model",
@@ -90,6 +95,7 @@ def generate_launch_description():
             stt_vad_threshold_arg,
             stt_vad_silence_secs_arg,
             stt_energy_threshold_arg,
+            stt_vad_engine_arg,
             elevenlabs_batch_stt_model_arg,
             gemini_stt_model_arg,
             elevenlabs_stt_model_arg,
@@ -115,6 +121,7 @@ def generate_launch_description():
                         "stt_energy_threshold": ParameterValue(
                             LaunchConfiguration("stt_energy_threshold"), value_type=float
                         ),
+                        "stt_vad_engine": LaunchConfiguration("stt_vad_engine"),
                         "elevenlabs_batch_stt_model": LaunchConfiguration("elevenlabs_batch_stt_model"),
                         "gemini_stt_model": LaunchConfiguration("gemini_stt_model"),
                         "elevenlabs_stt_model": LaunchConfiguration("elevenlabs_stt_model"),
