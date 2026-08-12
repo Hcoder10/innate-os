@@ -897,6 +897,12 @@ $ACTUAL_USER ALL=(ALL) NOPASSWD: $REPO_DIR/scripts/update/post_update.sh
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/nmcli
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /bin/nmcli
 
+# Disk SMART health, read by innate_logger. Unrestricted on purpose: pinning
+# the arguments limited the sweep to a fixed device list, and this account
+# already has NOPASSWD on post_update.sh, which it owns.
+# Backticks are command substitution in this unquoted heredoc -- never use them here.
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/sbin/smartctl
+
 # systemctl for ROS node management (called by innate CLI)
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl start ros-app.service
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop ros-app.service
