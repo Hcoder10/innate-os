@@ -6,8 +6,8 @@ Pure functions — no ROS, no node state. Every reader returns whatever it could
 read and swallows the rest, so one unreadable device never costs the sweep.
 
 A dying disk and a full one are different failures and the second is the more
-likely, so the report carries both. SMART needs root and is limited to the
-devices named in the sudoers rule; the filesystem side needs neither.
+likely, so the report carries both. SMART needs root via sudo; the filesystem
+side needs neither root nor smartctl.
 """
 
 from __future__ import annotations
