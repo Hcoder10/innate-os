@@ -202,6 +202,19 @@ _GEMINI_PROMPT = (
 )
 
 
+def _gemini_generation_config(model: str) -> dict[str, Any]:
+    """Thinking must be configured per model family (verified live 2026-08):
+    3.x takes thinkingLevel and 400s on thinkingBudget; 2.5-flash returns empty
+    parts unless thinkingBudget is 0; 2.5-pro rejects both, so it gets neither."""
+    config: dict[str, Any] = {"temperature": 0.0}
+    if "2.5" in model:
+        if "flash" in model:
+            config["thinkingConfig"] = {"thinkingBudget": 0}
+    else:
+        config["thinkingConfig"] = {"thinkingLevel": "minimal"}
+    return config
+
+
 def gemini_transcriber(rest: GeminiRest, model: str, language: str) -> Transcriber:
     def transcribe(wav: bytes) -> str:
         body: dict[str, Any] = {
@@ -214,7 +227,7 @@ def gemini_transcriber(rest: GeminiRest, model: str, language: str) -> Transcrib
                     ],
                 }
             ],
-            "generationConfig": {"temperature": 0.0, "thinkingConfig": {"thinkingLevel": "minimal"}},
+            "generationConfig": _gemini_generation_config(model),
         }
         response = rest.post(GENERATE_PATH.format(model=model), body)
         parts = response.get("candidates", [{}])[0].get("content", {}).get("parts", [])

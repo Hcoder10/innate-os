@@ -32,12 +32,12 @@ def generate_launch_description():
     )
     stt_vad_threshold_arg = DeclareLaunchArgument(
         "stt_vad_threshold",
-        default_value="0.3",
+        default_value="0.2",
         description="VAD speech-detection threshold (lower = more sensitive)",
     )
     stt_vad_silence_secs_arg = DeclareLaunchArgument(
         "stt_vad_silence_secs",
-        default_value="0.7",
+        default_value="0.5",
         description="Silence needed to close an utterance, in seconds",
     )
     stt_energy_threshold_arg = DeclareLaunchArgument(
