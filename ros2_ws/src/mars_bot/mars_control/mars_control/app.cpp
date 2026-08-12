@@ -446,6 +446,16 @@ class AppControl : public rclcpp::Node {
                 apply_speed_policy();
             });
 
+        // The mode as the robot actually entered it, not as a client asked for it:
+        // mode_manager redirects to mapping whenever there is no current map, and
+        // auto-starts there on a mapless boot, so no client can be trusted to know
+        // a mapping run began. Republished at 1 Hz; the policy ignores repeats.
+        nav_mode_sub_ = this->create_subscription<std_msgs::msg::String>(
+            "/nav/current_mode", 10, [this](const std_msgs::msg::String::SharedPtr msg) {
+                mapping_ = (msg->data == "mapping");
+                apply_speed_policy();
+            });
+
         // Heading feedback. /odom's x,y are dead-reckoned from commanded speeds and are
         // useless as feedback, but its orientation is genuine IMU heading from the MCU.
         odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
@@ -771,20 +781,32 @@ class AppControl : public rclcpp::Node {
         return bounded;
     }
 
-    // Preset the current activity wants, or 0 when none applies. Mapping is
-    // deliberately absent: mode_manager drops repeat change_mode requests, so
-    // there is no transition to key on.
-    double policy_scale() const {
+    // Preset the current activity wants (scale 0 = none applies), with the name
+    // for the log. Both at once takes the slower: mapping's care outranks
+    // recording's pace.
+    struct SpeedPolicy {
+        double scale;
+        const char* reason;
+    };
+    SpeedPolicy policy_scale() const {
+        SpeedPolicy policy{0.0, "idle"};
         if (recording_) {
-            return drive::scale_for_mode(drive::RECORDING_SCALE_ID);
+            policy = {drive::scale_for_mode(drive::RECORDING_SCALE_ID), "recording"};
         }
-        return 0.0;
+        if (mapping_) {
+            const double scale = drive::scale_for_mode(drive::MAPPING_SCALE_ID);
+            if (policy.scale == 0.0 || scale < policy.scale) {
+                policy = {scale, "mapping"};
+            }
+        }
+        return policy;
     }
 
     // Acts only on a transition, so an operator who picks another mode
     // mid-activity keeps it; restores only what it set.
     void apply_speed_policy() {
-        const double desired = policy_scale();
+        const SpeedPolicy policy = policy_scale();
+        const double desired = policy.scale;
         if (desired == policy_desired_) {
             return;  // no transition
         }
@@ -812,8 +834,7 @@ class AppControl : public rclcpp::Node {
             return;
         }
         this->set_parameter(rclcpp::Parameter("motion_control.speed_scale", next));
-        RCLCPP_INFO(this->get_logger(), "Speed policy: %s -> speed_scale %.2f", desired > 0.0 ? "recording" : "idle",
-                    next);
+        RCLCPP_INFO(this->get_logger(), "Speed policy: %s -> speed_scale %.2f", policy.reason, next);
     }
 
     // Polled: Humble has no post-set parameter hook, and the pre-set callback
@@ -1468,6 +1489,7 @@ class AppControl : public rclcpp::Node {
     rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr leader_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Subscription<brain_messages::msg::RecorderStatus>::SharedPtr recorder_sub_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr nav_mode_sub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr arm_command_state_sub_;
     rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
 
@@ -1496,6 +1518,7 @@ class AppControl : public rclcpp::Node {
     // Speed policy state. policy_desired_ is the scale the current activity wants (0 = none);
     // policy_owns_scale_ tracks whether the value on the robot is still the one we set.
     bool recording_ = false;
+    bool mapping_ = false;
     double policy_desired_ = 0.0;
     double policy_restore_scale_ = 1.0;
     bool policy_owns_scale_ = false;
