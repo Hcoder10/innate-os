@@ -229,6 +229,7 @@ class LoggerNode(Node):
             vitals["battery_percentage"] = bat.percentage
             vitals["battery_status"] = bat.power_supply_status
             vitals["temperatures"] = host.temperatures()
+            vitals.update(host.memory_detail())
             summary += f" | battery {bat.voltage:.2f}V ({bat.percentage:.0%})"
 
         if self._latest_arm is not None:
