@@ -32,7 +32,7 @@ def warnings(monkeypatch):
 def test_a_broken_daemon_is_named_before_it_fails(warnings, version):
     import runtime
 
-    runtime._warn_broken_image_mounts(version, "./innate-sim up")
+    runtime._warn_broken_image_mounts(version)
     assert len(warnings) == 1
     assert version in warnings[0]
     assert "51687" in warnings[0]
@@ -42,7 +42,7 @@ def test_a_broken_daemon_is_named_before_it_fails(warnings, version):
 def test_a_working_daemon_says_nothing(warnings, version):
     import runtime
 
-    runtime._warn_broken_image_mounts(version, "./innate-sim up")
+    runtime._warn_broken_image_mounts(version)
     assert warnings == []
 
 
@@ -53,5 +53,5 @@ def test_an_unparseable_version_says_nothing(warnings):
     import runtime
 
     for output in ("", None, "dev", "29.1"):
-        runtime._warn_broken_image_mounts(output, "./innate-sim up")
+        runtime._warn_broken_image_mounts(output)
     assert warnings == []

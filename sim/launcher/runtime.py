@@ -292,7 +292,7 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM, require_compose: boo
         command_hint,
         COMPOSE_INSTALL_URL,
     )
-    _warn_broken_image_mounts(result.stdout, command_hint)
+    _warn_broken_image_mounts(result.stdout)
 
 
 # Docker 29.0.0 started naming an image mount's layer directory after the hex of
@@ -304,12 +304,14 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM, require_compose: boo
 BROKEN_IMAGE_MOUNT_VERSIONS = ((29, 0, 0), (29, 1, 4))
 
 
-def _warn_broken_image_mounts(version_output: str | None, command_hint: str) -> None:
+def _warn_broken_image_mounts(version_output: str | None) -> None:
     """Warn when the daemon is one that cannot mount the viewer's assets.
 
     A warning rather than a refusal: every other verb works, and a stale patch
-    release should not be the launcher's call to make. Silent on an unparseable
-    version, like _require_min_version.
+    release should not be the launcher's call to make. Names `up` rather than
+    the caller's command_hint -- every verb runs this preflight, but only `up`
+    creates the container the mount fails on. Silent on an unparseable version,
+    like _require_min_version.
     """
     found = re.search(r"(\d+)\.(\d+)\.(\d+)", version_output or "")
     if not found:
@@ -332,7 +334,7 @@ def _warn_broken_image_mounts(version_output: str | None, command_hint: str) -> 
     warn(
         f"Docker Engine {found.group(0)} cannot mount the sim viewer's assets.\n"
         f"      {first_broken}-{last_broken} fail every `type: image` mount with 'file name too long'\n"
-        f"      (moby#51687), so `{command_hint}` will die at container create. No launcher-side\n"
+        f"      (moby#51687), so `{CLI_SIM} up` will die at container create. No launcher-side\n"
         f"      workaround exists -- the mount spec is over budget even for the shortest ref.\n"
         f"      {remedy}\n"
         f"      Details: https://github.com/moby/moby/issues/51687"
