@@ -232,6 +232,11 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM, require_compose: boo
         )
         raise StackError(f"{message}\n{start_help}, then rerun `{command_hint}`.")
 
+    # Right after the engine probe, before any Compose check can raise over
+    # it: a broken-mount daemon plus an old Compose plugin are two problems,
+    # and fixing the second must not hide the first.
+    _warn_broken_image_mounts(result.stdout)
+
     if not require_compose:
         return
 
@@ -290,6 +295,56 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM, require_compose: boo
     )
 
 
+# Docker 29.0.0 names an image mount's layer directory after the hex of the whole
+# mount spec -- past NAME_MAX=255 for even our shortest ref, so `up` dies at
+# container create with "file name too long" (moby#51687; 29.1.4 hashes it).
+BROKEN_IMAGE_MOUNTS_SINCE = (29, 0, 0)
+BROKEN_IMAGE_MOUNTS_FIXED = (29, 1, 4)
+
+
+@functools.cache  # `up` probes the daemon twice (cmd_up, then start_cloud_agent) -- warn once
+def _warn_broken_image_mounts(version_output: str | None) -> None:
+    """Warn -- not refuse, every other verb works -- when the daemon's `type: image`
+    mounts are broken, so `up` fails at preflight with a diagnosis instead of a hex
+    blob. Names `up` whichever verb ran the preflight: only `up` creates the
+    container. Silent on an unparseable version, like _require_min_version."""
+    version = _parse_version(version_output)
+    if version is None or len(version) < 3:
+        return
+    if not BROKEN_IMAGE_MOUNTS_SINCE <= version < BROKEN_IMAGE_MOUNTS_FIXED:
+        return
+    running = ".".join(map(str, version))
+    since = ".".join(map(str, BROKEN_IMAGE_MOUNTS_SINCE))
+    fixed = ".".join(map(str, BROKEN_IMAGE_MOUNTS_FIXED))
+    remedy = (
+        f"Update Docker Desktop -- the app update ships a fixed engine ({fixed} or newer)."
+        if sys.platform == "darwin"
+        else (
+            f"Update Docker Engine to {fixed} or newer (Docker Desktop: update the app).\n"
+            "      Ubuntu's docker.io can sit on a broken patch with nothing newer to upgrade\n"
+            "      to -- if `apt` offers none, switch to Docker's own repo:\n"
+            "      `curl -fsSL https://get.docker.com | sudo sh`"
+        )
+    )
+    warn(
+        f"Docker Engine {running} cannot mount the sim viewer's assets.\n"
+        f"      Engines since {since} fail every `type: image` mount with 'file name too\n"
+        f"      long' (moby#51687, fixed in {fixed}), so `{CLI_SIM} up` will die at container\n"
+        f"      create. No launcher-side workaround exists -- the mount spec is over budget\n"
+        f"      even for the shortest ref.\n"
+        f"      {remedy}\n"
+        f"      Details: https://github.com/moby/moby/issues/51687"
+    )
+
+
+def _parse_version(version_output: str | None) -> tuple[int, ...] | None:
+    """First `[v]major.minor[.patch]` in a version-command's output, or None."""
+    found = re.search(r"v?(\d+)\.(\d+)(?:\.(\d+))?", version_output or "")
+    if found is None:
+        return None
+    return tuple(int(part) for part in found.groups() if part is not None)
+
+
 def _require_min_version(
     label: str,
     version_output: str | None,
@@ -302,11 +357,11 @@ def _require_min_version(
     `minimum`. Silent when the version cannot be parsed: an unrecognised build
     string is not evidence of an old one, and a false refusal to start is worse
     than the raw error this pre-empts."""
-    found = re.search(r"v?(\d+)\.(\d+)", version_output or "")
-    if not found or (int(found.group(1)), int(found.group(2))) >= minimum:
+    version = _parse_version(version_output)
+    if version is None or version[:2] >= minimum:
         return
     raise StackError(
-        f"{label} {found.group(0)} is too old: the sim mounts its viewer assets straight from "
+        f"{label} {'.'.join(map(str, version))} is too old: the sim mounts its viewer assets straight from "
         f"an image (`type: image`), which needs {label} {minimum[0]}.{minimum[1]} or newer.\n"
         f"{remedy}, then rerun `{command_hint}`.\nGuide: {guide_url}"
     )

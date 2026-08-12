@@ -1,0 +1,27 @@
+name: Launcher Tests
+
+# tests/ guards host-side, no-ROS invariants (launcher preflights, image-tag
+# hashing, workflow path filters); nothing else in CI runs pytest, so without
+# this job the suite only runs when a developer remembers to.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # 3.12 for stdlib tomllib; the launcher itself still supports 3.10+tomli.
+          python-version: "3.12"
+
+      - name: Run the host-side test suite
+        run: |
+          pip install pytest pyyaml
+          python -m pytest tests/ -q
