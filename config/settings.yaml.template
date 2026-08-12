@@ -96,7 +96,7 @@
 #     # drift is roughly disturbance / (1 + gain * leak).
 #     heading_hold:
 #       gain: 5.0                   # rad/s of correction per rad of error; 0 disables
-#       leak: 0.2                   # s of memory; 0 makes it an absolute heading lock
+#       leak: 0.1                   # s of memory; 0 makes it an absolute heading lock
 #       max_correction: 1.0         # rad/s ceiling on the correction
 #       min_speed: 0.01             # m/s below which the hold stays off — heading is
 #                                   # meaningless while creeping. Raise the acceleration

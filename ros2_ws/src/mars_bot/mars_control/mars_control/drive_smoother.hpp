@@ -51,7 +51,7 @@ constexpr double HEADING_GAIN = 5.0;
 constexpr double HEADING_MAX_CORRECTION = 1.0;  // rad/s
 // Seconds of memory. Bounds drift to roughly disturbance / (1 + gain * leak) without
 // restoring heading lost earlier; 0 makes it an absolute lock.
-constexpr double HEADING_LEAK = 0.2;              // s
+constexpr double HEADING_LEAK = 0.1;              // s
 constexpr double HEADING_DEADBAND = 0.01;         // rad, one odom quantum
 constexpr double HEADING_SLEW = 2.0;              // rad/s^2
 constexpr double HEADING_STRAIGHT_YAW = 0.05;     // rad/s
