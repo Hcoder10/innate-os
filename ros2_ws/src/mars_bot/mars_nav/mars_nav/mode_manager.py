@@ -168,9 +168,19 @@ class ModeManager(Node):
         # Publisher to announce current map
         self.current_map_publisher = self.create_publisher(String, "/nav/current_map", 10)
 
-        # Announces each successful map save (the saved yaml name); brain_client's
-        # memory recorder promotes its staged mapping-session memories on this.
-        self.map_saved_publisher = self.create_publisher(String, "/nav/map_saved", 10)
+        # Each successful save as {"map": yaml name, "stamp": epoch seconds};
+        # brain_client promotes its staged mapping memories on it. Latched so a
+        # recorder respawning across the save still hears it — hence the stamp,
+        # which lets it tell that replay from an old save's.
+        self.map_saved_publisher = self.create_publisher(
+            String,
+            "/nav/map_saved",
+            QoSProfile(
+                depth=1,
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            ),
+        )
 
         # Pre-create service clients for all nodes and service types we'll use
         self._init_service_clients()
@@ -1188,7 +1198,9 @@ class ModeManager(Node):
                     action_word = "overwritten" if is_overwriting else "saved"
                     response.message = f"Successfully {action_word} map as '{map_name}.yaml'"
                     self.get_logger().info(response.message)
-                    self.map_saved_publisher.publish(String(data=map_yaml_name))
+                    self.map_saved_publisher.publish(
+                        String(data=json.dumps({"map": map_yaml_name, "stamp": time.time()}))
+                    )
 
                     # Refresh available maps list
                     self.available_maps = self.discover_maps()

@@ -470,7 +470,7 @@ def test_promote_with_nothing_staged_is_a_noop(data_dir):
     store = MemoryStore(data_dir)
     store.switch_map("A.yaml")
     store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
-    assert store.promote_mapping_session("A.yaml") is None
+    assert store.promote_mapping_session("A.yaml") == 0
     assert len(store.snapshot().memories) == 1
 
 
@@ -505,9 +505,33 @@ def test_promote_reaches_a_stage_the_store_left(data_dir):
 def test_the_session_survives_its_every_tick_call(data_dir):
     store = MemoryStore(data_dir)
     store.use_mapping_session()
+    fingerprint = store.snapshot().fingerprint
     store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
     store.use_mapping_session()  # the recorder's every-tick call must not wipe
-    assert len(store.snapshot().memories) == 1
+    snapshot = store.snapshot()
+    assert len(snapshot.memories) == 1 and snapshot.fingerprint == fingerprint
+
+
+def test_each_session_is_its_own_coordinate_frame(data_dir):
+    # Clients (the search cache, forget's staleness check, the webapp) tell
+    # frames apart by map+fingerprint, and every session is named ".mapping" —
+    # only a fresh per-session fingerprint keeps one tour's ids from resolving
+    # against another's pictures.
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    first = store.snapshot().fingerprint
+    store.switch_map("A.yaml")
+    store.use_mapping_session()
+    assert first and store.snapshot().fingerprint and store.snapshot().fingerprint != first
+
+
+def test_session_entry_sweeps_crashed_promotion_scratch(data_dir):
+    store = MemoryStore(data_dir)
+    (data_dir / "spatial_memory" / ".mapping.promote").mkdir(parents=True)
+    (data_dir / "spatial_memory" / ".mapping.displaced").mkdir()
+    store.use_mapping_session()
+    assert not (data_dir / "spatial_memory" / ".mapping.promote").exists()
+    assert not (data_dir / "spatial_memory" / ".mapping.displaced").exists()
 
 
 def test_entering_a_session_wipes_the_previous_ones_leftovers(data_dir):
@@ -889,6 +913,11 @@ def mapping_observe(recorder, clock, jpeg: bytes, advance: float = 1.0):
     recorder.tick()
 
 
+def announce_save(recorder, clock, name: str, age: float = 0.0):
+    """mode_manager's /nav/map_saved payload, stamped ``age`` seconds ago."""
+    recorder._on_map_saved(SimpleNamespace(data=json.dumps({"map": name, "stamp": clock.now - age})))
+
+
 def test_mapping_records_into_the_session_stage(data_dir, clock):
     recorder, store = make_recorder(data_dir)
     see_mapping_world(recorder)
@@ -923,7 +952,7 @@ def test_a_saved_map_adopts_the_mapping_memories(data_dir, clock):
 
     # The webapp's save sequence: save_map, then navigation on the new map.
     (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-map-content")
-    recorder._on_map_saved(SimpleNamespace(data="tour.yaml"))
+    announce_save(recorder, clock, "tour.yaml")
     recorder._on_nav_mode(SimpleNamespace(data="navigation"))
     recorder._on_current_map(SimpleNamespace(data="tour.yaml"))
     recorder.tick()
@@ -947,7 +976,7 @@ def test_a_promotion_landing_after_the_mode_switch_still_adopts(data_dir, clock)
     recorder._on_current_map(SimpleNamespace(data="tour.yaml"))
     recorder.tick()  # the switch wins the race: empty store on the new map
     assert store.snapshot().memories == ()
-    recorder._on_map_saved(SimpleNamespace(data="tour.yaml"))  # save lands late
+    announce_save(recorder, clock, "tour.yaml")  # save lands late
     snapshot = store.snapshot()
     assert snapshot.map_name == "tour.yaml" and len(snapshot.memories) == 1
     assert stored_image(store, snapshot.memories[0].id) == GOOD_JPEG
@@ -962,7 +991,34 @@ def test_a_failing_promotion_never_escapes_the_callback(data_dir, clock):
         raise OSError("disk full")
 
     store.promote_mapping_session = full_disk
-    recorder._on_map_saved(SimpleNamespace(data="tour.yaml"))
+    announce_save(recorder, clock, "tour.yaml")
+
+
+def test_an_unreadable_save_announcement_never_escapes_the_callback(data_dir, clock):
+    recorder, store = make_recorder(data_dir)
+    see_mapping_world(recorder)
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    recorder._on_map_saved(SimpleNamespace(data="tour.yaml"))  # pre-stamp wire format
+    assert not (data_dir / "spatial_memory" / "tour").exists()  # nothing was promoted
+
+
+def test_a_stale_save_replay_never_promotes(data_dir, clock):
+    # /nav/map_saved is latched so a recorder respawning across the save still
+    # hears it — but the same latch replays *old* saves to every restart, and
+    # adopting the current stage into a map saved from an earlier SLAM session
+    # would stamp this tour's coordinates onto a foreign frame.
+    recorder, store = make_recorder(data_dir)
+    see_mapping_world(recorder)
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    assert len(store.snapshot().memories) == 1
+
+    (data_dir / "maps" / "old.pgm").write_bytes(b"old-map-content")
+    announce_save(recorder, clock, "old.yaml", age=300.0)
+    assert (data_dir / "spatial_memory" / MAPPING_SESSION / "1.jpg").exists()  # the stage is untouched
+    store.switch_map("old.yaml")
+    assert store.snapshot().memories == ()
 
 
 def test_an_abandoned_session_is_wiped_when_the_next_begins(data_dir, clock):
@@ -989,8 +1045,22 @@ def test_mapping_positions_mirror_carries_the_session_identity(data_dir, clock):
     recorder.tick()
     mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
     payload = json.loads(published[-1].data)
-    assert payload["map"] == MAPPING_SESSION and payload["fingerprint"] == ""
+    assert payload["map"] == MAPPING_SESSION and len(payload["fingerprint"]) == 12
     assert len(payload["positions"]) == 1
+
+
+def test_a_mode_change_restarts_the_confidence_hold(data_dir, clock):
+    # A hold accrued in navigation is evidence about the OLD frame; carrying it
+    # across the switch would let the first mapping tick record instantly.
+    recorder, store = make_recorder(data_dir)
+    see_confident_world(recorder, clock)
+    recorder.tick()
+    clock.now += 5.0  # the navigation hold is long since satisfied
+    see_mapping_world(recorder)
+    recorder.tick()  # first mapping tick: the hold restarts
+    assert store.snapshot().memories == ()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    assert len(store.snapshot().memories) == 1
 
 
 # ================= memory search =================

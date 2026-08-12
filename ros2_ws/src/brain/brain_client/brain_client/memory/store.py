@@ -34,6 +34,10 @@ from threading import Lock
 
 _INDEX_VERSION = 1
 MAPPING_SESSION = ".mapping"
+# Promotion scratch dirs — dot-prefixed like the stage, so no saved map name
+# can collide; leftovers from a crash are cleaned on the next session's entry.
+_PROMOTE_TMP = f"{MAPPING_SESSION}.promote"
+_DISPLACED_TMP = f"{MAPPING_SESSION}.displaced"
 
 
 @dataclass(frozen=True)
@@ -57,6 +61,21 @@ class MemorySnapshot:
     # Same-name remaps reset memory ids, so name equality alone cannot prove
     # two snapshots share a coordinate frame — the fingerprint can.
     fingerprint: str = ""
+
+    def positions(self) -> list[dict]:
+        """The webapp mirror payload: one ``{id, x, y, theta, stamp}`` per
+        memory, rounded to display precision — full floats bloat the JSON by
+        half."""
+        return [
+            {
+                "id": m.id,
+                "x": round(m.x, 3),
+                "y": round(m.y, 3),
+                "theta": round(m.theta, 4),
+                "stamp": round(m.stamp, 1),
+            }
+            for m in self.memories
+        ]
 
 
 class MemoryStore:
@@ -104,15 +123,20 @@ class MemoryStore:
 
     def use_mapping_session(self) -> None:
         """Point the store at the mapping-session stage. Idempotent per tick;
-        actually entering wipes whatever a previous session left behind."""
+        actually entering wipes what a previous session left behind and mints a
+        fresh fingerprint — every consumer tells coordinate frames apart by
+        map+fingerprint, and two SLAM sessions are two frames despite sharing
+        the ``.mapping`` name."""
         with self._lock:
             if self._map_name == MAPPING_SESSION:
                 return
             self._map_name = MAPPING_SESSION
             self._dir = self._root / MAPPING_SESSION
             self._stat_sig = None
-            self._fingerprint = ""
+            self._fingerprint = os.urandom(16).hex()
             self._wipe_locked()
+            for scratch in (_PROMOTE_TMP, _DISPLACED_TMP):
+                shutil.rmtree(self._root / scratch, ignore_errors=True)  # crash leftovers from a promotion
             self._revision += 1
             self.last_change_monotonic = time.monotonic()
 
@@ -125,21 +149,20 @@ class MemoryStore:
         through independent topics, and a lost race must not lose the tour.
         The stage itself stays behind: a re-save — the webapp retrying after
         a failed mode switch — promotes the whole tour again. Returns how
-        many were promoted; None when nothing is staged or the saved map
-        can't be fingerprinted.
+        many were promoted (0 when nothing is staged); None when the saved
+        map can't be fingerprinted, with the stage kept.
         """
         with self._lock:
             stage = self._root / MAPPING_SESSION
             count = _staged_count(stage)
             if count == 0:
-                return None
+                return 0
             fingerprint = _map_fingerprint(self._maps_dir, map_name)
             if not fingerprint:
                 return None
             # Build the copy aside and swap it in whole: the proxy reads these
             # files without the lock and must never see a half-copied frame.
-            # Dot-prefixed like the stage, so no saved map name can collide.
-            tmp = self._root / f"{MAPPING_SESSION}.promote"
+            tmp = self._root / _PROMOTE_TMP
             if tmp.is_dir():
                 shutil.rmtree(tmp)
             shutil.copytree(stage, tmp)
@@ -147,10 +170,17 @@ class MemoryStore:
             index["map"] = map_name
             index["fingerprint"] = fingerprint
             (tmp / "index.json").write_text(json.dumps(index))
+            # Displace-then-swap, never delete-then-swap: destroying the
+            # target before its replacement is in place would leave the map
+            # memoryless if a crash lands between the two.
             target = self._root / Path(map_name).stem
+            displaced = self._root / _DISPLACED_TMP
+            if displaced.is_dir():
+                shutil.rmtree(displaced)
             if target.is_dir():
-                shutil.rmtree(target)
+                os.replace(target, displaced)
             os.replace(tmp, target)
+            shutil.rmtree(displaced, ignore_errors=True)
             if self._map_name == map_name:
                 # The switch won the race and loaded an empty store; adopt the
                 # promoted memories now — no later tick would reload them.
@@ -169,21 +199,6 @@ class MemoryStore:
         """Identity of the loaded map's content — changes exactly when the memories wipe."""
         with self._lock:
             return self._fingerprint
-
-    def positions(self) -> list[dict]:
-        """The webapp mirror payload: one ``{id, x, y, theta, stamp}`` per memory,
-        rounded to display precision — full floats bloat the JSON by half."""
-        with self._lock:
-            return [
-                {
-                    "id": m.id,
-                    "x": round(m.x, 3),
-                    "y": round(m.y, 3),
-                    "theta": round(m.theta, 4),
-                    "stamp": round(m.stamp, 1),
-                }
-                for m in self._memories
-            ]
 
     def image_path(self, memory_id: int) -> Path | None:
         with self._lock:

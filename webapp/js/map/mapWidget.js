@@ -361,6 +361,10 @@ export function createMap(root, opts = {}) {
   /** @type {ReturnType<typeof parseSearch>} latest fresh search verdict */
   let memSearch = null;
   let memSearchUntil = 0; // performance.now() deadline for the recalled-spot glow
+  // Robot-time watermark: a verdict answered before this points into a frame
+  // that has since died. Clearing memSearch alone can't hold — a later
+  // resubscribe replays the latched verdict straight back.
+  let memSearchFloorS = 0;
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let memSearchCardTimer;
   let memCardsViewSig = ""; // the view framing the cards were last placed against
@@ -471,6 +475,7 @@ export function createMap(root, opts = {}) {
     if (!verdict) return;
     const replay = !memSearchSeen;
     memSearchSeen = true;
+    if (verdict.stamp <= memSearchFloorS) return; // answered on a frame that has since died
     if (replay && robotNowS() - verdict.stamp > SEARCH_REPLAY_FRESH_S) return; // stale latched replay
     memSearch = verdict;
     memSearchUntil = performance.now() + (verdict.found ? MEM_SEARCH_GLOW_MS : 0);
@@ -1779,6 +1784,7 @@ export function createMap(root, opts = {}) {
     closeMemPopup();
     hideMemSearchCard();
     memSearch = null;
+    memSearchFloorS = robotNowS();
     pose = composedPose();
   }
 
@@ -1862,6 +1868,7 @@ export function createMap(root, opts = {}) {
         // the meantime.)
         memState = null;
         memKnown = null;
+        memSearchFloorS = robotNowS();
         setMemHover(null);
         closeMemPopup();
         hideMemSearchCard();

@@ -73,6 +73,10 @@ _COVARIANCE_FRESH_SEC = 5.0
 # (map_update_interval). An older grid means SLAM died, and TF's map frame is
 # coasting on odom alone.
 _GRID_FRESH_SEC = 5.0
+# /nav/map_saved is latched so a recorder respawning across the save still
+# promotes the tour; the same latch replays that save to every later restart,
+# and an old one must not adopt a newer stage into its foreign frame.
+_SAVE_ANNOUNCEMENT_FRESH_SEC = 30.0
 _MIN_HEAD_PITCH_DEG = -25.0  # looking further down films the floor, not the room
 
 
@@ -136,7 +140,7 @@ class MemoryRecorder:
         node.create_subscription(String, config.current_nav_mode_topic, self._on_nav_mode, 10)
         node.create_subscription(String, config.current_map_topic, self._on_current_map, 10)
         node.create_subscription(PoseWithCovarianceStamped, config.amcl_pose_topic, self._on_amcl_pose, latched_qos)
-        node.create_subscription(String, config.map_saved_topic, self._on_map_saved, 10)
+        node.create_subscription(String, config.map_saved_topic, self._on_map_saved, latched_qos)
         node.create_subscription(OccupancyGrid, "/map", self._on_map, latched_qos)
         node.create_subscription(String, "/mars/head/current_position", self._on_head, 10)
         node.create_timer(_TICK_SEC, self.tick)
@@ -165,6 +169,10 @@ class MemoryRecorder:
         return self._nav_mode == "navigation" and bool(self._map_name) and self._confident()
 
     def _on_nav_mode(self, msg: String) -> None:
+        if msg.data != self._nav_mode:
+            # A mode change swaps the coordinate frame; confidence held in the
+            # old frame says nothing about the new one — the hold restarts.
+            self._confident_since = None
         self._nav_mode = msg.data
 
     def _on_current_map(self, msg: String) -> None:
@@ -172,12 +180,22 @@ class MemoryRecorder:
 
     def _on_map_saved(self, msg: String) -> None:
         try:
-            promoted = self._store.promote_mapping_session(msg.data)
-        except Exception as error:  # noqa: BLE001 — a full disk must not take the brain node down
-            self._logger.error(f"[Memory] promoting the mapping session to {msg.data} failed: {error!r}")
+            payload = json.loads(msg.data)
+            map_name, stamp = str(payload["map"]), float(payload["stamp"])
+        except (json.JSONDecodeError, TypeError, KeyError, ValueError):
+            self._logger.error(f"[Memory] unreadable map-save announcement: {msg.data!r}")
             return
-        if promoted:
-            self._logger.info(f"[Memory] promoted {promoted} mapping-session memories to {msg.data}")
+        if time.time() - stamp > _SAVE_ANNOUNCEMENT_FRESH_SEC:
+            return  # the latch replaying an old save — see _SAVE_ANNOUNCEMENT_FRESH_SEC
+        try:
+            promoted = self._store.promote_mapping_session(map_name)
+        except Exception as error:  # noqa: BLE001 — a full disk must not take the brain node down
+            self._logger.error(f"[Memory] promoting the mapping session to {map_name} failed: {error!r}")
+            return
+        if promoted is None:
+            self._logger.error(f"[Memory] mapping-session memories not promoted: {map_name} has no readable map file")
+        elif promoted:
+            self._logger.info(f"[Memory] promoted {promoted} mapping-session memories to {map_name}")
 
     def _on_amcl_pose(self, msg: PoseWithCovarianceStamped) -> None:
         covariance = msg.pose.covariance
@@ -269,7 +287,7 @@ class MemoryRecorder:
             # betrays that to a client watching the name.
             "fingerprint": snapshot.fingerprint[:12],
             "cache": self._cache_state() if self._cache_state is not None else "off",
-            "positions": self._store.positions(),
+            "positions": snapshot.positions(),
         }
         # Gate on the whole payload, not store.revision: `cache` flips by wall
         # clock (a warm() completing, a handle expiring) without a store change.
