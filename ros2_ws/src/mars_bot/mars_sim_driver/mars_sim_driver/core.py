@@ -21,7 +21,7 @@ import numpy as np
 from PIL import Image
 
 from . import world
-from .constants import CAMERA_FOVY, CAMERA_HEIGHT, CAMERA_WIDTH, NAV_CAMERA_FOVY, WRIST_CAMERA_FOVY
+from .constants import CAMERA_FOVY, CAMERA_HEIGHT, CAMERA_WIDTH, WIDE_CAMERA_FOVY, WRIST_CAMERA_FOVY
 from .props import PropRegistry
 from .world import ARM_HOME, SPAWN_X, SPAWN_Y, SPAWN_YAW_DEG
 
@@ -34,7 +34,7 @@ CAMERAS = {
     "main": ("robot_camera_optical_frame", (0, 0, 1), (0, -1, 0), CAMERA_FOVY),
     "wrist": ("robot_arm_camera_link", (1, 0, 0), (0, 0, 1), WRIST_CAMERA_FOVY),
     # Identical mount and orientation to main -- fov is the only difference.
-    "nav": ("robot_camera_optical_frame", (0, 0, 1), (0, -1, 0), NAV_CAMERA_FOVY),
+    "wide": ("robot_camera_optical_frame", (0, 0, 1), (0, -1, 0), WIDE_CAMERA_FOVY),
 }
 JPEG_QUALITY = 80  # matches main_camera_driver.cpp
 # Post-render ACES tone map approximating sim/viewer's Three.js output
