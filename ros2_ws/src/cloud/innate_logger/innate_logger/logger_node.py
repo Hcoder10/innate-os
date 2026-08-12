@@ -274,9 +274,10 @@ class LoggerNode(Node):
             vitals.update(host.memory_detail())
             if self._latest_battery is not None:
                 bat = self._latest_battery
+                # No power_supply_status: mars_bringup hardcodes it to
+                # DISCHARGING, so it is the constant 2 on every robot forever.
                 vitals["battery_voltage"] = bat.voltage
                 vitals["battery_percentage"] = bat.percentage
-                vitals["battery_status"] = bat.power_supply_status
                 summary += f" | battery {bat.voltage:.2f}V ({bat.percentage:.0%})"
 
         if self._latest_arm is not None:
