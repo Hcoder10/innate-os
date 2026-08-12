@@ -1,0 +1,34 @@
+[Unit]
+Description=Innate ungraceful-shutdown sentinel (INN-769)
+Documentation=https://linear.app/innate/issue/INN-769
+# Default dependencies are deliberately left ON. DefaultDependencies=no would
+# drop the implicit Conflicts=shutdown.target, systemd would then never stop
+# this unit at shutdown, ExecStop would never run, and every single shutdown on
+# the fleet would be recorded as ungraceful.
+#
+# Ordered early on purpose: units stop in reverse of the order they started, so
+# starting right after the filesystems puts the flag clear late in shutdown
+# rather than early. Reverse-order stopping only holds along real ordering
+# edges, and there is none between this and ros-app -- those stop jobs run in
+# parallel -- so this is a tendency, not a guarantee. The residual case is a
+# hang *after* ExecStop and a hard reset out of it, recorded as clean. Narrow
+# enough to accept; the flag is not the only mechanism.
+After=local-fs.target
+RequiresMountsFor=/var/lib
+
+[Service]
+Type=oneshot
+# Without this the unit counts as inactive the moment ExecStart returns, and an
+# inactive unit is not stopped at shutdown -- so ExecStop never runs.
+RemainAfterExit=yes
+ExecStart=/usr/bin/python3 /home/jetson1/innate-os/scripts/boot_sentinel.py boot
+ExecStop=/usr/bin/python3 /home/jetson1/innate-os/scripts/boot_sentinel.py shutdown
+# journalctl on a large journal is the only slow part of either path, and
+# holding up a shutdown to record it would be a poor trade.
+TimeoutStartSec=60
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

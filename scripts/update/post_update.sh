@@ -11,6 +11,7 @@
 #   0b. Enable a disk-backed swap file (INN-530)
 #   0c. Use a headless (no-GUI) boot when no display is attached
 #   0d. Disable desktop/update daemons with no robot function
+#   0e. Persist the journal across reboots (INN-769)
 #   1. Systemd service files
 #   2. Helper scripts in /usr/local/bin
 #   3. Udev rules
@@ -417,6 +418,48 @@ if command -v snap >/dev/null 2>&1 && ls /var/lib/snapd/snaps/*.snap >/dev/null 
     log "  Keeping snapd (installed snaps present)"
 else
     disable_unit snapd.service snapd.socket
+fi
+
+# -----------------------------------------------------------------------------
+# 0e. Persist the journal across reboots (INN-769).
+# Ubuntu ships Storage=auto, which keeps the journal in tmpfs unless
+# /var/log/journal exists — so on a stock robot `journalctl -b -1` returns
+# nothing and every reset is unattributable. The boot sentinel's second
+# mechanism reads the previous boot's tail; without this it is silently dead on
+# the whole fleet. Capped so a log loop cannot eat the rootfs.
+# -----------------------------------------------------------------------------
+JOURNALD_CONF="/etc/systemd/journald.conf.d/innate.conf"
+if [ -f "$REPO_DIR/config/journald/innate.conf" ]; then
+    log "Configuring persistent journald..."
+    mkdir -p /etc/systemd/journald.conf.d
+    if ! cmp -s "$REPO_DIR/config/journald/innate.conf" "$JOURNALD_CONF"; then
+        cp "$REPO_DIR/config/journald/innate.conf" "$JOURNALD_CONF"
+        NEEDS_JOURNALD_RESTART=true
+    fi
+    if [ ! -d /var/log/journal ]; then
+        # mkdir first, then tmpfiles — not the other way around. Every stock
+        # tmpfiles.d line for this path is `h`/`z`/`a+`, i.e. adjust-existing;
+        # none of them create anything, and `--create` still exits 0 having
+        # done nothing. Ordered the other way the directory never appears, the
+        # flush below is a no-op, and the journal stays volatile until the next
+        # reboot — the silent-fleet-wide-failure this whole section exists to
+        # prevent. tmpfiles is still what sets the systemd-journal group and
+        # the adm ACL that let non-root read the journal.
+        mkdir -p /var/log/journal
+        systemd-tmpfiles --create --prefix /var/log/journal || true
+        NEEDS_JOURNALD_RESTART=true
+    fi
+    if [ "${NEEDS_JOURNALD_RESTART:-false}" = true ]; then
+        # SIGUSR1 is the flush-to-/var/log/journal signal, and is all that is
+        # needed to start persisting now: Storage=auto already persists once
+        # the directory exists, so the config file below only pins the caps.
+        # Deliberately not a restart — journald owns every running service's
+        # stdout, and restarting it mid-update severs those.
+        systemctl kill --kill-who=main --signal=SIGUSR1 systemd-journald 2>/dev/null || true
+        log "  Journal is now persistent (flushed to /var/log/journal)"
+    else
+        log "  Journal already persistent"
+    fi
 fi
 
 # Stop running services before updating (keep app.cpp alive during build)
@@ -952,6 +995,15 @@ fi
 # Add speaker-keepalive if the service file exists
 if [ -f "/etc/systemd/system/speaker-keepalive.service" ]; then
     SERVICES+=("speaker-keepalive.service")
+fi
+
+# Add the ungraceful-shutdown sentinel (INN-769). Deliberately kept out of
+# RESTART_SERVICES below: restarting it runs ExecStop then ExecStart, which
+# clears the flag and finds it missing — a clean shutdown that never happened.
+# (The sentinel also checks the kernel boot id for exactly this case, so a
+# restart is survivable; not asking for one is simply cheaper.)
+if [ -f "/etc/systemd/system/innate-boot-sentinel.service" ]; then
+    SERVICES+=("innate-boot-sentinel.service")
 fi
 
 # Add shutdown-sound if the service file exists (enable only, runs at shutdown)

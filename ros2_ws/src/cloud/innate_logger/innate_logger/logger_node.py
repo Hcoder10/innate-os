@@ -23,7 +23,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import BatteryState
 from std_msgs.msg import String
 
-from innate_logger import disks, host
+from innate_logger import disks, host, shutdowns
 from innate_logger.client import TelemetryClient
 
 DEFAULT_TELEMETRY_URL = "https://logs.svc.innate.bot"
@@ -111,6 +111,10 @@ class LoggerNode(Node):
         self._version: str | None = None
         self._latest_arm: ArmStatus | None = None
         self._pending_disks: dict[str, object] | None = None
+        # The boot sentinel's verdict on the last shutdown, sent once per boot.
+        # Nothing orders that unit against this node, so the report may not be
+        # on disk yet when we start -- keep looking until it lands and is sent.
+        self._boot_reported: bool = False
 
         # None means "not yet", which is what the boot delay is measured against.
         self._started: float = time.monotonic()
@@ -266,6 +270,10 @@ class LoggerNode(Node):
         if sent_disks is not None:
             vitals["disks"] = sent_disks
 
+        sent_boot = None if self._boot_reported else shutdowns.report()
+        if sent_boot is not None:
+            vitals["boot"] = sent_boot
+
         summary = f"cpu {cpu_usage:.0f}% | mem {vitals['memory_percent']}%"
 
         if self._elapsed(self._last_detail) >= self._seconds("detail_interval"):
@@ -314,6 +322,10 @@ class LoggerNode(Node):
         # mid-flight and was never sent.
         if self._pending_disks is sent_disks:
             self._pending_disks = None
+
+        if sent_boot is not None:
+            self._boot_reported = True
+            self.get_logger().info(f"boot: {shutdowns.summarize(sent_boot)}")
 
 
 def main(args: list[str] | None = None) -> None:
