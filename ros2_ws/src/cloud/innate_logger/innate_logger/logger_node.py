@@ -14,13 +14,14 @@ import rclpy
 from auth_client import AuthError, AuthProvider
 from diagnostic_msgs.msg import DiagnosticArray
 from dotenv import find_dotenv, load_dotenv
+from mars_msgs.msg import ArmStatus
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import BatteryState
 from std_msgs.msg import String
 
-from innate_logger import smart
+from innate_logger import disks, host
 from innate_logger.client import TelemetryClient
 
 DEFAULT_TELEMETRY_URL = "https://logs.svc.innate.bot"
@@ -31,6 +32,9 @@ class LoggerNode(Node):
     """Subscribes to robot topics and logs telemetry at a throttled rate."""
 
     LOG_INTERVAL: float = 5.0  # seconds (0.2 Hz)
+    # The voltage behind /battery_state only refreshes on a 60s I2C health
+    # request, so every tick would ship the same reading a dozen times.
+    BATTERY_INTERVAL: float = 30.0
     DISK_INTERVAL: float = 3600.0
     # Sessions are often shorter than DISK_INTERVAL, so report once early too.
     DISK_BOOT_DELAY: float = 240.0
@@ -89,8 +93,13 @@ class LoggerNode(Node):
         self._latest_diagnostics: DiagnosticArray | None = None
         self._robot_id: str | None = None
         self._mac_address: str | None = None
+        self._hardware_revision: str | None = None
+        self._version: str | None = None
+        self._latest_arm: ArmStatus | None = None
         self._pending_disks: dict[str, object] | None = None
+        self._tick: int = 0
 
+        self.create_subscription(ArmStatus, "/mars/arm/status", self._on_arm_status, 1)
         self.create_subscription(BatteryState, "/battery_state", self._on_battery, 1)
         self.create_subscription(DiagnosticArray, "/diagnostics", self._on_diagnostics, 1)
         self.create_subscription(String, "/brain/set_directive", self._on_directive, 10)
@@ -101,13 +110,17 @@ class LoggerNode(Node):
 
         # A disk sweep can block for seconds; its own group keeps it off the
         # thread the vitals tick runs on, and keeps the two sweeps off each other.
-        disks = MutuallyExclusiveCallbackGroup()
+        disk_group = MutuallyExclusiveCallbackGroup()
         self._disk_boot_timer = self.create_timer(
-            self.DISK_BOOT_DELAY, self._collect_disk_health_once, callback_group=disks
+            self.DISK_BOOT_DELAY, self._collect_disk_health_once, callback_group=disk_group
         )
-        self.create_timer(self.DISK_INTERVAL, self._collect_disk_health, callback_group=disks)
+        self.create_timer(self.DISK_INTERVAL, self._collect_disk_health, callback_group=disk_group)
 
     # ── Helpers ─────────────────────────────────────────────────────
+
+    def _due(self, interval: float) -> bool:
+        """True on one tick out of every `interval` seconds' worth of them."""
+        return self._tick % max(1, round(interval / self.LOG_INTERVAL)) == 0
 
     def _log_auth_retry(self, attempt: int, error: AuthError, next_delay: float) -> None:
         self.get_logger().warning(f"Auth not ready yet (attempt {attempt}): {error} — retrying in {next_delay:.0f}s")
@@ -129,6 +142,9 @@ class LoggerNode(Node):
 
     def _on_battery(self, msg: BatteryState) -> None:
         self._latest_battery = msg
+
+    def _on_arm_status(self, msg: ArmStatus) -> None:
+        self._latest_arm = msg
 
     def _on_diagnostics(self, msg: DiagnosticArray) -> None:
         self._latest_diagnostics = msg
@@ -154,6 +170,14 @@ class LoggerNode(Node):
         if device_id:
             self._mac_address = str(device_id)
 
+        # robot_name and hostname are on this topic too, and stay off telemetry:
+        # the name is user-chosen and the hostname is derived from it.
+        if hardware_revision := info.get("hardware_revision"):
+            self._hardware_revision = str(hardware_revision)
+
+        if version := info.get("version"):
+            self._version = str(version)
+
     def _on_directive(self, msg: String) -> None:
         self.get_logger().info(f"Received directive: {msg.data}")
         self._client.log_directive(msg.data)
@@ -168,43 +192,51 @@ class LoggerNode(Node):
         Queued rather than posted directly so the report rides a complete vitals
         row, and survives a send failure to retry on the following tick.
         """
-        report = smart.collect()
-        if not report:
-            if smart.devices():
-                self.get_logger().info(
-                    "No disk health readable — install smartmontools and run `innate update reinstall`"
-                )
-            return
+        report = disks.collect()
+        if not report["smart"] and disks.devices():
+            self.get_logger().info("No SMART data readable — install smartmontools and run `innate update reinstall`")
         self._pending_disks = report
-        self.get_logger().info(f"disks: {smart.summarize(report)}")
+        self.get_logger().info(f"disks: {disks.summarize(report)}")
 
     def _log_vitals(self) -> None:
         """Collect cached vitals and send to the cloud logger."""
+        self._tick += 1
         cpu_usage = psutil.cpu_percent(interval=None)
 
         vitals: dict[str, object] = {
             "commit": self._git_commit,
             "cpu_usage": cpu_usage,
+            **host.resources(),
         }
 
-        if self._robot_id is not None:
-            vitals["robot_id"] = self._robot_id
-
-        if self._mac_address is not None:
-            vitals["mac_address"] = self._mac_address
+        for key, value in (
+            ("robot_id", self._robot_id),
+            ("mac_address", self._mac_address),
+            ("hardware_revision", self._hardware_revision),
+            ("version", self._version),
+        ):
+            if value is not None:
+                vitals[key] = value
 
         if self._pending_disks is not None:
             vitals["disks"] = self._pending_disks
 
-        summary = f"cpu {cpu_usage:.0f}%"
+        summary = f"cpu {cpu_usage:.0f}% | mem {vitals['memory_percent']}%"
 
-        if self._latest_battery is not None:
+        if self._latest_battery is not None and self._due(self.BATTERY_INTERVAL):
             bat = self._latest_battery
             vitals["battery_voltage"] = bat.voltage
             vitals["battery_percentage"] = bat.percentage
             vitals["battery_status"] = bat.power_supply_status
-            vitals["battery_health"] = bat.power_supply_health
+            vitals["temperatures"] = host.temperatures()
             summary += f" | battery {bat.voltage:.2f}V ({bat.percentage:.0%})"
+
+        if self._latest_arm is not None:
+            vitals["arm_ok"] = self._latest_arm.is_ok
+            vitals["arm_torque_enabled"] = self._latest_arm.is_torque_enabled
+            if not self._latest_arm.is_ok:
+                vitals["arm_error"] = self._latest_arm.error
+                summary += f" | arm {self._latest_arm.error}"
 
         if self._latest_diagnostics is not None:
             diag = self._latest_diagnostics
