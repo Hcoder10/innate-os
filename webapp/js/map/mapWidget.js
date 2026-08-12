@@ -298,7 +298,6 @@ export function createMap(root, opts = {}) {
   // against the growing grid is mode_manager's /mapping_pose (map frame, from
   // TF): raw odom drifts against it and any AMCL fix predates the map.
   let mappingMode = false;
-  let memoriesBeforeMapping = false; // restore the memories layer when mapping ends
   /** @type {{ x: number, y: number, yaw: number } | null} */
   let mappingPose = null;
   /** @type {(() => void) | null} */
@@ -1855,12 +1854,14 @@ export function createMap(root, opts = {}) {
       if (on) {
         amclPose = null;
         odomAtAmcl = null;
-        // Memory marks are frames of the *finished* map — meaningless against
-        // the one being built. Forced off here, in the widget, so every host
-        // (teleop PiP included) honors it, not just the Nav page's chips.
-        memoriesBeforeMapping = layers.memories;
-        layers.memories = false;
-        syncLayerSubs();
+        // The tour records its own memories, in the very frame being built, so
+        // the marks stay — but everything tied to the *previous* map goes: its
+        // recall verdict and any open card point into a frame that just died.
+        // (The positions feed swaps to the mapping session within a tick, and
+        // dropping both here keeps the old frame's marks off the new grid in
+        // the meantime.)
+        memState = null;
+        memKnown = null;
         setMemHover(null);
         closeMemPopup();
         hideMemSearchCard();
@@ -1881,10 +1882,6 @@ export function createMap(root, opts = {}) {
         unsubMappingPose?.();
         unsubMappingPose = null;
         mappingPose = null;
-        if (memoriesBeforeMapping) {
-          layers.memories = true;
-          syncLayerSubs();
-        }
       }
       pose = composedPose();
       render();
