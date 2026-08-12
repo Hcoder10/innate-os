@@ -110,6 +110,7 @@ class ProxyClient:
         params: dict[str, Any] | None = None,
         files: dict[str, Any] | None = None,
         form: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ):
         """Return a context manager that yields an ``httpx.Response`` with streaming.
 
@@ -137,6 +138,8 @@ class ProxyClient:
             kwargs["files"] = files
             if form is not None:
                 kwargs["data"] = form  # multipart form fields, not raw content
+        if timeout is not None:
+            kwargs["timeout"] = timeout
 
         # Auth (incl. 401 retry) is handled by InnateBearerAuth on the client
         return self.get_sync_client().stream(**kwargs)

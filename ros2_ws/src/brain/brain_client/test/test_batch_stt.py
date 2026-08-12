@@ -13,11 +13,16 @@ import json
 import threading
 import wave
 
+import httpx
+import pytest
+
 from brain_client.brain.transport import GeminiRest
 from brain_client.inputs.batch_stt import (
     ELEVENLABS_PROXY_ENDPOINT,
+    MAX_PENDING_UTTERANCES,
     MAX_UTTERANCE_SECS,
     NO_SPEECH,
+    TRANSCRIBE_TIMEOUT_SECS,
     BatchSttSession,
     Endpointer,
     EnergyDetector,
@@ -137,24 +142,27 @@ class FakeProxyResponse:
         self.status_code = status_code
         self._payload = payload
 
-    def read(self):
+    def read(self) -> bytes:
         return self._payload
 
-    def __enter__(self):
+    def __enter__(self) -> "FakeProxyResponse":
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc: object) -> None:
         pass
 
 
 class FakeProxy:
-    def __init__(self, status_code: int = 200, payload: bytes = b""):
-        self.calls = []
-        self._response = FakeProxyResponse(status_code, payload)
+    """Capturing ProxyClient stand-in — a fresh one-shot response per call, like the real stream()."""
 
-    def request_stream(self, service, endpoint, **kwargs):
+    def __init__(self, status_code: int = 200, payload: bytes = b"{}"):
+        self.calls: list[tuple[str, str, dict]] = []
+        self._status_code = status_code
+        self._payload = payload
+
+    def request_stream(self, service: str, endpoint: str, **kwargs: object) -> FakeProxyResponse:
         self.calls.append((service, endpoint, kwargs))
-        return self._response
+        return FakeProxyResponse(self._status_code, self._payload)
 
 
 def test_elevenlabs_proxy_request_shape_and_reply():
@@ -167,6 +175,7 @@ def test_elevenlabs_proxy_request_shape_and_reply():
     assert endpoint == ELEVENLABS_PROXY_ENDPOINT
     assert kwargs["files"]["file"] == ("utterance.wav", WAV, "audio/wav")
     assert kwargs["form"] == {"model_id": "scribe_v2", "language_code": "en"}
+    assert kwargs["timeout"] == TRANSCRIBE_TIMEOUT_SECS
 
 
 def test_elevenlabs_proxy_http_error_raises():
@@ -176,6 +185,31 @@ def test_elevenlabs_proxy_http_error_raises():
         raise AssertionError("expected RuntimeError")
     except RuntimeError as e:
         assert "401" in str(e)
+
+
+def test_elevenlabs_proxy_wire_shape_through_real_client():
+    """End to end through a real ProxyClient: the multipart body that leaves
+    the robot must carry the WAV and both form fields."""
+    innate_proxy = pytest.importorskip("innate_proxy")
+
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"text": " hello robot "})
+
+    proxy = innate_proxy.ProxyClient(proxy_url="https://proxy.test", innate_service_key="test-key")
+    proxy._sync_client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    assert elevenlabs_proxy_transcriber(proxy, "scribe_v2", "en")(WAV) == "hello robot"
+
+    request = requests[0]
+    assert request.url == "https://proxy.test/v1/services/elevenlabs/v1/speech-to-text"
+    assert request.headers["content-type"].startswith("multipart/form-data")
+    body = request.read()
+    assert WAV in body
+    assert b'name="model_id"' in body and b"scribe_v2" in body
+    assert b'name="language_code"' in body
 
 
 # ---------- gemini transcriber ----------
@@ -258,6 +292,23 @@ def test_session_status_tracks_open_utterance():
     status = session.status()
     assert status["utterance_open"] is True
     assert status["utterance_secs"] > 0.9  # ~1 s fed + pre-roll
+
+
+def test_session_backlog_bounded_drops_oldest():
+    """With the worker stalled, only the newest utterances stay pending —
+    a shadow endpointer fed identically predicts the survivors exactly."""
+    session = make_session(lambda wav: "", [], threading.Event())
+    shadow = make_endpointer()
+    fed: list[bytes] = []
+    for i in range(MAX_PENDING_UTTERANCES + 2):
+        for chunk in [LOUD] * (30 + 10 * i) + [QUIET] * 25:
+            session.feed(chunk)
+            if (utterance := shadow.feed(chunk)) is not None:
+                fed.append(utterance)
+
+    assert len(fed) == MAX_PENDING_UTTERANCES + 2
+    assert session.utterance_count == MAX_PENDING_UTTERANCES + 2
+    assert list(session._utterances.queue) == fed[-MAX_PENDING_UTTERANCES:]
 
 
 def test_session_survives_transcription_error():

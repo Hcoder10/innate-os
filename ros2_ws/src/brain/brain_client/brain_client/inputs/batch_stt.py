@@ -150,13 +150,18 @@ class Endpointer:
 # ---------- ElevenLabs Scribe batch ----------
 
 ELEVENLABS_PROXY_ENDPOINT = "v1/speech-to-text"
+# Tighter than the proxy client's shared 60 s default — a transcript this
+# late is stale anyway, and the worker should move on to newer speech.
+TRANSCRIBE_TIMEOUT_SECS = 30.0
 
 
 def elevenlabs_proxy_transcriber(proxy: ProxyClient, model: str, language: str) -> Transcriber:
     def transcribe(wav: bytes) -> str:
         files = {"file": ("utterance.wav", wav, "audio/wav")}
         form = {"model_id": model, "language_code": language}
-        with proxy.request_stream("elevenlabs", ELEVENLABS_PROXY_ENDPOINT, files=files, form=form) as resp:
+        with proxy.request_stream(
+            "elevenlabs", ELEVENLABS_PROXY_ENDPOINT, files=files, form=form, timeout=TRANSCRIBE_TIMEOUT_SECS
+        ) as resp:
             payload = resp.read()
             if resp.status_code != 200:
                 raise RuntimeError(f"elevenlabs via proxy: HTTP {resp.status_code}: {payload[:200]!r}")
@@ -203,6 +208,10 @@ def gemini_transcriber(rest: GeminiRest, model: str, language: str) -> Transcrib
 
 # ---------- Session ----------
 
+# Bounds the transcription backlog when the network stalls: newest speech
+# wins, and speech from minutes ago must never surface as a fresh command.
+MAX_PENDING_UTTERANCES = 4
+
 
 class BatchSttSession:
     """Feeds mic chunks to the endpointer and transcribes closed utterances.
@@ -228,7 +237,7 @@ class BatchSttSession:
         self._on_transcript = on_transcript
         self._logger = logger
         self._endpointer = Endpointer(sample_rate=sample_rate, is_voiced=is_voiced, silence_secs=silence_secs)
-        self._utterances: queue.Queue[bytes | None] = queue.Queue()
+        self._utterances: queue.Queue[bytes | None] = queue.Queue(maxsize=MAX_PENDING_UTTERANCES)
         self._worker: threading.Thread | None = None
         self.utterance_count = 0
         self.failure_count = 0
@@ -245,7 +254,19 @@ class BatchSttSession:
         if utterance is not None:
             self._logger.info(f"🎤 Utterance closed ({len(utterance) / (self._sample_rate * 2):.1f}s), transcribing...")
             self.utterance_count += 1
-            self._utterances.put(utterance)
+            self._enqueue(utterance)
+
+    def _enqueue(self, item: bytes | None) -> None:
+        while True:
+            try:
+                self._utterances.put_nowait(item)
+                return
+            except queue.Full:
+                try:
+                    self._utterances.get_nowait()
+                    self._logger.error("❌ Transcription backlog full — dropping oldest utterance")
+                except queue.Empty:
+                    pass
 
     def status(self) -> dict[str, Any]:
         return {
@@ -256,7 +277,7 @@ class BatchSttSession:
         }
 
     def stop(self) -> None:
-        self._utterances.put(None)
+        self._enqueue(None)
         if self._worker:
             self._worker.join(timeout=2.0)
             self._worker = None
