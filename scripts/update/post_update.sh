@@ -897,8 +897,14 @@ $ACTUAL_USER ALL=(ALL) NOPASSWD: $REPO_DIR/scripts/update/post_update.sh
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/nmcli
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /bin/nmcli
 
-# Disk SMART health (read hourly by innate_logger; SMART needs CAP_SYS_ADMIN)
-$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/sbin/smartctl
+# Disk SMART health, read hourly by innate_logger. Spelled out per device and
+# never wildcarded: sudo matches arguments as one string, so a trailing * would
+# also admit `-t long -C` (holds the disk captive) and `-s off` (stops SMART
+# recording). A device outside this list reports nothing, which is the tradeoff.
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/sbin/smartctl --json=c -x /dev/nvme0n1
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/sbin/smartctl --json=c -x /dev/nvme1n1
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/sbin/smartctl --json=c -x /dev/sda
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/sbin/smartctl --json=c -x /dev/sdb
 
 # systemctl for ROS node management (called by innate CLI)
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl start ros-app.service

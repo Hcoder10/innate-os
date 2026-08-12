@@ -14,6 +14,8 @@ import rclpy
 from auth_client import AuthError, AuthProvider
 from diagnostic_msgs.msg import DiagnosticArray
 from dotenv import find_dotenv, load_dotenv
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import BatteryState
 from std_msgs.msg import String
@@ -31,7 +33,7 @@ class LoggerNode(Node):
     LOG_INTERVAL: float = 5.0  # seconds (0.2 Hz)
     DISK_INTERVAL: float = 3600.0
     # Sessions are often shorter than DISK_INTERVAL, so report once early too.
-    DISK_BOOT_DELAY: float = 90.0
+    DISK_BOOT_DELAY: float = 240.0
 
     def __init__(self) -> None:
         super().__init__("logger_node")
@@ -96,8 +98,14 @@ class LoggerNode(Node):
 
         # Timer for vitals logging
         self.create_timer(self.LOG_INTERVAL, self._log_vitals)
-        self._disk_boot_timer = self.create_timer(self.DISK_BOOT_DELAY, self._collect_disk_health_once)
-        self.create_timer(self.DISK_INTERVAL, self._collect_disk_health)
+
+        # A disk sweep can block for seconds; its own group keeps it off the
+        # thread the vitals tick runs on, and keeps the two sweeps off each other.
+        disks = MutuallyExclusiveCallbackGroup()
+        self._disk_boot_timer = self.create_timer(
+            self.DISK_BOOT_DELAY, self._collect_disk_health_once, callback_group=disks
+        )
+        self.create_timer(self.DISK_INTERVAL, self._collect_disk_health, callback_group=disks)
 
     # ── Helpers ─────────────────────────────────────────────────────
 
@@ -224,7 +232,7 @@ class LoggerNode(Node):
 def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = LoggerNode()
-    rclpy.spin(node)
+    rclpy.spin(node, executor=MultiThreadedExecutor(num_threads=2))
     rclpy.shutdown()
 
 
