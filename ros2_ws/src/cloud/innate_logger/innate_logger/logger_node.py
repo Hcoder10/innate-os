@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
+from collections.abc import Callable
 
 import psutil
 import rclpy
@@ -29,9 +31,16 @@ DEFAULT_AUTH_ISSUER_URL = "https://auth-v1.svc.innate.bot"
 
 
 class LoggerNode(Node):
-    """Subscribes to robot topics and logs telemetry at a throttled rate."""
+    """Subscribes to robot topics and logs telemetry at a throttled rate.
 
-    LOG_INTERVAL: float = 5.0  # seconds (0.2 Hz)
+    Every cadence is a live parameter, compared against elapsed time on a fast
+    tick rather than baked into a timer period — so lowering one in rqt takes
+    effect on the next tick instead of at the next restart.
+    """
+
+    TICK: float = 1.0  # the floor on every interval below
+
+    LOG_INTERVAL: float = 5.0
     # Battery, thermals and the memory breakdown. The voltage behind
     # /battery_state only refreshes on a 60s I2C health request, so every tick
     # would ship the same reading a dozen times.
@@ -65,6 +74,10 @@ class LoggerNode(Node):
             "auth_issuer_url",
             os.getenv("INNATE_AUTH_URL", DEFAULT_AUTH_ISSUER_URL),
         )
+        self.declare_parameter("log_interval", self.LOG_INTERVAL)
+        self.declare_parameter("detail_interval", self.DETAIL_INTERVAL)
+        self.declare_parameter("disk_interval", self.DISK_INTERVAL)
+        self.declare_parameter("disk_boot_delay", self.DISK_BOOT_DELAY)
 
         telemetry_url: str = str(self.get_parameter("telemetry_url").get_parameter_value().string_value)
         service_key: str = str(self.get_parameter("service_key").value)
@@ -98,7 +111,12 @@ class LoggerNode(Node):
         self._version: str | None = None
         self._latest_arm: ArmStatus | None = None
         self._pending_disks: dict[str, object] | None = None
-        self._tick: int = 0
+
+        # None means "not yet", which is what the boot delay is measured against.
+        self._started: float = time.monotonic()
+        self._last_vitals: float | None = None
+        self._last_detail: float | None = None
+        self._last_disks: float | None = None
 
         self.create_subscription(ArmStatus, "/mars/arm/status", self._on_arm_status, 1)
         self.create_subscription(BatteryState, "/battery_state", self._on_battery, 1)
@@ -106,22 +124,36 @@ class LoggerNode(Node):
         self.create_subscription(String, "/brain/set_directive", self._on_directive, 10)
         self.create_subscription(String, "/robot/info", self._on_robot_info, 1)
 
-        # Timer for vitals logging
-        self.create_timer(self.LOG_INTERVAL, self._log_vitals)
+        self.create_timer(self.TICK, lambda: self._guarded(self._on_tick, "vitals"))
 
         # A disk sweep can block for seconds; its own group keeps it off the
-        # thread the vitals tick runs on, and keeps the two sweeps off each other.
-        disk_group = MutuallyExclusiveCallbackGroup()
-        self._disk_boot_timer = self.create_timer(
-            self.DISK_BOOT_DELAY, self._collect_disk_health_once, callback_group=disk_group
+        # thread the vitals tick runs on, and serialises the sweeps against
+        # each other.
+        self.create_timer(
+            self.TICK,
+            lambda: self._guarded(self._on_disk_tick, "disk sweep"),
+            callback_group=MutuallyExclusiveCallbackGroup(),
         )
-        self.create_timer(self.DISK_INTERVAL, self._collect_disk_health, callback_group=disk_group)
 
     # ── Helpers ─────────────────────────────────────────────────────
 
-    def _due(self, interval: float) -> bool:
-        """True on one tick out of every `interval` seconds' worth of them."""
-        return self._tick % max(1, round(interval / self.LOG_INTERVAL)) == 0
+    def _seconds(self, parameter: str) -> float:
+        """A cadence parameter, read live so an rqt edit lands on the next tick."""
+        return max(self.TICK, float(self.get_parameter(parameter).value))
+
+    def _elapsed(self, since: float | None) -> float:
+        return time.monotonic() - (self._started if since is None else since)
+
+    def _guarded(self, work: Callable[[], None], what: str) -> None:
+        """Run a timer callback so a bad read cannot take the node with it.
+
+        A thermal zone that refused to be read killed this node outright once;
+        a process whose whole job is reporting health must degrade, not die.
+        """
+        try:
+            work()
+        except Exception as e:  # noqa: BLE001 — a logger that dies reports nothing at all
+            self.get_logger().error(f"{what} failed: {e}", throttle_duration_sec=60.0)
 
     def _log_auth_retry(self, attempt: int, error: AuthError, next_delay: float) -> None:
         self.get_logger().warning(f"Auth not ready yet (attempt {attempt}): {error} — retrying in {next_delay:.0f}s")
@@ -183,8 +215,12 @@ class LoggerNode(Node):
         self.get_logger().info(f"Received directive: {msg.data}")
         self._client.log_directive(msg.data)
 
-    def _collect_disk_health_once(self) -> None:
-        self._disk_boot_timer.cancel()
+    def _on_disk_tick(self) -> None:
+        """Sweep once the boot delay has passed, then once per disk_interval."""
+        wait = self._seconds("disk_boot_delay" if self._last_disks is None else "disk_interval")
+        if self._elapsed(self._last_disks) < wait:
+            return
+        self._last_disks = time.monotonic()
         self._collect_disk_health()
 
     def _collect_disk_health(self) -> None:
@@ -199,9 +235,14 @@ class LoggerNode(Node):
         self._pending_disks = report
         self.get_logger().info(f"disks: {disks.summarize(report)}")
 
+    def _on_tick(self) -> None:
+        if self._elapsed(self._last_vitals) < self._seconds("log_interval"):
+            return
+        self._last_vitals = time.monotonic()
+        self._log_vitals()
+
     def _log_vitals(self) -> None:
         """Collect cached vitals and send to the cloud logger."""
-        self._tick += 1
         cpu_usage = psutil.cpu_percent(interval=None)
 
         vitals: dict[str, object] = {
@@ -224,7 +265,8 @@ class LoggerNode(Node):
 
         summary = f"cpu {cpu_usage:.0f}% | mem {vitals['memory_percent']}%"
 
-        if self._due(self.DETAIL_INTERVAL):
+        if self._elapsed(self._last_detail) >= self._seconds("detail_interval"):
+            self._last_detail = time.monotonic()
             vitals["temperatures"] = host.temperatures()
             vitals.update(host.memory_detail())
             if self._latest_battery is not None:

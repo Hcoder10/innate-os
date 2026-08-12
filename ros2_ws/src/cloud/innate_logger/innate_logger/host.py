@@ -83,8 +83,20 @@ def temperatures() -> dict[str, float]:
 
 
 def _read_text(path: str) -> str | None:
+    """Read a small sysfs attribute, or None if the kernel will not answer.
+
+    os.read rather than open().read(): a thermal zone whose sensor is asleep
+    fails the read, and buffered text IO turns that into `TypeError: can't
+    concat NoneType to bytes` from inside codecs -- which no OSError handler
+    catches, and which took the whole node down on a Jetson.
+    """
     try:
-        with open(path) as f:
-            return f.read().strip()
+        fd = os.open(path, os.O_RDONLY)
     except OSError:
         return None
+    try:
+        return os.read(fd, 4096).decode("utf-8", "replace").strip() or None
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
