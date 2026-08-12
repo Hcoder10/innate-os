@@ -11,8 +11,11 @@ Before=final.target
 Type=oneshot
 User=jetson1
 Environment="XDG_RUNTIME_DIR=/run/user/1000"
-# Play custom shutdown sound
-ExecStart=/usr/bin/gst-play-1.0 /home/jetson1/innate-os/config/sounds/turnoff.mp3
+# SCHED_FIFO so the service-teardown storm can't starve the player past dmix's
+# ~85 ms buffer (audible pops, same fix as the startup sound). The rtprio limit
+# must be granted here: systemd services don't get PAM limits (99-innate-rtprio.conf).
+LimitRTPRIO=50
+ExecStart=/usr/bin/chrt -f 30 /usr/bin/gst-play-1.0 /home/jetson1/innate-os/config/sounds/turnoff.mp3
 TimeoutStartSec=10
 RemainAfterExit=yes
 
