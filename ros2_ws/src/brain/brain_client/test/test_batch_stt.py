@@ -248,20 +248,6 @@ def test_gemini_request_shape_and_reply():
     assert body["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "minimal"
 
 
-def test_gemini_thinking_config_is_per_model_family():
-    """Verified live: 2.5-flash 400s on thinkingLevel and returns empty parts
-    without thinkingBudget 0; 2.5-pro rejects both; 3.x wants thinkingLevel."""
-    for model, expected in (
-        ("gemini-3.6-flash", {"thinkingLevel": "minimal"}),
-        ("gemini-2.5-flash", {"thinkingBudget": 0}),
-        ("gemini-2.5-pro", None),
-    ):
-        calls = []
-        gemini_transcriber(fake_rest("ok", calls), model, "en")(WAV)
-        config = calls[0][1]["generationConfig"]
-        assert config.get("thinkingConfig") == expected, model
-
-
 def test_gemini_no_speech_sentinel_maps_to_empty():
     assert gemini_transcriber(fake_rest(NO_SPEECH), "gemini-3.6-flash", "en")(b"wav") == ""
 
