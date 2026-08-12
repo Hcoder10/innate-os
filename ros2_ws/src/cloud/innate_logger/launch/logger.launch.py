@@ -14,8 +14,8 @@ def generate_launch_description() -> LaunchDescription:
         [
             DeclareLaunchArgument(
                 "log_level",
-                default_value="warn",
-                description="Node log level. 'info' also dumps every telemetry body as it is sent.",
+                default_value="info",
+                description="Node log level. 'debug' also dumps every telemetry body as it is sent.",
             ),
             Node(
                 package="innate_logger",

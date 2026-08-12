@@ -231,7 +231,9 @@ class LoggerNode(Node):
         """
         report = disks.collect()
         if not report["smart"] and disks.devices():
-            self.get_logger().info("No SMART data readable — install smartmontools and run `innate update reinstall`")
+            self.get_logger().warning(
+                "No SMART data readable — install smartmontools and run `innate update reinstall`"
+            )
         self._pending_disks = report
         self.get_logger().info(f"disks: {disks.summarize(report)}")
 
@@ -295,9 +297,8 @@ class LoggerNode(Node):
 
         # One concise health line; full vitals still stream to the cloud every tick.
         self.get_logger().info(f"vitals: {summary}", throttle_duration_sec=30.0)
-        # The exact body, for seeing what the cloud actually receives. Hidden at
-        # the node's default WARN; `log_level:=info` at launch turns it on.
-        self.get_logger().info(f"POST /log/vitals {json.dumps(vitals, default=str)}")
+        # The exact body, for seeing what the cloud actually receives.
+        self.get_logger().debug(f"POST /log/vitals {json.dumps(vitals, default=str)}")
 
         if not self._client.log_vitals(vitals):
             self.get_logger().warning(
