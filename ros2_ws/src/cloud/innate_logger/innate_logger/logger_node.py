@@ -262,8 +262,9 @@ class LoggerNode(Node):
             if value is not None:
                 vitals[key] = value
 
-        if self._pending_disks is not None:
-            vitals["disks"] = self._pending_disks
+        sent_disks = self._pending_disks
+        if sent_disks is not None:
+            vitals["disks"] = sent_disks
 
         summary = f"cpu {cpu_usage:.0f}% | mem {vitals['memory_percent']}%"
 
@@ -307,7 +308,11 @@ class LoggerNode(Node):
             )
             return
 
-        self._pending_disks = None
+        # The POST blocks for seconds while a sweep runs on the other executor
+        # thread; clearing unconditionally would drop a report that arrived
+        # mid-flight and was never sent.
+        if self._pending_disks is sent_disks:
+            self._pending_disks = None
 
 
 def main(args: list[str] | None = None) -> None:
