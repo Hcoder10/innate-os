@@ -179,8 +179,16 @@ if [ "$SERVICE_KEY_MISSING" = true ]; then
     echo ""
 fi
 
-# Play five seconds after the ordered speaker keep-alive service (backgrounded)
-(sleep 5 && XDG_RUNTIME_DIR=/run/user/1000 gst-play-1.0 "$INNATE_OS_ROOT/config/sounds/turnon.mp3" >/dev/null 2>&1) &
+# Play ten seconds after launch, past the worst of the node import storm
+# (backgrounded). SCHED_FIFO so that storm can't starve the player past dmix's
+# ~85 ms buffer (audible pops); rtprio 30 stays under zenoh's watchdog at 48.
+(
+    sleep 10
+    rt=()
+    chrt -f 30 true 2>/dev/null && rt=(chrt -f 30)
+    XDG_RUNTIME_DIR=/run/user/1000 "${rt[@]}" gst-play-1.0 \
+        "$INNATE_OS_ROOT/config/sounds/turnon.mp3" >/dev/null 2>&1
+) &
 disown
 
 # Every pane has sourced the env file by now, so drop it: the service key should
