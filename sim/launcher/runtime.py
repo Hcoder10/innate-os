@@ -292,6 +292,51 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM, require_compose: boo
         command_hint,
         COMPOSE_INSTALL_URL,
     )
+    _warn_broken_image_mounts(result.stdout, command_hint)
+
+
+# Docker 29.0.0 started naming an image mount's layer directory after the hex of
+# the whole `<digest>,src=<ref>,dst=<target>` spec -- twice its length, against
+# NAME_MAX=255. Our refs are content-addressed (`inputs-` + 64 hex), so the spec
+# is 218 chars and `up` dies at container create with "file name too long".
+# moby#51687, fixed in 29.1.4. Not a warning we can act on for the user: even the
+# `:main` default is over the ~53-char budget the two viewer targets leave.
+BROKEN_IMAGE_MOUNT_VERSIONS = ((29, 0, 0), (29, 1, 4))
+
+
+def _warn_broken_image_mounts(version_output: str | None, command_hint: str) -> None:
+    """Warn when the daemon is one that cannot mount the viewer's assets.
+
+    A warning rather than a refusal: every other verb works, and a stale patch
+    release should not be the launcher's call to make. Silent on an unparseable
+    version, like _require_min_version.
+    """
+    found = re.search(r"(\d+)\.(\d+)\.(\d+)", version_output or "")
+    if not found:
+        return
+    low, fixed = BROKEN_IMAGE_MOUNT_VERSIONS
+    if not low <= (int(found.group(1)), int(found.group(2)), int(found.group(3))) < fixed:
+        return
+    first_broken = ".".join(str(part) for part in low)
+    last_broken = ".".join(str(part) for part in (*fixed[:2], fixed[2] - 1))
+    fixed_version = ".".join(str(part) for part in fixed)
+    remedy = (
+        f"Update Docker Desktop to {fixed_version} or newer."
+        if sys.platform == "darwin"
+        else (
+            f"Update Docker Engine to {fixed_version} or newer. Ubuntu's docker.io can sit on a\n"
+            "      broken patch with nothing newer to upgrade to -- if `apt` offers none, switch to\n"
+            "      Docker's own repo: `curl -fsSL https://get.docker.com | sudo sh`"
+        )
+    )
+    warn(
+        f"Docker Engine {found.group(0)} cannot mount the sim viewer's assets.\n"
+        f"      {first_broken}-{last_broken} fail every `type: image` mount with 'file name too long'\n"
+        f"      (moby#51687), so `{command_hint}` will die at container create. No launcher-side\n"
+        f"      workaround exists -- the mount spec is over budget even for the shortest ref.\n"
+        f"      {remedy}\n"
+        f"      Details: https://github.com/moby/moby/issues/51687"
+    )
 
 
 def _require_min_version(
