@@ -24,8 +24,6 @@ import wave
 from collections import deque
 from typing import TYPE_CHECKING, Any
 
-import httpx
-
 from brain_client.brain.transport import GENERATE_PATH
 
 if TYPE_CHECKING:
@@ -151,34 +149,13 @@ class Endpointer:
 
 # ---------- ElevenLabs Scribe batch ----------
 
-ELEVENLABS_DIRECT_URL = "https://api.elevenlabs.io/v1/speech-to-text"
 ELEVENLABS_PROXY_ENDPOINT = "v1/speech-to-text"
-
-
-def _elevenlabs_form(wav: bytes, model: str, language: str) -> tuple[dict, dict]:
-    files = {"file": ("utterance.wav", wav, "audio/wav")}
-    form = {"model_id": model, "language_code": language}
-    return files, form
-
-
-def elevenlabs_direct_transcriber(
-    api_key: str, model: str, language: str, transport: httpx.BaseTransport | None = None
-) -> Transcriber:
-    client = httpx.Client(headers={"xi-api-key": api_key}, timeout=30.0, transport=transport)
-
-    def transcribe(wav: bytes) -> str:
-        files, form = _elevenlabs_form(wav, model, language)
-        resp = client.post(ELEVENLABS_DIRECT_URL, files=files, data=form)
-        if resp.status_code != 200:
-            raise RuntimeError(f"elevenlabs direct: HTTP {resp.status_code}: {resp.text[:200]}")
-        return str(resp.json().get("text", "")).strip()
-
-    return transcribe
 
 
 def elevenlabs_proxy_transcriber(proxy: ProxyClient, model: str, language: str) -> Transcriber:
     def transcribe(wav: bytes) -> str:
-        files, form = _elevenlabs_form(wav, model, language)
+        files = {"file": ("utterance.wav", wav, "audio/wav")}
+        form = {"model_id": model, "language_code": language}
         with proxy.request_stream("elevenlabs", ELEVENLABS_PROXY_ENDPOINT, files=files, form=form) as resp:
             payload = resp.read()
             if resp.status_code != 200:

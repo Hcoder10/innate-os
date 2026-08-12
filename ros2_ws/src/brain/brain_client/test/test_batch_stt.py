@@ -13,8 +13,6 @@ import json
 import threading
 import wave
 
-import httpx
-
 from brain_client.brain.transport import GeminiRest
 from brain_client.inputs.batch_stt import (
     ELEVENLABS_PROXY_ENDPOINT,
@@ -23,7 +21,6 @@ from brain_client.inputs.batch_stt import (
     BatchSttSession,
     Endpointer,
     EnergyDetector,
-    elevenlabs_direct_transcriber,
     elevenlabs_proxy_transcriber,
     gemini_transcriber,
     pcm_to_wav,
@@ -132,45 +129,16 @@ def test_pcm_to_wav_round_trip():
         assert wav.readframes(wav.getnframes()) == pcm
 
 
-# ---------- elevenlabs transcribers ----------
-
-
-def test_elevenlabs_direct_request_shape_and_reply():
-    requests = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
-        return httpx.Response(200, json={"text": " hello robot "})
-
-    transcribe = elevenlabs_direct_transcriber("test-key", "scribe_v2", "en", transport=httpx.MockTransport(handler))
-    assert transcribe(WAV) == "hello robot"
-
-    request = requests[0]
-    assert request.url == "https://api.elevenlabs.io/v1/speech-to-text"
-    assert request.headers["xi-api-key"] == "test-key"
-    assert request.headers["content-type"].startswith("multipart/form-data")
-    body = request.read()
-    assert WAV in body
-    assert b'name="model_id"' in body and b"scribe_v2" in body
-    assert b'name="language_code"' in body
-
-
-def test_elevenlabs_direct_http_error_raises():
-    transcribe = elevenlabs_direct_transcriber(
-        "test-key", "scribe_v2", "en", transport=httpx.MockTransport(lambda r: httpx.Response(401, text="denied"))
-    )
-    try:
-        transcribe(WAV)
-        raise AssertionError("expected RuntimeError")
-    except RuntimeError as e:
-        assert "401" in str(e)
+# ---------- elevenlabs transcriber ----------
 
 
 class FakeProxyResponse:
-    status_code = 200
+    def __init__(self, status_code: int, payload: bytes):
+        self.status_code = status_code
+        self._payload = payload
 
     def read(self):
-        return json.dumps({"text": "via proxy"}).encode()
+        return self._payload
 
     def __enter__(self):
         return self
@@ -180,16 +148,17 @@ class FakeProxyResponse:
 
 
 class FakeProxy:
-    def __init__(self):
+    def __init__(self, status_code: int = 200, payload: bytes = b""):
         self.calls = []
+        self._response = FakeProxyResponse(status_code, payload)
 
     def request_stream(self, service, endpoint, **kwargs):
         self.calls.append((service, endpoint, kwargs))
-        return FakeProxyResponse()
+        return self._response
 
 
 def test_elevenlabs_proxy_request_shape_and_reply():
-    proxy = FakeProxy()
+    proxy = FakeProxy(payload=json.dumps({"text": " via proxy "}).encode())
     transcribe = elevenlabs_proxy_transcriber(proxy, "scribe_v2", "en")
 
     assert transcribe(WAV) == "via proxy"
@@ -198,6 +167,15 @@ def test_elevenlabs_proxy_request_shape_and_reply():
     assert endpoint == ELEVENLABS_PROXY_ENDPOINT
     assert kwargs["files"]["file"] == ("utterance.wav", WAV, "audio/wav")
     assert kwargs["form"] == {"model_id": "scribe_v2", "language_code": "en"}
+
+
+def test_elevenlabs_proxy_http_error_raises():
+    transcribe = elevenlabs_proxy_transcriber(FakeProxy(status_code=401, payload=b"denied"), "scribe_v2", "en")
+    try:
+        transcribe(WAV)
+        raise AssertionError("expected RuntimeError")
+    except RuntimeError as e:
+        assert "401" in str(e)
 
 
 # ---------- gemini transcriber ----------
