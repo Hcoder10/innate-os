@@ -179,12 +179,12 @@ if [ "$SERVICE_KEY_MISSING" = true ]; then
     echo ""
 fi
 
-# Play five seconds after the ordered speaker keep-alive service (backgrounded).
-# SCHED_FIFO so the boot import storm can't starve the player past dmix's ~85 ms
-# buffer (audible pops); rtprio 30 stays under zenoh's watchdog at 48. GST_DEBUG=2
-# keeps warnings (incl. underruns) in data/ to confirm the diagnosis at real boots.
+# Play ten seconds after launch, past the worst of the node import storm
+# (backgrounded). SCHED_FIFO so that storm can't starve the player past dmix's
+# ~85 ms buffer (audible pops); rtprio 30 stays under zenoh's watchdog at 48.
+# GST_DEBUG=2 keeps warnings (incl. underruns) in data/ to confirm at real boots.
 (
-    sleep 5
+    sleep 10
     rt=()
     chrt -f 30 true 2>/dev/null && rt=(chrt -f 30)
     XDG_RUNTIME_DIR=/run/user/1000 GST_DEBUG=2 "${rt[@]}" gst-play-1.0 \
