@@ -236,6 +236,11 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM, require_compose: boo
         )
         raise StackError(f"{message}\n{start_help}, then rerun `{command_hint}`.")
 
+    # Right after the engine probe, before any Compose check can raise over
+    # it: a broken-mount daemon plus an old Compose plugin are two problems,
+    # and fixing the second must not hide the first.
+    _warn_broken_image_mounts(result.stdout)
+
     if not require_compose:
         return
 
@@ -292,53 +297,56 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM, require_compose: boo
         command_hint,
         COMPOSE_INSTALL_URL,
     )
-    _warn_broken_image_mounts(result.stdout)
 
 
-# Docker 29.0.0 started naming an image mount's layer directory after the hex of
-# the whole `<digest>,src=<ref>,dst=<target>` spec -- twice its length, against
-# NAME_MAX=255. Our refs are content-addressed (`inputs-` + 64 hex), so the spec
-# is 218 chars and `up` dies at container create with "file name too long".
-# moby#51687, fixed in 29.1.4. Not a warning we can act on for the user: even the
-# `:main` default is over the ~53-char budget the two viewer targets leave.
-BROKEN_IMAGE_MOUNT_VERSIONS = ((29, 0, 0), (29, 1, 4))
+# Docker 29.0.0 names an image mount's layer directory after the hex of the whole
+# mount spec -- past NAME_MAX=255 for even our shortest ref, so `up` dies at
+# container create with "file name too long" (moby#51687; 29.1.4 hashes it).
+BROKEN_IMAGE_MOUNTS_SINCE = (29, 0, 0)
+BROKEN_IMAGE_MOUNTS_FIXED = (29, 1, 4)
 
 
+@functools.cache  # `up` probes the daemon twice (cmd_up, then start_cloud_agent) -- warn once
 def _warn_broken_image_mounts(version_output: str | None) -> None:
-    """Warn when the daemon is one that cannot mount the viewer's assets.
-
-    A warning rather than a refusal: every other verb works, and a stale patch
-    release should not be the launcher's call to make. Names `up` rather than
-    the caller's command_hint -- every verb runs this preflight, but only `up`
-    creates the container the mount fails on. Silent on an unparseable version,
-    like _require_min_version.
-    """
-    found = re.search(r"(\d+)\.(\d+)\.(\d+)", version_output or "")
-    if not found:
+    """Warn -- not refuse, every other verb works -- when the daemon's `type: image`
+    mounts are broken, so `up` fails at preflight with a diagnosis instead of a hex
+    blob. Names `up` whichever verb ran the preflight: only `up` creates the
+    container. Silent on an unparseable version, like _require_min_version."""
+    version = _parse_version(version_output)
+    if version is None or len(version) < 3:
         return
-    low, fixed = BROKEN_IMAGE_MOUNT_VERSIONS
-    if not low <= (int(found.group(1)), int(found.group(2)), int(found.group(3))) < fixed:
+    if not BROKEN_IMAGE_MOUNTS_SINCE <= version < BROKEN_IMAGE_MOUNTS_FIXED:
         return
-    first_broken = ".".join(str(part) for part in low)
-    last_broken = ".".join(str(part) for part in (*fixed[:2], fixed[2] - 1))
-    fixed_version = ".".join(str(part) for part in fixed)
+    running = ".".join(map(str, version))
+    since = ".".join(map(str, BROKEN_IMAGE_MOUNTS_SINCE))
+    fixed = ".".join(map(str, BROKEN_IMAGE_MOUNTS_FIXED))
     remedy = (
-        f"Update Docker Desktop to {fixed_version} or newer."
+        f"Update Docker Desktop -- the app update ships a fixed engine ({fixed} or newer)."
         if sys.platform == "darwin"
         else (
-            f"Update Docker Engine to {fixed_version} or newer. Ubuntu's docker.io can sit on a\n"
-            "      broken patch with nothing newer to upgrade to -- if `apt` offers none, switch to\n"
-            "      Docker's own repo: `curl -fsSL https://get.docker.com | sudo sh`"
+            f"Update Docker Engine to {fixed} or newer (Docker Desktop: update the app).\n"
+            "      Ubuntu's docker.io can sit on a broken patch with nothing newer to upgrade\n"
+            "      to -- if `apt` offers none, switch to Docker's own repo:\n"
+            "      `curl -fsSL https://get.docker.com | sudo sh`"
         )
     )
     warn(
-        f"Docker Engine {found.group(0)} cannot mount the sim viewer's assets.\n"
-        f"      {first_broken}-{last_broken} fail every `type: image` mount with 'file name too long'\n"
-        f"      (moby#51687), so `{CLI_SIM} up` will die at container create. No launcher-side\n"
-        f"      workaround exists -- the mount spec is over budget even for the shortest ref.\n"
+        f"Docker Engine {running} cannot mount the sim viewer's assets.\n"
+        f"      Engines since {since} fail every `type: image` mount with 'file name too\n"
+        f"      long' (moby#51687, fixed in {fixed}), so `{CLI_SIM} up` will die at container\n"
+        f"      create. No launcher-side workaround exists -- the mount spec is over budget\n"
+        f"      even for the shortest ref.\n"
         f"      {remedy}\n"
         f"      Details: https://github.com/moby/moby/issues/51687"
     )
+
+
+def _parse_version(version_output: str | None) -> tuple[int, ...] | None:
+    """First `[v]major.minor[.patch]` in a version-command's output, or None."""
+    found = re.search(r"v?(\d+)\.(\d+)(?:\.(\d+))?", version_output or "")
+    if found is None:
+        return None
+    return tuple(int(part) for part in found.groups() if part is not None)
 
 
 def _require_min_version(
@@ -353,11 +361,11 @@ def _require_min_version(
     `minimum`. Silent when the version cannot be parsed: an unrecognised build
     string is not evidence of an old one, and a false refusal to start is worse
     than the raw error this pre-empts."""
-    found = re.search(r"v?(\d+)\.(\d+)", version_output or "")
-    if not found or (int(found.group(1)), int(found.group(2))) >= minimum:
+    version = _parse_version(version_output)
+    if version is None or version[:2] >= minimum:
         return
     raise StackError(
-        f"{label} {found.group(0)} is too old: the sim mounts its viewer assets straight from "
+        f"{label} {'.'.join(map(str, version))} is too old: the sim mounts its viewer assets straight from "
         f"an image (`type: image`), which needs {label} {minimum[0]}.{minimum[1]} or newer.\n"
         f"{remedy}, then rerun `{command_hint}`.\nGuide: {guide_url}"
     )
