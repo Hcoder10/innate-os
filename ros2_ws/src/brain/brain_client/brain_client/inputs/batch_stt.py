@@ -22,22 +22,36 @@ import queue
 import threading
 import wave
 from collections import deque
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Protocol
 
 from brain_client.brain.transport import GENERATE_PATH
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from brain_client.brain.transport import GeminiRest
     from brain_client.common.logging import UniversalLogger
     from innate_proxy import ProxyClient
 
-    Transcriber = Callable[[bytes], str]
-    """WAV bytes -> transcript text; "" when nothing was said."""
+# Runtime aliases, not TYPE_CHECKING-only: workspace/inputs/micro_input.py
+# annotates against them and has no `from __future__ import annotations`.
+Transcriber = Callable[[bytes], str]
+"""WAV bytes -> transcript text; "" when nothing was said."""
 
-    VoicedDetector = Callable[[bytes], bool]
-    """One PCM chunk -> does it contain speech?"""
+
+class VoicedDetector(Protocol):
+    """One PCM chunk -> does it contain speech?
+
+    The three attributes are not decoration: MicroInput publishes them as the
+    webapp's VAD telemetry, so a detector that only implements __call__ breaks
+    the voice panel at runtime.
+    """
+
+    threshold: float
+    level: float
+    voiced: bool
+
+    def __call__(self, chunk: bytes) -> bool: ...
+
 
 PRE_ROLL_SECS = 0.4
 MAX_UTTERANCE_SECS = 30.0
@@ -45,8 +59,12 @@ MIN_VOICED_SECS = 0.25
 
 
 def rms_level(chunk: bytes) -> float:
-    """Normalized RMS (0..1) of a 16-bit mono PCM chunk."""
-    samples = array.array("h", chunk)
+    """Normalized RMS (0..1) of a 16-bit mono PCM chunk.
+
+    A trailing odd byte is not a sample: raw capture pipes can hand over a
+    partial frame, and int16 parsing raises on it rather than ignoring it.
+    """
+    samples = array.array("h", chunk[: len(chunk) - len(chunk) % 2])
     if not samples:
         return 0.0
     return math.sqrt(sum(s * s for s in samples) / len(samples)) / 32768.0
@@ -132,7 +150,7 @@ class Endpointer:
     def _buffer_pre_roll(self, chunk: bytes) -> None:
         self._pre_roll.append(chunk)
         self._pre_roll_bytes += len(chunk)
-        while self._pre_roll_bytes > PRE_ROLL_SECS * self._bytes_per_sec:
+        while self._pre_roll and self._pre_roll_bytes > PRE_ROLL_SECS * self._bytes_per_sec:
             self._pre_roll_bytes -= len(self._pre_roll.popleft())
 
     def _close(self) -> bytes | None:

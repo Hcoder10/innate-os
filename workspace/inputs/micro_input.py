@@ -36,6 +36,8 @@ from brain_client.common.logging import UniversalLogger
 from brain_client.inputs.batch_stt import (
     BatchSttSession,
     EnergyDetector,
+    Transcriber,
+    VoicedDetector,
     elevenlabs_proxy_transcriber,
     gemini_transcriber,
 )
@@ -56,6 +58,8 @@ DEFAULT_STT_BACKEND = "elevenlabs_batch"
 
 VAD_ENGINES = frozenset({"silero", "energy"})
 DEFAULT_VAD_ENGINE = "silero"
+# Reported to the webapp when the vendor endpoints server-side (realtime backends).
+VENDOR_VAD_ENGINE = "vendor"
 
 # One vad_status frame per this many mic chunks (20 ms each) — 5 Hz on the wire.
 VAD_STATUS_EVERY_CHUNKS = 10
@@ -96,6 +100,7 @@ class MicroInput(InputDevice):
         self._backend = DEFAULT_STT_BACKEND
         self._vad_engine = DEFAULT_VAD_ENGINE
         self._vad_detector = None
+        self._last_transcript = ""
         self._stop_evt = threading.Event()
         self._audio_thread = None
         self._is_robot_talking = False  # For ducking (mic-specific)
@@ -305,6 +310,7 @@ class MicroInput(InputDevice):
         self._is_connected = True
         self._reconnect_delay = 1  # Reset delay on successful connection
         self.logger.info(f"✅ Connected to {self._backend} STT (model: {model})")
+        self._send_vad_status()  # so the panel names the backend before any audio arrives
 
     def _connect_elevenlabs_batch(self) -> str:
         """Start a batch-transcription session on ElevenLabs Scribe. Returns the model id."""
@@ -324,7 +330,7 @@ class MicroInput(InputDevice):
         self._start_batch_session(gemini_transcriber(rest, model, self._stt_language()), model)
         return model
 
-    def _start_batch_session(self, transcriber, model: str):
+    def _start_batch_session(self, transcriber: Transcriber, model: str) -> None:
         cfg = self.proxy.config
         silence_secs = float(cfg.get("stt_vad_silence_secs", 0.7))
         is_voiced, engine = self._make_vad(cfg)
@@ -338,7 +344,7 @@ class MicroInput(InputDevice):
             logger=self.logger,
         )
 
-    def _make_vad(self, cfg):
+    def _make_vad(self, cfg: dict) -> tuple[VoicedDetector, str]:
         """Build the voiced detector for the batch endpointer: (detector, engine name)."""
         engine = str(cfg.get("stt_vad_engine") or DEFAULT_VAD_ENGINE).strip().lower()
         if engine not in VAD_ENGINES:
@@ -346,31 +352,44 @@ class MicroInput(InputDevice):
                 f"❌ Unknown stt_vad_engine {engine!r} — using {DEFAULT_VAD_ENGINE!r} (options: {sorted(VAD_ENGINES)})"
             )
             engine = DEFAULT_VAD_ENGINE
+        detector: VoicedDetector | None = None
         if engine == "silero":
             threshold = float(cfg.get("stt_vad_threshold", 0.3))
             detector = silero_detector(threshold, DEFAULT_SAMPLE_RATE, self.logger)
             if detector is None:
                 engine = "energy"  # silero_detector logged why
-        if engine == "energy":
+        if detector is None:
             detector = EnergyDetector(float(cfg.get("stt_energy_threshold", 0.01)))
         self._vad_detector, self._vad_engine = detector, engine
         return detector, engine
 
-    def _send_vad_status(self):
-        """One vad_status frame for the webapp's voice panel (batch backends only)."""
-        detector = self._vad_detector
-        if detector is None:
+    def _send_vad_status(self) -> None:
+        """One vad_status frame for the webapp's voice panel.
+
+        Realtime backends have no local detector — they still send a frame so
+        the panel can say the vendor owns endpointing instead of sitting on
+        "waiting for VAD telemetry" forever.
+        """
+        client, detector = self.client, self._vad_detector
+        if client is None:
+            return
+        frame = {
+            "kind": "vad_status",
+            "backend": self._backend,
+            "engine": self._vad_engine,
+            "last_transcript": self._last_transcript,
+        }
+        if self._backend not in BATCH_BACKENDS or detector is None:
+            self.send_data({**frame, "engine": VENDOR_VAD_ENGINE}, data_type="telemetry")
             return
         self.send_data(
             {
-                "kind": "vad_status",
-                "backend": self._backend,
-                "engine": self._vad_engine,
+                **frame,
                 "threshold": detector.threshold,
                 "level": round(detector.level, 4),
                 "voiced": detector.voiced,
                 "ducking": self._is_robot_talking,
-                **self.client.status(),
+                **client.status(),
             },
             data_type="telemetry",
         )
@@ -625,12 +644,14 @@ class MicroInput(InputDevice):
 
         return preferred_device["id"] if preferred_device else None
 
-    def _on_transcript(self, text: str):
+    def _on_transcript(self, text: str) -> None:
         """Called when transcript is ready."""
         if text:
             self.logger.info(f"🎤 Transcript: {text}")
 
             self.send_data(text, data_type="chat_in")
+            self._last_transcript = text
+            self._send_vad_status()
 
 
 # ========== Audio Streaming Helpers ==========
@@ -679,8 +700,12 @@ class ArecordStreamer:
                 frame_bytes = int(self.sample_rate * CHUNK_DURATION_SEC * self.channels * bytes_per_sample)
                 self.logger.info(f"🎙️ Reader thread started, reading {frame_bytes} bytes per chunk")
                 chunks_read = 0
+                # bufsize=0 makes stdout a raw FileIO: read(n) returns *at most* n
+                # bytes, at any offset. Consumers parse chunks as int16 frames, so
+                # a chunk of odd length raises — accumulate and emit whole frames.
+                pending = bytearray()
                 while not self._stop.is_set():
-                    buf = self._proc.stdout.read(frame_bytes)
+                    buf = self._proc.stdout.read(frame_bytes - len(pending))
                     if not buf:
                         # Check if process died
                         if self._proc.poll() is not None:
@@ -689,11 +714,15 @@ class ArecordStreamer:
                             break
                         time.sleep(0.01)
                         continue
+                    pending.extend(buf)
+                    if len(pending) < frame_bytes:
+                        continue
+                    chunk, pending = bytes(pending), bytearray()
                     chunks_read += 1
                     if chunks_read == 1:
-                        self.logger.info(f"🎙️ First audio chunk received ({len(buf)} bytes)")
+                        self.logger.info(f"🎙️ First audio chunk received ({len(chunk)} bytes)")
                     try:
-                        self.queue.put_nowait(buf)
+                        self.queue.put_nowait(chunk)
                     except queue.Full:
                         pass
             except Exception as e:

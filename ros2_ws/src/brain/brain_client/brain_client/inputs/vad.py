@@ -32,7 +32,8 @@ EXIT_THRESHOLD_DELTA = 0.15
 
 
 def pcm16_to_f32(chunk: bytes) -> np.ndarray:
-    return np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+    """A trailing odd byte is a partial frame from the capture pipe, not a sample."""
+    return np.frombuffer(chunk[: len(chunk) - len(chunk) % 2], dtype=np.int16).astype(np.float32) / 32768.0
 
 
 def resample_24k_to_16k(samples: np.ndarray) -> np.ndarray:

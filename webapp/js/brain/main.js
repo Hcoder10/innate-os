@@ -240,15 +240,21 @@ export function createBrainMonitor(root, opts = {}) {
     $(".br-needle").style.transform = `rotate(${(-yaw * 180) / Math.PI}deg)`;
   }
 
-  /** @param {boolean} on */
   let vadAt = 0; // performance.now() of the last vad_status — 0 until one arrives
 
   /** @param {any} d */
   function onVadStatus(d) {
     if (d.kind !== "vad_status" || d.input_device !== "micro") return;
     vadAt = performance.now();
+    if (d.last_transcript) $(".br-vad-heard").textContent = d.last_transcript;
+    // Realtime backends endpoint server-side: there is no local level to plot.
+    const vendorVad = d.engine === "vendor";
+    $(".br-panel-voice").classList.toggle("no-vad", vendorVad);
+    $(".br-vad-sub").textContent = vendorVad
+      ? `${d.backend} endpoints server-side`
+      : `${d.engine} vad · ${d.backend}`;
+    if (vendorVad) return;
     const threshold = d.threshold ?? 0;
-    $(".br-vad-sub").textContent = `${d.engine} vad · ${d.backend}`;
     $(".br-vad-fill").style.width = (Math.min(1, d.level ?? 0) * 100).toFixed(1) + "%";
     $(".br-vad-tick").style.left = (Math.min(1, threshold) * 100).toFixed(1) + "%";
     $(".br-vad-lvl").textContent = (d.level ?? 0).toFixed(2) + " ≷ " + threshold.toFixed(2);
@@ -263,11 +269,7 @@ export function createBrainMonitor(root, opts = {}) {
     failTile.classList.toggle("bad", fails > 0);
   }
 
-  /** @param {any} d */
-  function onChatIn(d) {
-    if (d.text) $(".br-vad-heard").textContent = d.text;
-  }
-
+  /** @param {boolean} on */
   function setSpeaking(on) {
     $(".br-chip-voice").classList.toggle("talk", on);
   }
@@ -793,7 +795,6 @@ export function createBrainMonitor(root, opts = {}) {
       ros.subscribe("/brain/skill_status_update", jsonHandler(onSkill), 0, "std_msgs/msg/String"),
       ros.subscribe("/tts/is_playing", (msg) => setSpeaking(msg.data === "true"), 0, "std_msgs/msg/String"),
       ros.subscribe("/input_manager/telemetry", jsonHandler(onVadStatus), 0, "std_msgs/msg/String"),
-      ros.subscribe("/brain/chat_in", jsonHandler(onChatIn), 0, "std_msgs/msg/String"),
       ros.subscribe(
         "/odom",
         (msg) => {
@@ -920,7 +921,7 @@ function template() {
         <div class="br-tile" title="Utterances closed and sent to transcription"><div class="v br-vad-count">0</div><div class="l">utterances</div></div>
         <div class="br-tile" title="Transcription requests that failed"><div class="v br-vad-fail">0</div><div class="l">failed</div></div>
       </div>
-      <div class="br-vad-last" title="Last transcript — /brain/chat_in"><span class="l">heard</span><span class="t br-vad-heard">—</span></div>
+      <div class="br-vad-last" title="Last transcript the microphone produced"><span class="l">heard</span><span class="t br-vad-heard">—</span></div>
     </section>
 
     <section class="br-panel br-panel-vitals">

@@ -73,6 +73,12 @@ def test_pcm16_to_f32_scales_to_unit_range():
     assert pcm16_to_f32(pcm).tolist() == [-1.0, 0.0, 0.5]
 
 
+def test_pcm16_to_f32_ignores_a_trailing_odd_byte():
+    """arecord's pipe is raw (bufsize=0), so a read can end mid-frame."""
+    pcm = np.array([-32768, 0, 16384], dtype=np.int16).tobytes() + b"\x01"
+    assert pcm16_to_f32(pcm).tolist() == [-1.0, 0.0, 0.5]
+
+
 # ---------- detector state machine ----------
 
 
