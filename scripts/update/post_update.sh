@@ -932,6 +932,25 @@ for meta_file in "$REPO_DIR"/workspace/innate_skills/*/metadata.json "$REPO_DIR"
 done
 
 # -----------------------------------------------------------------------------
+# 11c. Download boot sounds
+# 48 kHz PCM WAVs (dmix's rate: no decode/resample in the boot-time playback
+# window) — too heavy for git, so fetched from GCS. Non-fatal: a missing sound
+# only means a silent boot, never a failed update.
+# -----------------------------------------------------------------------------
+SOUNDS_BASE_URL="https://storage.googleapis.com/karmanyaah-public/sounds"
+for sound in turnon.wav turnoff.wav; do
+    dest="$REPO_DIR/config/sounds/$sound"
+    [ -f "$dest" ] && continue
+    log "  Downloading $dest"
+    if sudo -u "$ACTUAL_USER" curl -fsSL -o "$dest.tmp" "$SOUNDS_BASE_URL/$sound"; then
+        mv "$dest.tmp" "$dest"
+    else
+        rm -f "$dest.tmp"
+        log "  WARNING: failed to download $sound (boot will be silent; retried next update)"
+    fi
+done
+
+# -----------------------------------------------------------------------------
 # 12. Enable and restart services
 # -----------------------------------------------------------------------------
 log "Enabling and starting services..."
