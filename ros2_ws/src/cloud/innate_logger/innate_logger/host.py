@@ -76,9 +76,12 @@ def temperatures() -> dict[str, float]:
         if name is None or millidegrees is None:
             continue
         try:
-            readings[name] = int(millidegrees) / 1000.0
+            value = int(millidegrees) / 1000.0
         except ValueError:
             continue
+        if name in readings:  # boards repeat a type (acpitz, per-cluster CPU zones)
+            name = f"{name}:{zone.rsplit('thermal_zone', 1)[-1]}"
+        readings[name] = value
     return readings
 
 

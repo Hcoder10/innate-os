@@ -111,6 +111,7 @@ class LoggerNode(Node):
         self._version: str | None = None
         self._latest_arm: ArmStatus | None = None
         self._pending_disks: dict[str, object] | None = None
+        self._last_error: dict[str, float] = {}
 
         # None means "not yet", which is what the boot delay is measured against.
         self._started: float = time.monotonic()
@@ -153,7 +154,12 @@ class LoggerNode(Node):
         try:
             work()
         except Exception as e:  # noqa: BLE001 — a logger that dies reports nothing at all
-            self.get_logger().error(f"{what} failed: {e}", throttle_duration_sec=60.0)
+            # Throttled by hand: rclpy keys throttle_duration_sec on the call
+            # site, which both timers share — one failing stream muted the other.
+            now = time.monotonic()
+            if now - self._last_error.get(what, float("-inf")) >= 60.0:
+                self._last_error[what] = now
+                self.get_logger().error(f"{what} failed: {e}")
 
     def _log_auth_retry(self, attempt: int, error: AuthError, next_delay: float) -> None:
         self.get_logger().warning(f"Auth not ready yet (attempt {attempt}): {error} — retrying in {next_delay:.0f}s")
@@ -192,6 +198,10 @@ class LoggerNode(Node):
         try:
             info = json.loads(msg.data)
         except json.JSONDecodeError:
+            info = None
+        # Subscription callbacks have no _guarded boundary: a bare `null` here
+        # would raise out of the executor and take the node down.
+        if not isinstance(info, dict):
             self.get_logger().warning("Malformed JSON on /robot/info", throttle_duration_sec=60.0)
             return
 
@@ -268,17 +278,22 @@ class LoggerNode(Node):
 
         summary = f"cpu {cpu_usage:.0f}% | mem {vitals['memory_percent']}%"
 
+        if self._latest_battery is not None:
+            bat = self._latest_battery
+            # In the summary on every tick, not just detail ticks: the 30s
+            # console throttle and the 30s detail cadence run out of phase, so
+            # a battery segment gated on detail never reaches the console.
+            summary += f" | battery {bat.voltage:.2f}V ({bat.percentage:.0%})"
+
         if self._elapsed(self._last_detail) >= self._seconds("detail_interval"):
             self._last_detail = time.monotonic()
             vitals["temperatures"] = host.temperatures()
             vitals.update(host.memory_detail())
             if self._latest_battery is not None:
-                bat = self._latest_battery
                 # No power_supply_status: mars_bringup hardcodes it to
                 # DISCHARGING, so it is the constant 2 on every robot forever.
-                vitals["battery_voltage"] = bat.voltage
-                vitals["battery_percentage"] = bat.percentage
-                summary += f" | battery {bat.voltage:.2f}V ({bat.percentage:.0%})"
+                vitals["battery_voltage"] = self._latest_battery.voltage
+                vitals["battery_percentage"] = self._latest_battery.percentage
 
         if self._latest_arm is not None:
             vitals["arm_ok"] = self._latest_arm.is_ok

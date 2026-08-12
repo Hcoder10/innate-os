@@ -53,7 +53,11 @@ def filesystems() -> list[dict[str, Any]]:
     fstrim.timer instead, so an absent option is not an absent TRIM.
     """
     mounts: list[dict[str, Any]] = []
-    for part in psutil.disk_partitions(all=False):
+    try:
+        partitions = psutil.disk_partitions(all=False)
+    except OSError:
+        return mounts
+    for part in partitions:
         if part.fstype in SKIP_FSTYPES or part.device.startswith("/dev/loop"):
             continue
         try:
@@ -115,13 +119,15 @@ def _read_smart(device: str) -> dict[str, Any] | None:
 
 
 def _summarize_device(data: dict[str, Any]) -> str:
+    # `or {}` rather than a .get default: smartctl emits some of these keys
+    # with an explicit null.
     parts: list[str] = []
-    if (temp := data.get("temperature", {}).get("current")) is not None:
+    if (temp := (data.get("temperature") or {}).get("current")) is not None:
         parts.append(f"{temp}C")
-    if (hours := data.get("power_on_time", {}).get("hours")) is not None:
+    if (hours := (data.get("power_on_time") or {}).get("hours")) is not None:
         parts.append(f"{hours}h")
-    if (used := data.get("nvme_smart_health_information_log", {}).get("percentage_used")) is not None:
+    if (used := (data.get("nvme_smart_health_information_log") or {}).get("percentage_used")) is not None:
         parts.append(f"{used}% used")
-    if (passed := data.get("smart_status", {}).get("passed")) is not None:
+    if (passed := (data.get("smart_status") or {}).get("passed")) is not None:
         parts.append("ok" if passed else "FAILING")
     return " ".join(parts) or "no data"
