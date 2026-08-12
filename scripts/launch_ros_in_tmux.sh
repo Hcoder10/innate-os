@@ -182,14 +182,12 @@ fi
 # Play ten seconds after launch, past the worst of the node import storm
 # (backgrounded). SCHED_FIFO so that storm can't starve the player past dmix's
 # ~85 ms buffer (audible pops); rtprio 30 stays under zenoh's watchdog at 48.
-# GST_DEBUG=2 keeps warnings (incl. underruns) in data/ to confirm at real boots.
 (
     sleep 10
     rt=()
     chrt -f 30 true 2>/dev/null && rt=(chrt -f 30)
-    XDG_RUNTIME_DIR=/run/user/1000 GST_DEBUG=2 "${rt[@]}" gst-play-1.0 \
-        "$INNATE_OS_ROOT/config/sounds/turnon.mp3" \
-        >/dev/null 2>"$INNATE_OS_ROOT/data/startup_sound_gst.log"
+    XDG_RUNTIME_DIR=/run/user/1000 "${rt[@]}" gst-play-1.0 \
+        "$INNATE_OS_ROOT/config/sounds/turnon.mp3" >/dev/null 2>&1
 ) &
 disown
 
