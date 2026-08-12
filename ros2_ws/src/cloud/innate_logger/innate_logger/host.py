@@ -43,8 +43,8 @@ def memory_detail() -> dict[str, int]:
     no separate figure to read here; attributing a slice of it to the GPU needs
     tegrastats or debugfs.
 
-    `swap_in`/`swap_out` are cumulative pages since boot: the delta between two
-    samples is the thrash rate, which is the number that matters.
+    `swap_in_bytes`/`swap_out_bytes` are cumulative since boot: the delta
+    between two samples is the thrash rate, which is the number that matters.
     """
     memory = psutil.virtual_memory()
     swap = psutil.swap_memory()
@@ -58,8 +58,8 @@ def memory_detail() -> dict[str, int]:
         "memory_slab_mb": memory.slab // 1048576,
         "swap_total_mb": swap.total // 1048576,
         "swap_used_mb": swap.used // 1048576,
-        "swap_in": swap.sin,
-        "swap_out": swap.sout,
+        "swap_in_bytes": swap.sin,
+        "swap_out_bytes": swap.sout,
     }
 
 
