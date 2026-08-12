@@ -73,7 +73,6 @@ THEME = {
     "panel_frame": (128, 82, 82),
     "panel_fill": (30, 31, 36),
     "log_sim": (119, 202, 155),
-    "log_agent": (120, 198, 255),
     "log_brain": (220, 112, 112),
     "health_start": (119, 202, 155),
     "health_mid": (203, 192, 108),
@@ -100,14 +99,11 @@ THEME = {
 class DashboardCallbacks:
     collect_status_snapshot: Callable[[dict[str, object]], dict[str, object]]
     capture_os_brain_logs: Callable[..., list[str]]
-    capture_agent_logs: Callable[..., list[str]]
     success: Callable[[str], None]
 
 
 @dataclass(frozen=True)
 class DashboardOptions:
-    hosted_mode: str
-    local_modes: set[str]
     cli_sim: str
     state_dir: Path
 
@@ -128,13 +124,11 @@ class DashboardRuntime:
         self,
         config: dict[str, object],
         callbacks: DashboardCallbacks,
-        options: DashboardOptions,
         *,
         log_cache_lines: int = 160,
     ):
         self.config = config
         self.callbacks = callbacks
-        self.options = options
         self.log_cache_lines = log_cache_lines
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
@@ -144,12 +138,7 @@ class DashboardRuntime:
         self.log_rev = 1
 
     def _collect_logs(self, snapshot: dict[str, object]) -> dict[str, list[str]]:
-        logs = {
-            "brain": self.callbacks.capture_os_brain_logs(self.config, lines=self.log_cache_lines),
-        }
-        if self.config["mode"] != self.options.hosted_mode:
-            logs["agent"] = self.callbacks.capture_agent_logs(self.config, lines=self.log_cache_lines)
-        return logs
+        return {"brain": self.callbacks.capture_os_brain_logs(self.config, lines=self.log_cache_lines)}
 
     def read(self) -> tuple[dict[str, object], dict[str, list[str]], int, int]:
         with self.lock:
@@ -192,7 +181,7 @@ def print_banner() -> None:
     # buffer, so it never needs a destructive clear either.
     divider()
     print_ascii_banner()
-    print(f"{DIM}one env // one cli // os + sim + optional cloud agent{NC}")
+    print(f"{DIM}one env // one cli // os + sim{NC}")
     divider()
 
 
@@ -316,29 +305,16 @@ def dashboard_brain_log_worker(runtime: DashboardRuntime, interval_seconds: floa
         runtime.stop_event.wait(interval_seconds)
 
 
-def dashboard_agent_log_worker(runtime: DashboardRuntime, interval_seconds: float = 1.5) -> None:
-    while not runtime.stop_event.is_set():
-        runtime.set_log(
-            "agent",
-            runtime.callbacks.capture_agent_logs(runtime.config, lines=runtime.log_cache_lines),
-        )
-        runtime.stop_event.wait(interval_seconds)
-
-
 @contextlib.contextmanager
 def dashboard_runtime(
     config: dict[str, object],
     callbacks: DashboardCallbacks,
-    options: DashboardOptions,
 ):
-    runtime = DashboardRuntime(config, callbacks, options)
+    runtime = DashboardRuntime(config, callbacks)
     threads = [
         threading.Thread(target=dashboard_snapshot_worker, args=(runtime,), daemon=True),
         threading.Thread(target=dashboard_brain_log_worker, args=(runtime,), daemon=True),
     ]
-    if config["mode"] != options.hosted_mode:
-        threads.append(threading.Thread(target=dashboard_agent_log_worker, args=(runtime,), daemon=True))
-
     for thread in threads:
         thread.start()
 
@@ -704,65 +680,30 @@ def render_log_box(
     return [top, *body, bottom]
 
 
-def print_log_columns(columns: list[tuple[str, list[str], tuple[int, int, int]]], *, available_height: int) -> None:
-    width = shutil.get_terminal_size((150, 40)).columns
+def print_log_pane(
+    title: str,
+    lines: list[str],
+    border_rgb: tuple[int, int, int],
+    *,
+    available_height: int,
+) -> None:
     if available_height < 3:
         print(
             colorize(
-                "Terminal too short for live log panes. Enlarge the window to show them.",
+                "Terminal too short for the live log pane. Enlarge the window to show it.",
                 fg=THEME["dim"],
                 dim=True,
             )
         )
         return
 
-    if len(columns) == 1 or width < 120:
-        gap_lines = 1 if available_height >= len(columns) * 5 else 0
-        total_gap_lines = gap_lines * max(len(columns) - 1, 0)
-        remaining_for_boxes = max(available_height - total_gap_lines, len(columns))
-        box_height = remaining_for_boxes // len(columns)
-        if box_height < 3:
-            print(
-                colorize(
-                    "Terminal too short for stacked log panes. Enlarge the window to show them.",
-                    fg=THEME["dim"],
-                    dim=True,
-                )
-            )
-            return
-
-        for index, (title, lines, border_rgb) in enumerate(columns):
-            if index > 0 and gap_lines:
-                print()
-            for row in render_log_box(title, lines, width=width, height=box_height, border_rgb=border_rgb):
-                print(row)
-        return
-
-    gap = 2
-    box_height = max(available_height, 3)
-    inner_width = max((width - gap * (len(columns) - 1)) // len(columns), 24)
-    rendered_columns = [
-        render_log_box(
-            title,
-            lines,
-            width=inner_width,
-            height=box_height,
-            border_rgb=border_rgb,
-        )
-        for title, lines, border_rgb in columns
-    ]
-
-    for row_index in range(box_height):
-        print("  ".join(column[row_index] for column in rendered_columns))
+    width = shutil.get_terminal_size((150, 40)).columns
+    for row in render_log_box(title, lines, width=width, height=available_height, border_rgb=border_rgb):
+        print(row)
 
 
-def runtime_is_down(
-    config: dict[str, object],
-    options: DashboardOptions,
-    snapshot: dict[str, object],
-) -> bool:
-    local_agent_running = config["mode"] != options.hosted_mode and bool(snapshot["agent_running"])
-    return not bool(snapshot["os_running"]) and not bool(snapshot["sim_running"]) and not local_agent_running
+def runtime_is_down(snapshot: dict[str, object]) -> bool:
+    return not bool(snapshot["os_running"]) and not bool(snapshot["sim_running"])
 
 
 def print_down_status(options: DashboardOptions) -> None:
@@ -816,21 +757,13 @@ def render_status(
                 f"{BOLD}Sim driver:{NC} {format_level(str(snapshot['sim_level']), str(snapshot['sim_label']))}",
                 f"{BOLD}Transport:{NC} {format_level(str(snapshot['transport_level']), str(snapshot['transport_label']))}",
                 f"{BOLD}Brain:{NC} {format_level(str(snapshot['brain_level']), str(snapshot['brain_label']))}",
-                f"{BOLD}Agent:{NC} {format_level(str(snapshot['agent_level']), str(snapshot['agent_label']))}",
+                f"{BOLD}LLM:{NC} {format_level(str(snapshot['llm_level']), str(snapshot['llm_label']))}",
             ]
         ),
         term_width,
     )
     used_lines += 1
-    print_dashboard_line(
-        "  ".join(
-            [
-                f"{BOLD}Cloud mode:{NC} {config['mode']}",
-                f"{BOLD}System:{NC} {snapshot['system_summary']}",
-            ]
-        ),
-        term_width,
-    )
+    print_dashboard_line(f"{BOLD}System:{NC} {snapshot['system_summary']}", term_width)
     used_lines += 1
     print()
     used_lines += 1
@@ -849,12 +782,6 @@ def render_status(
         term_width,
     )
     used_lines += 1
-    if config["mode"] in options.local_modes:
-        print_dashboard_line(
-            f"{BOLD}Local agent:{NC} ws://localhost:{config['cloud_port']}",
-            term_width,
-        )
-        used_lines += 1
     print_dashboard_line(
         "  ".join(
             [
@@ -871,7 +798,7 @@ def render_status(
     )
     used_lines += 1
 
-    if runtime_is_down(config, options, snapshot):
+    if runtime_is_down(snapshot):
         print()
         used_lines += 1
         print_dashboard_line(
@@ -890,11 +817,6 @@ def render_status(
             print(divider_line(term_width))
             print_dashboard_line(f"{BOLD}Innate OS repo:{NC} {config['os_repo']}", term_width)
             print_dashboard_line(f"{BOLD}Innate sim repo:{NC} {config['sim_repo']}", term_width)
-            if config["cloud_repo"] is not None:
-                print_dashboard_line(
-                    f"{BOLD}Local cloud-agent repo:{NC} {config['cloud_repo']}",
-                    term_width,
-                )
             print_dashboard_line(f"{BOLD}State dir:{NC} {options.state_dir}", term_width)
         return
 
@@ -913,38 +835,12 @@ def render_status(
         if cached_logs is not None and "brain" in cached_logs
         else callbacks.capture_os_brain_logs(config, lines=visible_log_rows)
     )
-    log_columns = [
-        (
-            "OS BRAIN LOGS",
-            brain_lines,
-            THEME["log_brain"],
-        ),
-    ]
-    if config["mode"] != options.hosted_mode:
-        agent_lines = (
-            cached_logs["agent"]
-            if cached_logs is not None and "agent" in cached_logs
-            else callbacks.capture_agent_logs(config, lines=visible_log_rows)
-        )
-        log_columns.insert(
-            0,
-            (
-                "AGENT LOGS",
-                agent_lines,
-                THEME["log_agent"],
-            ),
-        )
-    print_log_columns(log_columns, available_height=available_height)
+    print_log_pane("OS BRAIN LOGS", brain_lines, THEME["log_brain"], available_height=available_height)
     if verbose:
         print()
         print(divider_line(term_width))
         print_dashboard_line(f"{BOLD}Innate OS repo:{NC} {config['os_repo']}", term_width)
         print_dashboard_line(f"{BOLD}Innate sim repo:{NC} {config['sim_repo']}", term_width)
-        if config["cloud_repo"] is not None:
-            print_dashboard_line(
-                f"{BOLD}Local cloud-agent repo:{NC} {config['cloud_repo']}",
-                term_width,
-            )
         print_dashboard_line(f"{BOLD}State dir:{NC} {options.state_dir}", term_width)
 
 
@@ -983,13 +879,11 @@ def print_status(
     verbose: bool = False,
 ) -> None:
     snapshot = callbacks.collect_status_snapshot(config)
-    if runtime_is_down(config, options, snapshot):
+    if runtime_is_down(snapshot):
         print_down_status(options)
         if verbose:
             print(f"Innate OS repo: {config['os_repo']}")
             print(f"Innate sim repo: {config['sim_repo']}")
-            if config["cloud_repo"] is not None:
-                print(f"Local cloud-agent repo: {config['cloud_repo']}")
             print(f"State dir: {options.state_dir}")
         return
     render_status(config, callbacks, options, verbose=verbose, snapshot=snapshot)
@@ -1053,7 +947,7 @@ def watch_dashboard(
     top_padding_rows = 1
     try:
         with (
-            dashboard_runtime(config, callbacks, options) as runtime,
+            dashboard_runtime(config, callbacks) as runtime,
             live_dashboard_terminal(),
             dashboard_input_mode() as input_mode_enabled,
         ):

@@ -23,17 +23,15 @@ import oci
 from config import (
     ASSETS_IMAGE_LAYERS,
     CLI_SIM,
-    CLOUD_AGENT_DIR_NAME,
-    CLOUD_AGENT_LOG_PATH,
     COMPOSE_LOG_PATH,
+    COMPOSE_PROJECT_NAME,
     DOWN_LOG_PATH,
     GENERATED_OS_ENV_PATH,
-    HOSTED_MODE,
-    LOCAL_BRAIN_COMPOSE_PROFILE,
-    LOCAL_IMAGE_MODE,
-    LOCAL_MODES,
-    NONE_MODE,
+    INNATE_BACKEND,
+    LEGACY_CLOUD_AGENT_CONTAINER,
+    NO_BACKEND,
     OS_BUILD_LOG_PATH,
+    OS_CONTAINER_NAME,
     OS_CONTAINER_SERVICE,
     OS_CONTAINER_TMUX_CMD,
     OS_SESSION_LOG_PATH,
@@ -46,7 +44,6 @@ from config import (
     TMUX_SESSION_NAME,
     VIEWER_BUILD_LOG_PATH,
     VIEWER_TREE_PATH,
-    WORKSPACE_ROOT,
     WORLD_SERVER_LOG_PATH,
     WORLD_SERVER_MODEL_DIGEST_PATH,
     WORLD_SERVER_PID_PATH,
@@ -56,7 +53,6 @@ from config import (
     compute_ros_install_validation_hash,
     ensure_state_dir,
     log,
-    require_path,
     resolve_assets_image,
     resolve_local_os_image,
     resolve_local_viewer_image,
@@ -500,13 +496,45 @@ def ensure_home_mount_sources() -> None:
             ssh_dir.mkdir(mode=0o700)
 
 
+def os_container_foxglove_port_current(config: dict[str, object]) -> bool:
+    """False when a running OS container publishes the Foxglove bridge on a host
+    port other than the one the launcher now advertises.
+
+    Checkouts that ran the brain in a cloud-agent container shifted the publish
+    to 8766 (the agent owned 8765); a running container's published ports cannot
+    be changed in place, so such a container has to be recreated. An unanswered
+    probe reports "current" -- a flaky answer must not cost a recreate.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "port", OS_CONTAINER_NAME, "8765"],
+            text=True,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+            timeout=DOCKER_PROBE_TIMEOUT_S,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    if result.returncode != 0:
+        return True
+    published = str(config["foxglove_port"])
+    return any(line.strip().endswith(f":{published}") for line in result.stdout.splitlines())
+
+
 def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline: bool = False) -> None:
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     os_image = str(config["os_image"]).strip()
     os_image_auto = bool(config["os_image_auto"])
-    container_was_running = container_running("innate-dev")
+    reuse_running_container = container_running(OS_CONTAINER_NAME)
+    if reuse_running_container and not os_container_foxglove_port_current(config):
+        log(
+            "The running OS container publishes Foxglove on an older host port; "
+            f"recreating it to serve ws://localhost:{config['foxglove_port']}."
+        )
+        reuse_running_container = False
 
-    if container_was_running:
+    if reuse_running_container:
         log("Innate OS dev container already running.")
     else:
         up_cmd = docker_compose_cmd("up", "-d")
@@ -590,17 +618,6 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
         # whichever it is exists.
         compose_values["INNATE_SIM_VIEWER_BUNDLE_IMAGE"] = viewer_image_ref(config)
         compose_values["VIRTUAL_MARS_REMOTE"] = str(config.get("world_endpoint", "") or "")
-        # Bake the brain wiring into the CONTAINER env, not just the tmux
-        # launch args: an in-container `innate restart` relaunches the session
-        # argless and must inherit the same backend (compose's own default
-        # only fires when COMPOSE_PROFILES is set, which it isn't here).
-        compose_values["BRAIN_WEBSOCKET_URI"] = str(config.get("brain_websocket_uri", "") or "")
-        # Foxglove bridge publishes on host 8765 (Foxglove Studio's default) —
-        # but a local brain's cloud-agent owns that host port, so shift the
-        # bridge to 8766 unless the user pinned a port themselves.
-        if not os.environ.get("SIM_FOXGLOVE_PORT", "").strip() and config["mode"] not in (HOSTED_MODE, NONE_MODE):
-            compose_values["SIM_FOXGLOVE_PORT"] = "8766"
-            log("Local brain owns port 8765; Foxglove bridge published on ws://localhost:8766.")
         compose_env = os_compose_env(compose_values, env_file=os_env_file)
         log("Starting Innate OS dev container...")
         run_logged_with_heartbeat(
@@ -634,7 +651,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
     )
     ros_install_already_validated = False
     if ros_install_marker_matches and not bool(config["os_always_build"]):
-        ros_install_already_validated = container_was_running or command_succeeds(
+        ros_install_already_validated = reuse_running_container or command_succeeds(
             os_compose_zsh_cmd("test -f ~/innate-os/ros2_ws/install/setup.zsh"),
             cwd=os_repo,
             env=compose_env,
@@ -655,18 +672,10 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
         ROS_INSTALL_STATE_PATH.write_text(f"{ros_inputs_hash}\n", encoding="utf-8")
 
     log("Launching ROS simulation nodes inside the OS container...")
-    brain_websocket_uri = str(config.get("brain_websocket_uri", "")).strip()
-    brain_websocket_arg = ""
-    if brain_websocket_uri:
-        brain_websocket_arg = f" --brain-websocket-uri {shlex.quote(brain_websocket_uri)}"
-    brain_client_version = str(config.get("brain_client_version", "")).strip()
-    brain_client_version_arg = ""
-    if brain_client_version:
-        brain_client_version_arg = f" --brain-client-version {shlex.quote(brain_client_version)}"
     launch_script = (
         "INNATE_SIM_TMUX_SETTLE_SECONDS=${INNATE_SIM_TMUX_SETTLE_SECONDS:-0} "
         "INNATE_SIM_TMUX_CLEANUP_SETTLE_SECONDS=${INNATE_SIM_TMUX_CLEANUP_SETTLE_SECONDS:-0} "
-        f"{OS_CONTAINER_TMUX_CMD}{brain_websocket_arg}{brain_client_version_arg}"
+        f"{OS_CONTAINER_TMUX_CMD}"
     )
     launch_wrapper = (
         "rm -f /tmp/innate-os-session.log; "
@@ -731,191 +740,64 @@ def down_os(config: dict[str, object], *, remove_volumes: bool = False) -> None:
 
 def clean_runtime(config: dict[str, object]) -> None:
     """Stop the runtime and delete all related Docker resources."""
-    down_cloud_agent()
+    remove_legacy_cloud_agent()
     log("Removing Innate OS containers, networks, and named volumes...")
     down_os(config, remove_volumes=True)
     # Belt-and-suspenders: force-remove named containers that may linger outside
     # the compose project (e.g. after a partial or failed startup).
-    for container in ("innate-dev", "innate-cloud-agent"):
-        subprocess.run(
-            ["docker", "rm", "-f", container],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
+    force_remove_container(OS_CONTAINER_NAME)
 
 
-def cloud_agent_lock(config: dict[str, object]) -> dict | None:
-    """The pinned cloud-agent revision this innate-os is tested against
-    (sim/cloud-agent.lock), or None when unpinned/unreadable."""
-    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
+def force_remove_container(name: str) -> bool:
+    """Best-effort `docker rm -f`; True when a container was actually removed.
+
+    Never raises: this runs first in the teardown paths, where a wedged daemon
+    must not swallow the shutdown (or the startup error that triggered it).
+    """
     try:
-        lock = json.loads((os_repo / "sim" / "cloud-agent.lock").read_text())
-        return lock if isinstance(lock.get("commit"), str) else None
-    except (OSError, ValueError):
-        return None
-
-
-def cloud_agent_git_status(repo: Path) -> dict | None:
-    """Local-only git state of a cloud-agent checkout (no network): full/short
-    HEAD sha, dirty, and whether origin is the official innate repo."""
-
-    def git(*args: str) -> str | None:
         result = subprocess.run(
-            ["git", "-C", str(repo), *args],
-            capture_output=True,
+            ["docker", "rm", "-f", name],
             text=True,
-            timeout=10.0,
             stdin=subprocess.DEVNULL,
             check=False,
+            capture_output=True,
+            timeout=DOCKER_PROBE_TIMEOUT_S,
         )
-        return result.stdout.strip() if result.returncode == 0 else None
-
-    try:
-        sha = git("rev-parse", "HEAD")
-        if sha is None:
-            return None
-        origin = git("remote", "get-url", "origin") or ""
-        return {
-            "sha": sha,
-            "short": sha[:9],
-            "dirty": bool(git("status", "--porcelain")),
-            "official": origin.rstrip("/").removesuffix(".git").endswith("innate-inc/innate-cloud-agent"),
-        }
     except (OSError, subprocess.TimeoutExpired):
-        return None
+        warn(f"Docker did not answer `docker rm -f {name}` within {DOCKER_PROBE_TIMEOUT_S:.0f}s; check `docker ps`.")
+        return False
+    return result.returncode == 0 and bool(result.stdout.strip())
 
 
-def cloud_agent_checkout_pinned(repo: Path, commit: str) -> bool:
-    """Fetch + detach onto the pinned revision. Callers must ensure the
-    worktree is clean first."""
-    for args in (["fetch", "--quiet", "origin"], ["checkout", "--quiet", "--detach", commit]):
-        try:
-            result = subprocess.run(
-                ["git", "-C", str(repo), *args],
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=120.0,
-            )
-        except subprocess.TimeoutExpired:
-            return False
-        if result.returncode != 0:
-            return False
-    return True
-
-
-def _os_container_holds_host_8765() -> bool:
-    """True when a running innate-dev publishes its Foxglove port on host 8765
-    (a container created under hosted/no-brain mode, before a local-brain up
-    would have shifted the publish to 8766)."""
+def container_in_compose_project(name: str) -> bool:
+    """True when `name` is a container this launcher's compose project created,
+    rather than a hand-started one that happens to share the name."""
     try:
         result = subprocess.run(
-            ["docker", "port", "innate-dev", "8765"],
+            ["docker", "inspect", "-f", '{{index .Config.Labels "com.docker.compose.project"}}', name],
             text=True,
             stdin=subprocess.DEVNULL,
-            capture_output=True,
             check=False,
+            capture_output=True,
             timeout=DOCKER_PROBE_TIMEOUT_S,
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
-    return result.returncode == 0 and any(line.strip().endswith(":8765") for line in result.stdout.splitlines())
+    return result.returncode == 0 and result.stdout.strip() == COMPOSE_PROJECT_NAME
 
 
-def start_cloud_agent(config: dict[str, object], cloud_env_file: Path) -> None:
-    """Bring up the local brain as the `cloud-agent` service in the OS compose
-    project (gated by the local-brain profile). Hosted/none modes run no local
-    agent."""
-    mode = config["mode"]
-    if mode == HOSTED_MODE:
-        log("Brain backend is hosted. Skipping local cloud-agent startup.")
+def remove_legacy_cloud_agent() -> None:
+    """Drop the cloud-agent container older checkouts ran the brain in.
+
+    It is no longer a service of this compose project, so `down` cannot see it,
+    and it holds host port 8765 -- which the Foxglove bridge now publishes on.
+    Only a container this launcher started is removed: the same name run by hand
+    (an own fork, or one serving a physical MARS) is left alone.
+    """
+    if not container_in_compose_project(LEGACY_CLOUD_AGENT_CONTAINER):
         return
-    if mode == NONE_MODE:
-        log("No brain backend configured (no GEMINI_API_KEY or INNATE_SERVICE_KEY). Skipping cloud-agent.")
-        return
-
-    ensure_docker_available(command_hint=f"{CLI_SIM} up")
-    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
-
-    # The cloud-agent reads GEMINI_API_KEY from the same env file as the OS
-    # container, and the local-brain profile must be active to start the service.
-    base_env = {
-        "COMPOSE_PROFILES": LOCAL_BRAIN_COMPOSE_PROFILE,
-        "INNATE_OS_ENV_FILE": str(cloud_env_file),
-    }
-    # An OS container that predates this local-brain up may still publish the
-    # Foxglove bridge on host 8765 (this runs before ensure_os_container, and a
-    # running container is not recreated anyway). The cloud-agent host publish
-    # is debug-only — the brain reaches it over the compose network — so shift
-    # it clear rather than failing the bind (8767: 8766 is Foxglove's own
-    # local-brain port, live again as soon as the OS container is recreated).
-    if not os.environ.get("SIM_CLOUD_AGENT_PORT", "").strip() and _os_container_holds_host_8765():
-        base_env["SIM_CLOUD_AGENT_PORT"] = "8767"
-        log("Host port 8765 is held by the running OS container (Foxglove); publishing cloud-agent on 8767.")
-    up_cmd = docker_compose_cmd("up", "-d")
-
-    if mode == LOCAL_IMAGE_MODE:
-        image = str(config["cloud_image"]).strip()
-        if not image:
-            raise StackError("sim/config.toml must set cloud_agent.image when cloud_agent.mode = 'local-image'.")
-        log(f"Starting local cloud-agent image {image}...")
-        compose_env = docker_compose_env({**base_env, "INNATE_CLOUD_AGENT_IMAGE": image})
-        run_logged(
-            [*up_cmd, "--no-build", "cloud-agent"],
-            cwd=os_repo,
-            env=compose_env,
-            log_path=CLOUD_AGENT_LOG_PATH,
-            failure_message="Local cloud-agent image startup failed.",
-        )
-        return
-
-    cloud_repo: Path | None = config["cloud_repo"]  # type: ignore[assignment]
-    if cloud_repo is None:
-        raise StackError(
-            "The innate-cloud-agent repository was not found next to innate-os "
-            f"(expected at {WORKSPACE_ROOT / CLOUD_AGENT_DIR_NAME}).\n"
-            f"Run `{CLI_SIM} setup` to clone it, or set sim/config.toml cloud_agent.source_dir."
-        )
-    require_path(cloud_repo, "innate-cloud-agent repository")
-    # Surface what will actually run: a checkout off the pinned (tested)
-    # revision is the #1 source of "agent crashes for me" reports. Local-only
-    # check; aligning is setup's interactive job.
-    status = cloud_agent_git_status(cloud_repo)
-    lock = cloud_agent_lock(config)
-    if status is not None and lock is not None and status["official"] and status["sha"] != lock["commit"]:
-        warn(
-            f"cloud-agent source is at {status['short']}, but this innate-os is tested against "
-            f"{lock['commit'][:9]} -- run `{CLI_SIM} setup` to align (or ignore if intentional)."
-        )
-    elif status is not None and not status["official"]:
-        log(
-            f"Using custom cloud-agent source at {cloud_repo} ({status['short']}{', dirty' if status['dirty'] else ''})."
-        )
-    log(f"Starting local cloud-agent from source at {cloud_repo}...")
-    compose_env = docker_compose_env({**base_env, "INNATE_CLOUD_AGENT_DIR": str(cloud_repo)})
-    run_logged(
-        [*up_cmd, "--build", "cloud-agent"],
-        cwd=os_repo,
-        env=compose_env,
-        log_path=CLOUD_AGENT_LOG_PATH,
-        failure_message="Local cloud-agent source startup failed.",
-    )
-
-
-def down_cloud_agent() -> None:
-    # The cloud-agent now lives in the OS compose project, so `down_os` removes it.
-    # This is a defensive cleanup in case it was started on its own.
-    subprocess.run(
-        ["docker", "rm", "-f", "innate-cloud-agent"],
-        text=True,
-        stdin=subprocess.DEVNULL,
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    if force_remove_container(LEGACY_CLOUD_AGENT_CONTAINER):
+        log("Removed the leftover cloud-agent container; the brain now runs inside brain_client.")
 
 
 def tail_file(path: Path, limit: int = 40) -> str:
@@ -970,9 +852,9 @@ def open_os_container_shell() -> int:
     Uses an interactive (TTY) shell so ~/.zshrc runs and sources ROS — a
     non-interactive `zsh -lc` would leave `ros2` and the workspace unsourced.
     """
-    if not container_running("innate-dev"):
+    if not container_running(OS_CONTAINER_NAME):
         raise StackError(f"Innate OS dev container is not running.\nStart it with `{CLI_SIM} up` first.")
-    return subprocess.run(["docker", "exec", "-it", "innate-dev", "zsh"]).returncode
+    return subprocess.run(["docker", "exec", "-it", OS_CONTAINER_NAME, "zsh"]).returncode
 
 
 def capture_command_output(
@@ -1054,7 +936,7 @@ def websocket_port_open(port: int) -> bool:
 
 
 def collect_os_process_status(config: dict[str, object]) -> dict[str, bool]:
-    os_running = container_running("innate-dev")
+    os_running = container_running(OS_CONTAINER_NAME)
     status = {
         "os_running": os_running,
         "os_session_running": False,
@@ -1125,7 +1007,7 @@ _virtual_mars_confirmed = False
 
 def virtual_mars_ready(config: dict[str, object]) -> bool:
     """True if the virtual MARS driver is publishing /odom in the container."""
-    if not container_running("innate-dev"):
+    if not container_running(OS_CONTAINER_NAME):
         return False
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     output = capture_command_output(
@@ -1160,12 +1042,10 @@ def collect_runtime_probe(
     os_status = collect_os_process_status(config)
     sim_running = bool(sim_driver_ready) if sim_driver_ready is not None else _sim_driver_live(config, os_status)
     rosbridge_live = _rosbridge_live(os_status)
-    agent_running = container_running("innate-cloud-agent") if config["mode"] in LOCAL_MODES else True
     return {
         "os_status": os_status,
         "sim_running": sim_running,
         "rosbridge_live": rosbridge_live,
-        "agent_running": agent_running,
     }
 
 
@@ -1206,11 +1086,10 @@ def wait_for_virtual_mars(config: dict[str, object], *, timeout_seconds: float =
 
 
 def runtime_already_running(config: dict[str, object]) -> bool:
-    if not os_runtime_ready(config):
-        return False
-    if config["mode"] in LOCAL_MODES and not container_running("innate-cloud-agent"):
-        return False
-    return True
+    """The running stack is both complete and current. A container from an older
+    checkout serves the Foxglove bridge on a host port the dashboard no longer
+    prints, and only a recreate can move it -- so that stack is not reusable."""
+    return os_runtime_ready(config) and os_container_foxglove_port_current(config)
 
 
 def format_startup_check(ok: bool, label: str, detail: str) -> str:
@@ -1256,11 +1135,6 @@ def print_startup_checks(
         time.sleep(2.0)  # a saturated box can miss one ping; don't cry wolf
         world_ok, world_detail = world_server_health()
     checks = [
-        (
-            bool(probe["agent_running"]),
-            "Cloud agent",
-            "hosted mode" if config["mode"] == HOSTED_MODE else "local container",
-        ),
         (world_ok, "World server", world_detail),
         (
             os_status["os_running"],
@@ -1296,7 +1170,7 @@ def print_startup_checks(
 
 
 def capture_os_brain_logs(config: dict[str, object], lines: int = 18) -> list[str]:
-    if not container_running("innate-dev"):
+    if not container_running(OS_CONTAINER_NAME):
         return ["OS container offline."]
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     compose_env = os_compose_env()
@@ -1326,19 +1200,6 @@ def capture_os_brain_logs(config: dict[str, object], lines: int = 18) -> list[st
         ][:lines]
     if not output:
         return ["No OS brain output yet."]
-    return output.splitlines()[-lines:]
-
-
-def capture_agent_logs(config: dict[str, object], lines: int = 18) -> list[str]:
-    if config["mode"] == HOSTED_MODE:
-        return ["Hosted mode enabled.", "No local agent container is running."]
-    if config["mode"] == NONE_MODE:
-        return ["No brain backend configured.", "The sim is running without an agent."]
-    if not container_running("innate-cloud-agent"):
-        return ["Local cloud-agent is not running."]
-    output = capture_command_output(["docker", "logs", "--tail", str(lines), "innate-cloud-agent"])
-    if not output:
-        return ["No local cloud-agent output yet."]
     return output.splitlines()[-lines:]
 
 
@@ -2092,7 +1953,6 @@ def collect_status_snapshot(config: dict[str, object]) -> dict[str, object]:
     os_session_running = os_status["os_session_running"]
     rosbridge_process_live = os_status["rosbridge_process_live"]
     brain_process_live = os_status["brain_process_live"]
-    agent_running = bool(probe["agent_running"])
     sim_running = bool(probe["sim_running"])
     rosbridge_live = bool(probe["rosbridge_live"])
 
@@ -2126,15 +1986,14 @@ def collect_status_snapshot(config: dict[str, object]) -> dict[str, object]:
     else:
         brain_level = "warn"
         brain_label = "booting"
-    if config["mode"] == NONE_MODE:
-        agent_level, agent_label = "warn", "none"
-    elif config["mode"] == HOSTED_MODE:
-        agent_level, agent_label = "healthy", "hosted"
+    if config["brain_backend"] == NO_BACKEND:
+        llm_level, llm_label = "warn", "no key"
+    elif config["brain_backend"] == INNATE_BACKEND:
+        llm_level, llm_label = "healthy", "innate proxy"
     else:
-        agent_level = "healthy" if agent_running else "warn"
-        agent_label = "online" if agent_running else "offline"
+        llm_level, llm_label = "healthy", "gemini key"
 
-    if all(level == "healthy" for level in (world_level, sim_level, transport_level, brain_level, agent_level)):
+    if all(level == "healthy" for level in (world_level, sim_level, transport_level, brain_level, llm_level)):
         stack_mood = ("healthy", "LIVE")
     elif any(level == "error" for level in (world_level, sim_level, transport_level, brain_level)):
         stack_mood = ("error", "DEGRADED")
@@ -2151,7 +2010,6 @@ def collect_status_snapshot(config: dict[str, object]) -> dict[str, object]:
     return {
         "os_running": os_running,
         "os_session_running": os_session_running,
-        "agent_running": agent_running,
         "sim_running": sim_running,
         "rosbridge_live": rosbridge_live,
         "rosbridge_process_live": rosbridge_process_live,
@@ -2164,8 +2022,8 @@ def collect_status_snapshot(config: dict[str, object]) -> dict[str, object]:
         "transport_label": transport_label,
         "brain_level": brain_level,
         "brain_label": brain_label,
-        "agent_level": agent_level,
-        "agent_label": agent_label,
+        "llm_level": llm_level,
+        "llm_label": llm_label,
         "stack_level": stack_mood[0],
         "stack_label": stack_mood[1],
         "health_score": health_score(stack_mood[0]),

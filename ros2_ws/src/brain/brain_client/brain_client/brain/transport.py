@@ -65,7 +65,12 @@ class Backend(StrEnum):
 
 
 def pick_transport(proxy: ProxyClient | None) -> tuple[Transport | None, Backend]:
-    """The way to reach Gemini: the Innate proxy (managed) or GEMINI_API_KEY (dev)."""
+    """The way to reach Gemini: the Innate proxy (managed) or GEMINI_API_KEY (dev).
+
+    sim/launcher/config.py:resolve_brain_backend predicts this choice from the
+    host (it cannot import this module) to label the dashboard; change the
+    precedence here and change it there.
+    """
     if proxy is not None and proxy.is_available():
         return proxy_transport(proxy), Backend.PROXY
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()

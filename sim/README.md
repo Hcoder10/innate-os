@@ -92,16 +92,15 @@ Then, from the repository root:
 ./innate-sim up        # starts everything; leave the live dashboard open
 ```
 
-`setup` asks which brain — the robot's AI agent — to run. The agent is the
-open-source [innate-cloud-agent](https://github.com/innate-inc/innate-cloud-agent);
-the choice is only about *where* it runs:
+`setup` asks how the robot's AI agent reaches a cloud LLM. The agent loop
+itself always runs on the robot (`brain_client`); the choice is only about
+which key it thinks with:
 
-- **Local brain (Gemini)** — the default. Clones `innate-cloud-agent` and
-  runs it on your machine against a
+- **Your own Gemini key** — the agent calls Google directly with a
   [Gemini API key](https://aistudio.google.com/api-keys). Everything works
   except voice: the web app's speak bar is disabled without a service key.
-- **Hosted Innate brain** — the same agent, run on Innate's servers with
-  your Innate service key (it ships with a MARS robot). The full experience,
+- **Innate service key** — the agent calls Gemini through Innate's proxy with
+  your service key (it ships with a MARS robot). The full experience,
   including voice — the robot speaks.
 - **None** — no agent; you can still drive, navigate, and trigger skills
   manually.
@@ -122,7 +121,7 @@ If something stops you anyway, we want to hear about it —
 
 ```bash
 ./innate-sim status      # startup checks + health snapshot
-./innate-sim logs startup   # startup logs; `logs brain` / `logs cloud-agent` for the running stack
+./innate-sim logs startup   # startup logs; `logs brain` for the running stack
 ./innate-sim sh          # shell into the container; `innate build` rebuilds ros2_ws
 ./innate-sim down        # stop the container + world server (keeps data)
 ./innate-sim clean       # remove containers/volumes (keeps .env + config)
@@ -259,10 +258,9 @@ To connect:
 3. Enter `ws://localhost:8765` and connect.
 4. Add panels (e.g. Image, 3D, Raw Messages) and pick the topics you want to see.
 
-> **Which port?** If you're running the local brain, the address is
-> `ws://localhost:8766` instead (the cloud agent uses 8765). The sim's startup
-> log always prints the exact address to use. To force a specific port or network
-> interface, set `SIM_FOXGLOVE_PORT` / `SIM_FOXGLOVE_BIND` before starting the sim.
+> **Which port?** The sim's startup log always prints the exact address to use.
+> To force a specific port or network interface, set `SIM_FOXGLOVE_PORT` /
+> `SIM_FOXGLOVE_BIND` before starting the sim.
 
 Because the sim runs on your own machine, every topic is fast — feel free to view
 the full-resolution cameras and point clouds. This is different from a **physical
@@ -315,12 +313,8 @@ Prefer your own ROS tooling? A rosbridge server is also available at
   `./innate-sim setup` walks through them.
 - `config/settings.yaml` — optional non-secret ROS parameter tunables and
   extra agent/skill dirs.
-- `sim/config.toml` — optional overrides (OS image, cloud-agent mode),
+- `sim/config.toml` — optional overrides (OS image, build behavior),
   created from `config.toml.template` by setup.
-- `sim/cloud-agent.lock` — the innate-cloud-agent revision this checkout is
-  tested against: setup clones/aligns to it (and asks before touching an
-  existing checkout); `up` only warns on mismatch, so forks and pinned
-  experiments are never modified.
 - `INNATE_SIM_RENDER_SCALE=N` — render the robot cameras at 1/N resolution
   (the wire format stays 640×480). On machines stuck with software rendering
   (`software-speed` in the dashboard's World field), `2` makes each frame

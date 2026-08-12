@@ -25,7 +25,6 @@ SCRIPT_PATH = Path(__file__).resolve()
 LAUNCHER_DIR = SCRIPT_PATH.parent
 SIM_DIR = LAUNCHER_DIR.parent
 REPO_ROOT = SIM_DIR.parent
-WORKSPACE_ROOT = REPO_ROOT.parent
 ENV_PATH = REPO_ROOT / ".env"
 ENV_TEMPLATE_PATH = REPO_ROOT / ".env.template"
 SETTINGS_PATH = REPO_ROOT / "config" / "settings.yaml"
@@ -35,7 +34,6 @@ SIM_CONFIG_TEMPLATE_PATH = REPO_ROOT / "sim" / "config.toml.template"
 STATE_DIR = LAUNCHER_DIR / ".state"
 LOG_DIR = STATE_DIR / "logs"
 BOOTSTRAP_LOG_PATH = LOG_DIR / "bootstrap.log"
-CLOUD_AGENT_LOG_PATH = LOG_DIR / "cloud-agent.log"
 COMPOSE_LOG_PATH = LOG_DIR / "compose.log"
 OS_BUILD_LOG_PATH = LOG_DIR / "os-build.log"
 VIEWER_BUILD_LOG_PATH = LOG_DIR / "viewer-build.log"
@@ -50,24 +48,13 @@ DOWN_LOG_PATH = LOG_DIR / "down.log"
 ROS_INSTALL_STATE_PATH = STATE_DIR / "ros-install.inputs.sha256"
 OS_SESSION_READY_POLL_SECONDS = 0.25
 GENERATED_OS_ENV_PATH = STATE_DIR / "innate-os.env"
-GENERATED_CLOUD_ENV_PATH = STATE_DIR / "cloud-agent.env"
-HOSTED_MODE = "hosted"
-LOCAL_IMAGE_MODE = "local-image"
-LOCAL_SOURCE_MODE = "local-source"
-AUTO_MODE = "auto"
-NONE_MODE = "none"
-LOCAL_MODES = {LOCAL_IMAGE_MODE, LOCAL_SOURCE_MODE}
-VALID_CLOUD_AGENT_MODES = {AUTO_MODE, HOSTED_MODE, LOCAL_IMAGE_MODE, LOCAL_SOURCE_MODE, NONE_MODE}
-DEFAULT_HOSTED_BRAIN_WEBSOCKET_URI = "wss://agent-v1.svc.innate.bot"
-# The local cloud-agent runs as the `local-brain` service inside the same compose
-# project as the OS container, reachable by service name on the shared network.
-DEFAULT_LOCAL_BRAIN_WEBSOCKET_URI = "ws://cloud-agent:8765"
-LOCAL_BRAIN_COMPOSE_PROFILE = "local-brain"
-# Cloud-agent source lives OUTSIDE this repo (next to it), cloned on demand by setup.
-# HTTPS so a public clone needs no SSH key / org access.
-CLOUD_AGENT_GIT_URL = "https://github.com/innate-inc/innate-cloud-agent.git"
-CLOUD_AGENT_DIR_NAME = "innate-cloud-agent"
+# How brain_client reaches Gemini: through the Innate proxy with a service key,
+# straight at Google with a Gemini key, or not at all.
+INNATE_BACKEND = "innate"
+GEMINI_BACKEND = "gemini"
+NO_BACKEND = "none"
 GEMINI_API_KEY = "GEMINI_API_KEY"
+INNATE_SERVICE_KEY = "INNATE_SERVICE_KEY"
 AUTO_OS_IMAGE = "auto"
 LOCAL_OS_IMAGE = "local"
 DEFAULT_SIM_OS_IMAGE = "ghcr.io/innate-inc/innate-os-sim-ros"
@@ -164,11 +151,14 @@ SIM_ASSET_UNITS = SIM_ASSET_UNITS_DERIVED + SIM_ASSET_UNITS_AUTHORED
 # tests/test_assets_image_inputs.py holds the dockerignore (which IS hashed)
 # EQUAL to this set; weaken it to a subset check and that stops being true.
 OS_CONTAINER_SERVICE = "innate"
+# Must match `container_name:` / `name:` in sim/docker-compose.dev.yml.
+OS_CONTAINER_NAME = "innate-dev"
+COMPOSE_PROJECT_NAME = "innate-os"
+LEGACY_CLOUD_AGENT_CONTAINER = "innate-cloud-agent"
 OS_CONTAINER_TMUX_CMD = "./scripts/launch_sim_in_tmux.zsh --detach"
-SECRET_ENV_KEYS = ("INNATE_SERVICE_KEY", "GEMINI_API_KEY")
+SECRET_ENV_KEYS = (INNATE_SERVICE_KEY, GEMINI_API_KEY)
 LOG_TARGETS = {
     "bootstrap": BOOTSTRAP_LOG_PATH,
-    "cloud-agent": CLOUD_AGENT_LOG_PATH,
     "compose": COMPOSE_LOG_PATH,
     "os-build": OS_BUILD_LOG_PATH,
     "viewer-build": VIEWER_BUILD_LOG_PATH,
@@ -360,75 +350,19 @@ def get_nested_bool(data: dict[str, object], *keys: str) -> bool | None:
     return None
 
 
-def resolve_brain_websocket_uri(
-    mode: str,
-    env: dict[str, str],
-) -> str:
-    if mode == NONE_MODE:
-        return ""
-    if mode in LOCAL_MODES:
-        return DEFAULT_LOCAL_BRAIN_WEBSOCKET_URI
-    return (env.get("BRAIN_WEBSOCKET_URI") or "").strip() or DEFAULT_HOSTED_BRAIN_WEBSOCKET_URI
+def resolve_brain_backend(env: dict[str, str]) -> str:
+    """Which key the in-process brain (brain_client) will use to reach Gemini.
 
-
-def resolve_cloud_agent_mode(sim_config: dict[str, object], env: dict[str, str]) -> str:
-    """Decide which brain backend to run.
-
-    An explicit ``cloud_agent.mode`` in sim/config.toml always wins. Otherwise
-    (mode unset or ``auto``) derive it from available keys: a Gemini key selects
-    the local brain, else an Innate service key selects the hosted brain, else
-    there is no agent.
+    The service key wins: it also buys voice, which a Gemini key does not.
+    brain_client's `Backend` (brain/transport.py) makes the real choice and owns
+    this precedence; the launcher runs on the host and cannot import it, so this
+    restates the rule. Change one and change the other.
     """
-    explicit = (get_nested_str(sim_config, "cloud_agent", "mode") or "").strip()
-    if explicit and explicit != AUTO_MODE:
-        if explicit not in VALID_CLOUD_AGENT_MODES:
-            raise StackError(
-                "sim/config.toml cloud_agent.mode must be one of: " + ", ".join(sorted(VALID_CLOUD_AGENT_MODES))
-            )
-        return explicit
+    if is_configured_secret_value(INNATE_SERVICE_KEY, env.get(INNATE_SERVICE_KEY, "")):
+        return INNATE_BACKEND
     if is_configured_secret_value(GEMINI_API_KEY, env.get(GEMINI_API_KEY, "")):
-        return LOCAL_SOURCE_MODE
-    if is_configured_secret_value("INNATE_SERVICE_KEY", env.get("INNATE_SERVICE_KEY", "")):
-        return HOSTED_MODE
-    return NONE_MODE
-
-
-def resolve_brain_client_version(repo_root: Path) -> str:
-    def git_output(*args: str) -> str:
-        try:
-            result = subprocess.run(
-                ["git", *args],
-                cwd=repo_root,
-                text=True,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                check=False,
-                timeout=10.0,
-            )
-        except subprocess.TimeoutExpired:
-            return ""
-        if result.returncode != 0:
-            return ""
-        return result.stdout.strip()
-
-    exact_tag = git_output("describe", "--exact-match", "--tags", "HEAD")
-    if exact_tag:
-        return exact_tag.splitlines()[0].strip()
-
-    tags = git_output("tag", "--list", "--sort=-version:refname")
-    if tags:
-        return f"{tags.splitlines()[0].strip()}-dev"
-
-    return "0.3.0-dev"
-
-
-def resolve_repo_path(value: str | None, default_name: str) -> Path:
-    if value:
-        path = Path(value).expanduser()
-        if not path.is_absolute():
-            path = (REPO_ROOT / path).resolve()
-        return path
-    return (REPO_ROOT / default_name).resolve()
+        return GEMINI_BACKEND
+    return NO_BACKEND
 
 
 def require_path(path: Path, label: str) -> Path:
@@ -637,30 +571,21 @@ def get_config() -> dict[str, object]:
         if is_configured_secret_value(key, value):
             raw_env[key] = value
     sim_config = parse_toml_file(SIM_CONFIG_PATH)
-    cloud_port = "8765"
+    if "cloud_agent" in sim_config:
+        # An existing config.toml is never rewritten (and `clean` preserves it),
+        # so the dead section outlives the code that validated it.
+        warn(
+            f"{SIM_CONFIG_PATH} still has a [cloud_agent] section. It is ignored -- the brain now runs "
+            "inside brain_client. Delete the section to silence this."
+        )
 
     merged_env = dict(raw_env)
     merged_env.setdefault("ROSBRIDGE_URI", "ws://localhost:9090")
 
-    mode = resolve_cloud_agent_mode(sim_config, merged_env)
-
-    # Foxglove bridge lives on 8765 (Foxglove Studio's default), but a local
-    # brain's cloud-agent owns that host port, so it shifts to 8766 unless the
-    # user pinned SIM_FOXGLOVE_PORT. Mirror runtime.py's start-up logic here so
-    # the dashboard advertises the address it actually listens on.
-    foxglove_port = os.environ.get("SIM_FOXGLOVE_PORT", "").strip() or ("8766" if mode in LOCAL_MODES else "8765")
+    foxglove_port = os.environ.get("SIM_FOXGLOVE_PORT", "").strip() or "8765"
 
     os_repo = require_path(REPO_ROOT, "innate-os repository")
     sim_repo = require_path(REPO_ROOT / "sim", "sim repository")
-
-    # Cloud-agent source lives next to the repo (WORKSPACE_ROOT/innate-cloud-agent),
-    # cloned by `sim setup`. An explicit source_dir override still wins.
-    cloud_dir_value = get_nested_str(sim_config, "cloud_agent", "source_dir")
-    cloud_repo = None
-    if cloud_dir_value:
-        cloud_repo = resolve_repo_path(cloud_dir_value, CLOUD_AGENT_DIR_NAME)
-    elif (WORKSPACE_ROOT / CLOUD_AGENT_DIR_NAME).exists():
-        cloud_repo = (WORKSPACE_ROOT / CLOUD_AGENT_DIR_NAME).resolve()
 
     os_always_build = get_nested_bool(sim_config, "os", "always_build")
     os_pull_image = get_nested_bool(sim_config, "os", "pull_image")
@@ -674,15 +599,10 @@ def get_config() -> dict[str, object]:
     return {
         "raw_env": merged_env,
         "user_env": user_env,
-        "mode": mode,
+        "brain_backend": resolve_brain_backend(merged_env),
         "os_repo": os_repo,
         "sim_repo": sim_repo,
-        "cloud_repo": cloud_repo,
-        "cloud_port": cloud_port,
         "foxglove_port": foxglove_port,
-        "brain_websocket_uri": resolve_brain_websocket_uri(mode, merged_env),
-        "brain_client_version": resolve_brain_client_version(os_repo),
-        "cloud_image": get_nested_str(sim_config, "cloud_agent", "image") or "",
         "os_image": os_image,
         "os_image_auto": os_image_auto,
         "os_pull_image": os_pull_image if os_pull_image is not None else True,
@@ -702,21 +622,6 @@ def build_os_env(config: dict[str, object]) -> Path:
     ensure_state_dir()
     write_env_file(GENERATED_OS_ENV_PATH, os_env)
     return GENERATED_OS_ENV_PATH
-
-
-def build_cloud_env(config: dict[str, object]) -> Path:
-    raw_env: dict[str, str] = config["raw_env"]  # type: ignore[assignment]
-    cloud_env: dict[str, str] = dict(raw_env)
-    cloud_env.setdefault("SKIP_AUTH", "true")
-    cloud_env.setdefault("ROBOT_TYPE", "sim")
-    cloud_env.setdefault("PORT", str(config["cloud_port"]))
-    cloud_env.setdefault("DEFAULT_ROBOT_TOKEN", "local-dev-robot-token")
-    cloud_env.setdefault("DEFAULT_USER_ID", "local-dev-user")
-    cloud_env.setdefault("DEFAULT_SERVICE_KEY", "local-dev-service-key")
-
-    ensure_state_dir()
-    write_env_file(GENERATED_CLOUD_ENV_PATH, cloud_env)
-    return GENERATED_CLOUD_ENV_PATH
 
 
 if __name__ == "__main__":
