@@ -32,9 +32,10 @@ class LoggerNode(Node):
     """Subscribes to robot topics and logs telemetry at a throttled rate."""
 
     LOG_INTERVAL: float = 5.0  # seconds (0.2 Hz)
-    # The voltage behind /battery_state only refreshes on a 60s I2C health
-    # request, so every tick would ship the same reading a dozen times.
-    BATTERY_INTERVAL: float = 30.0
+    # Battery, thermals and the memory breakdown. The voltage behind
+    # /battery_state only refreshes on a 60s I2C health request, so every tick
+    # would ship the same reading a dozen times.
+    DETAIL_INTERVAL: float = 30.0
     DISK_INTERVAL: float = 3600.0
     # Sessions are often shorter than DISK_INTERVAL, so report once early too.
     DISK_BOOT_DELAY: float = 240.0
@@ -187,7 +188,7 @@ class LoggerNode(Node):
         self._collect_disk_health()
 
     def _collect_disk_health(self) -> None:
-        """Read SMART/eMMC health and queue it for the next vitals tick.
+        """Read disk health and queue it for the next vitals tick.
 
         Queued rather than posted directly so the report rides a complete vitals
         row, and survives a send failure to retry on the following tick.
@@ -223,14 +224,15 @@ class LoggerNode(Node):
 
         summary = f"cpu {cpu_usage:.0f}% | mem {vitals['memory_percent']}%"
 
-        if self._latest_battery is not None and self._due(self.BATTERY_INTERVAL):
-            bat = self._latest_battery
-            vitals["battery_voltage"] = bat.voltage
-            vitals["battery_percentage"] = bat.percentage
-            vitals["battery_status"] = bat.power_supply_status
+        if self._due(self.DETAIL_INTERVAL):
             vitals["temperatures"] = host.temperatures()
             vitals.update(host.memory_detail())
-            summary += f" | battery {bat.voltage:.2f}V ({bat.percentage:.0%})"
+            if self._latest_battery is not None:
+                bat = self._latest_battery
+                vitals["battery_voltage"] = bat.voltage
+                vitals["battery_percentage"] = bat.percentage
+                vitals["battery_status"] = bat.power_supply_status
+                summary += f" | battery {bat.voltage:.2f}V ({bat.percentage:.0%})"
 
         if self._latest_arm is not None:
             vitals["arm_ok"] = self._latest_arm.is_ok
