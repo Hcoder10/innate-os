@@ -583,15 +583,20 @@ export function createMap(root, opts = {}) {
     meta.textContent = `seen ${ageText(m.stamp, robotNowS())} · x ${m.x.toFixed(2)} m, y ${m.y.toFixed(2)} m`;
     const actions = document.createElement("div");
     actions.className = "mem-card-actions";
-    const goHere = document.createElement("button");
-    goHere.type = "button";
-    goHere.className = "mem-card-btn mem-card-btn-go";
-    goHere.textContent = "Go here";
-    goHere.title = "/navigate_to_pose (action) — drive to this remembered viewpoint";
-    goHere.addEventListener("click", () => {
-      closeMemPopup();
-      publishGoal(m.x, m.y, m.theta);
-    });
+    // Mid-mapping only slam_toolbox runs — /navigate_to_pose has no server, so
+    // the tour's popups keep the picture and Forget but never offer Go here.
+    if (!mappingMode) {
+      const goHere = document.createElement("button");
+      goHere.type = "button";
+      goHere.className = "mem-card-btn mem-card-btn-go";
+      goHere.textContent = "Go here";
+      goHere.title = "/navigate_to_pose (action) — drive to this remembered viewpoint";
+      goHere.addEventListener("click", () => {
+        closeMemPopup();
+        publishGoal(m.x, m.y, m.theta);
+      });
+      actions.append(goHere);
+    }
     const forget = document.createElement("button");
     forget.type = "button";
     forget.className = "mem-card-btn mem-card-btn-forget";
@@ -619,7 +624,7 @@ export function createMap(root, opts = {}) {
     close.className = "mem-card-btn";
     close.textContent = "Close";
     close.addEventListener("click", closeMemPopup);
-    actions.append(goHere, forget, close);
+    actions.append(forget, close);
     memPopup.append(img, meta, actions);
     memPopup.hidden = false;
     placeMemCard(memPopup, m);
