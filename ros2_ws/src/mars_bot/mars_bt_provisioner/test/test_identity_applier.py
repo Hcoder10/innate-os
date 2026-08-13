@@ -37,6 +37,11 @@ applier = _load("innate-identity")
 short_id_tool = _load("robot-short-id")
 
 
+def _short_id_tool(*args):
+    """Stand in for robot-short-id: a fixed serial, a fixed suffix."""
+    return "1424523016164" if args[0] == "--module-serial" else "a1b2"
+
+
 @pytest.fixture
 def robot(tmp_path):
     """An applier pointed at a throwaway rootfs, with root-only calls stubbed out."""
@@ -49,7 +54,7 @@ def robot(tmp_path):
         patch.object(applier, "SYSTEM_ENV_PATH", system_env),
         patch.object(applier, "BACKUP_ENV_PATH", tmp_path / "innate.env.bak"),
         patch.object(applier, "REPO_ROOT", repo),
-        patch.object(applier, "module_serial", return_value="1424523016164"),
+        patch.object(applier, "short_id_tool", side_effect=_short_id_tool),
         patch.object(applier, "set_password") as set_password,
         patch.object(applier.os, "chown"),
     ):
@@ -224,8 +229,7 @@ class TestPassword:
 
 class TestSeed:
     def test_seeds_serial_defaults_on_a_fresh_robot(self, robot):
-        with patch.object(applier, "short_id", return_value="a1b2"):
-            assert applier.run_seed() == 0
+        assert applier.run_seed() == 0
 
         env = applier.parse_env(robot.env_path.read_text())
         assert env["ROBOT_NAME"] == "MARS-A1B2"
@@ -257,14 +261,13 @@ class TestSeed:
 
     def test_refuses_to_run_without_a_module_serial(self, robot):
         """Keeps a dev machine from growing an /etc/innate.env."""
-        with patch.object(applier, "module_serial", return_value=None):
+        with patch.object(applier, "short_id_tool", return_value=None):
             assert applier.run_seed() == 1
         assert not robot.env_path.exists()
 
     def test_reseeds_after_de_provisioning(self, robot):
         robot.env_path.write_text("ROBOT_NAME=MARS the 41st\nROBOT_ID=unprovisioned-a1b2\n")
 
-        with patch.object(applier, "short_id", return_value="a1b2"):
-            assert applier.run_seed() == 0
+        assert applier.run_seed() == 0
 
         assert applier.parse_env(robot.env_path.read_text())["ROBOT_NAME"] == "MARS-A1B2"

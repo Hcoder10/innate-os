@@ -554,9 +554,9 @@ class TestGetIdentity:
     """Identity has its own command precisely so replies stay small — and it never
     carries the service key."""
 
-    @patch.object(simple_bt_service, "short_id", return_value="a1b2")
+    @patch.object(simple_bt_service, "short_id_tool", return_value="a1b2")
     @patch.object(simple_bt_service, "parse_env_file", return_value={})
-    def test_unprovisioned_robot(self, mock_env, mock_short_id):
+    def test_unprovisioned_robot(self, mock_env, mock_tool):
         server = _make_server()
 
         resp = _send_command(server, {"command": "get_identity"})
@@ -566,13 +566,13 @@ class TestGetIdentity:
         assert resp["short_id"] == "a1b2"
         assert resp["robot_id"] is None
 
-    @patch.object(simple_bt_service, "short_id", return_value="a1b2")
+    @patch.object(simple_bt_service, "short_id_tool", return_value="a1b2")
     @patch.object(
         simple_bt_service,
         "parse_env_file",
         return_value={"INNATE_SERVICE_KEY": SERVICE_KEY, "ROBOT_ID": "R7-41", "MODULE_SERIAL": "1424523016164"},
     )
-    def test_provisioned_robot_never_echoes_the_key(self, mock_env, mock_short_id):
+    def test_provisioned_robot_never_echoes_the_key(self, mock_env, mock_tool):
         server = _make_server()
 
         resp = _send_command(server, {"command": "get_identity"})
@@ -716,7 +716,7 @@ class TestLoadRobotName:
         with (
             patch.object(simple_bt_service, "INNATE_OS_ROOT", str(tmp_path)),
             patch.object(simple_bt_service, "SYSTEM_ENV_PATH", str(tmp_path / "missing.env")),
-            patch.object(simple_bt_service, "short_id", return_value="a1b2"),
+            patch.object(simple_bt_service, "short_id_tool", return_value="a1b2"),
         ):
             assert simple_bt_service.load_robot_name() == "MARS-A1B2"
 
@@ -724,7 +724,7 @@ class TestLoadRobotName:
         with (
             patch.object(simple_bt_service, "INNATE_OS_ROOT", str(tmp_path)),
             patch.object(simple_bt_service, "SYSTEM_ENV_PATH", str(tmp_path / "missing.env")),
-            patch.object(simple_bt_service, "short_id", return_value=None),
+            patch.object(simple_bt_service, "short_id_tool", return_value=None),
         ):
             assert simple_bt_service.load_robot_name() == "MARS"
 

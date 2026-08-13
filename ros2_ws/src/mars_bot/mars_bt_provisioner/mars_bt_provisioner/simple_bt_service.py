@@ -82,7 +82,10 @@ def is_provisioned():
     return bool(parse_env_file(SYSTEM_ENV_PATH).get("INNATE_SERVICE_KEY", "").strip())
 
 
-def _run_short_id_tool(*args):
+def short_id_tool(*args):
+    """Ask robot-short-id — no args for the four hex chars, --module-serial for the raw
+    serial. None when it cannot answer, so the name derivation has one implementation
+    and this service never grows a second."""
     try:
         result = subprocess.run([SHORT_ID_TOOL_PATH, *args], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
@@ -90,16 +93,6 @@ def _run_short_id_tool(*args):
     if result.returncode != 0:
         return None
     return result.stdout.strip() or None
-
-
-def short_id():
-    """Four hex chars from the compute module serial, or None when unavailable."""
-    return _run_short_id_tool()
-
-
-def module_serial():
-    """The compute module serial straight from the device tree."""
-    return _run_short_id_tool("--module-serial")
 
 
 def load_robot_name():
@@ -121,7 +114,7 @@ def load_robot_name():
     if name:
         return name
 
-    suffix = short_id()
+    suffix = short_id_tool()
     return f"MARS-{suffix.upper()}" if suffix else "MARS"
 
 
@@ -436,9 +429,9 @@ class BleProvisionerServer:
         return {
             "command": command,
             "status": "success",
-            "short_id": short_id(),
+            "short_id": short_id_tool(),
             # A robot whose ros-app has never launched has no seeded env file yet.
-            "module_serial": env.get("MODULE_SERIAL") or module_serial(),
+            "module_serial": env.get("MODULE_SERIAL") or short_id_tool("--module-serial"),
             "robot_id": env.get("ROBOT_ID"),
             "robot_name": ROBOT_NAME,
             "hostname": socket.gethostname(),
