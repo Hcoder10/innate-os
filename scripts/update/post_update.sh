@@ -934,21 +934,31 @@ done
 # -----------------------------------------------------------------------------
 # 11c. Download boot sounds
 # 48 kHz PCM WAVs (dmix's rate: no decode/resample in the boot-time playback
-# window) — too heavy for git, so fetched from GCS. Non-fatal: a missing sound
+# window) — too heavy for git, so fetched from GCS, pinned by checksum so a
+# truncated or tampered file self-heals next update. Non-fatal: a missing sound
 # only means a silent boot, never a failed update.
 # -----------------------------------------------------------------------------
 SOUNDS_BASE_URL="https://storage.googleapis.com/karmanyaah-public/sounds"
-for sound in turnon.wav turnoff.wav; do
+sudo -u "$ACTUAL_USER" mkdir -p "$REPO_DIR/config/sounds"
+while read -r sound sha256; do
     dest="$REPO_DIR/config/sounds/$sound"
-    [ -f "$dest" ] && continue
+    if [ -f "$dest" ]; then
+        echo "$sha256  $dest" | sha256sum -c --status - && continue
+        rm -f "$dest"
+        log "  WARNING: $sound failed its checksum; re-downloading"
+    fi
     log "  Downloading $dest"
-    if sudo -u "$ACTUAL_USER" curl -fsSL -o "$dest.tmp" "$SOUNDS_BASE_URL/$sound"; then
+    if sudo -u "$ACTUAL_USER" curl -fsSL -o "$dest.tmp" "$SOUNDS_BASE_URL/$sound" \
+        && echo "$sha256  $dest.tmp" | sha256sum -c --status -; then
         mv "$dest.tmp" "$dest"
     else
         rm -f "$dest.tmp"
         log "  WARNING: failed to download $sound (boot will be silent; retried next update)"
     fi
-done
+done <<'EOF'
+turnon.wav 3c9ac04fbb1e93b62353a5e77789dd5099764a0e48a7d56661f3a18eb7b37190
+turnoff.wav ccef2517800ffe84f337fde4b986ae2cb0fb2bc70e255ac16ba4d6b0c55066a8
+EOF
 
 # -----------------------------------------------------------------------------
 # 12. Enable and restart services
