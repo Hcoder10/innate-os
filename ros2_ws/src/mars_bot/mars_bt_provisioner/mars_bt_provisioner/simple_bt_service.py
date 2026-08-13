@@ -13,6 +13,7 @@ import threading
 import time
 
 from bluezero import adapter, peripheral
+from dotenv import dotenv_values
 from gi.repository import GLib
 from nmcli_utils import (
     nmcli_add_or_modify_connection,
@@ -59,26 +60,18 @@ ENV_LINE_RE = re.compile(r"^[A-Z][A-Z0-9_]*=")
 FORBIDDEN_ENV_PREFIXES = ("LD_", "DYLD_")
 
 
-def parse_env_file(path):
-    """Parse a KEY=VALUE file into a dict; unreadable or absent reads as empty."""
-    env = {}
+def system_env():
+    """/etc/innate.env as a dict. Absent or unreadable reads as empty: this service has
+    to start on a robot whose env file post_update.sh has not fixed the mode on yet."""
     try:
-        with open(path) as f:
-            text = f.read()
+        return dotenv_values(SYSTEM_ENV_PATH)
     except OSError:
-        return env
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        env[key.strip()] = value.strip()
-    return env
+        return {}
 
 
 def is_provisioned():
     """A robot is provisioned exactly when /etc/innate.env holds a service key."""
-    return bool(parse_env_file(SYSTEM_ENV_PATH).get("INNATE_SERVICE_KEY", "").strip())
+    return bool((system_env().get("INNATE_SERVICE_KEY") or "").strip())
 
 
 def short_id_tool(raw_serial=False):
@@ -110,7 +103,7 @@ def load_robot_name():
     except (OSError, ValueError):
         pass
 
-    name = parse_env_file(SYSTEM_ENV_PATH).get("ROBOT_NAME", "").strip()
+    name = (system_env().get("ROBOT_NAME") or "").strip()
     if name:
         return name
 
@@ -408,7 +401,7 @@ class BleProvisionerServer:
         """Handle get_identity command. Never echoes the service key."""
         command = data.get("command")
         logger.info(f"Handling {command} command")
-        env = parse_env_file(SYSTEM_ENV_PATH)
+        env = system_env()
 
         return {
             "command": command,

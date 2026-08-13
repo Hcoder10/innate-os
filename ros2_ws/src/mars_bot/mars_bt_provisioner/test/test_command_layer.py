@@ -550,7 +550,7 @@ class TestGetIdentity:
     carries the service key."""
 
     @patch.object(simple_bt_service, "short_id_tool", return_value="a1b2")
-    @patch.object(simple_bt_service, "parse_env_file", return_value={})
+    @patch.object(simple_bt_service, "system_env", return_value={})
     def test_unprovisioned_robot(self, mock_env, mock_tool):
         server = _make_server()
 
@@ -564,7 +564,7 @@ class TestGetIdentity:
     @patch.object(simple_bt_service, "short_id_tool", return_value="a1b2")
     @patch.object(
         simple_bt_service,
-        "parse_env_file",
+        "system_env",
         return_value={"INNATE_SERVICE_KEY": SERVICE_KEY, "ROBOT_ID": "R7-41", "MODULE_SERIAL": "1424523016164"},
     )
     def test_provisioned_robot_never_echoes_the_key(self, mock_env, mock_tool):

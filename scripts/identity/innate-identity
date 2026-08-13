@@ -73,7 +73,9 @@ def log(message: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def parse_env(text: str) -> dict[str, str]:
+def parse_env_text(text: str) -> dict[str, str]:
+    """Hand-parsed rather than python-dotenv: pip deps are installed into the login
+    user's site-packages, and this runs as root."""
     env: dict[str, str] = {}
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -84,21 +86,22 @@ def parse_env(text: str) -> dict[str, str]:
     return env
 
 
-def read_system_env() -> dict[str, str]:
+def read_env_file(path: Path) -> dict[str, str]:
     try:
-        return parse_env(SYSTEM_ENV_PATH.read_text())
+        return parse_env_text(path.read_text())
     except OSError:
         return {}
+
+
+def read_system_env() -> dict[str, str]:
+    return read_env_file(SYSTEM_ENV_PATH)
 
 
 def read_effective_env() -> dict[str, str]:
     """What the ROS processes actually see: print_runtime_env.py layers the repo .env
     on top of /etc/innate.env. An R7.0 robot's key lives only there."""
     env = read_system_env()
-    try:
-        env.update(parse_env((REPO_ROOT / ".env").read_text()))
-    except OSError:
-        pass
+    env.update(read_env_file(REPO_ROOT / ".env"))
     return env
 
 
@@ -224,7 +227,7 @@ def validate(env_text: str, password: str) -> dict[str, str]:
         if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
             raise PayloadError(f"value of {key} contains control characters")
 
-    env = parse_env(env_text)
+    env = parse_env_text(env_text)
     if not has_service_key(env):
         raise PayloadError("env carries no INNATE_SERVICE_KEY — that blob would not provision anything")
     if not env.get("ROBOT_ID", "").strip():
