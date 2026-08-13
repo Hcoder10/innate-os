@@ -28,6 +28,7 @@ fighting it for the device.
 import json
 import time
 
+import numpy as np
 import rclpy
 from geometry_msgs.msg import Twist
 from rcl_interfaces.msg import SetParametersResult
@@ -71,8 +72,10 @@ class MotorSoundNode(Node):
         self._max_speed = max(float(params["max_speed"].value), 1e-3)
         self._reference_acceleration = max(float(params["reference_acceleration"].value), 1e-3)
 
-        self._synth = self._build_synth(params)
+        self._synth: Synth = self._build_synth(params)
         self._synth.volume = float(params["volume"].value)
+        self._retiring: Synth | None = None
+        """A swapped-out synth awaiting its one-block fade on the audio thread."""
 
         # Written by the ROS executor thread, read by the audio thread. Both
         # are plain floats, so the GIL makes each access atomic and no lock
@@ -223,7 +226,14 @@ class MotorSoundNode(Node):
         escaping here silently aborts the stream, so it swallows everything and
         outputs silence instead."""
         try:
-            mono = self._synth.render(frames)
+            synth = self._synth
+            mono = synth.render(frames)
+            retiring = self._retiring
+            # The identity check covers the instant between _swap_synth parking
+            # the old synth and rebinding _synth: never fade a voice under itself.
+            if retiring is not None and retiring is not synth:
+                self._retiring = None
+                mono = mono + retiring.render(frames) * np.linspace(1.0, 0.0, frames)
             outdata[:, 0] = mono
             outdata[:, 1] = mono
         except Exception:
@@ -311,16 +321,20 @@ class MotorSoundNode(Node):
         """Rebuild the synth from the whole atomic batch. This callback runs
         before the batch commits, so the prefix lookup still reports old values
         and ``changed`` has to be spliced over it by hand -- or a volume set in
-        the same call would roll back. Rebinding the reference is the whole
-        handover: the audio thread picks the new synth up on its next block."""
+        the same call would roll back. The old synth is parked in ``_retiring``
+        for the audio thread to ramp out under the new one's first block, so
+        the swap crossfades instead of cutting the old voice mid-waveform."""
         pending = self.get_parameters_by_prefix("motor_sound")
         pending.update(changed)
-        retiring = self._synth
-        self._synth = self._build_synth(pending)
+        replacement = self._build_synth(pending)
         # A retune keeps the same voice and stays quiet about it; a new voice
         # announces itself with its wake-up.
-        if type(self._synth) is not type(retiring):
-            self._synth.trigger_startup()
+        if type(replacement) is not type(self._synth):
+            replacement.trigger_startup()
+        # Parked before the rebind: with the reverse order the audio thread
+        # could catch a block where the old voice was dropped unfaded.
+        self._retiring = self._synth
+        self._synth = replacement
 
     def destroy_node(self):
         if self._stream is not None:
