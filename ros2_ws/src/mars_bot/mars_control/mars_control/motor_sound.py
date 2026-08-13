@@ -32,10 +32,14 @@ import rclpy
 from geometry_msgs.msg import Twist
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from std_msgs.msg import String
 
-from mars_control.accel_voices import VOICES, VoiceFeel, build_voice
+from mars_control.accel_voices import VOICES, AccelVoice, VoiceFeel, build_voice
 from mars_control.motor_synth import MotorConfig, MotorSynth, clamp01, is_mad_scale
+
+Synth = MotorSynth | AccelVoice
+"""Either engine: the same set_drive/render/trigger_startup contract."""
 
 CMD_TIMEOUT_S = 0.5
 """How long a /cmd_vel stays fresh. Matches the base's own command watchdog,
@@ -46,6 +50,12 @@ IDLE_THROB = 0.3
 """Load a parked-but-idling motor carries, so the resting sound rumbles like
 a lopey idle instead of humming sterile. Only heard when idle_when_stopped
 keeps the synth running while parked."""
+LIVE_PARAMS = frozenset({"enabled", "volume", "idle_when_stopped", "only_in_mad_mode", "reference_acceleration"})
+"""Settable in place. Every other motor_sound.* parameter is baked into the
+synth at construction, so applying one live means rebuilding it."""
+STREAM_PARAMS = frozenset({"sample_rate", "blocksize", "device"})
+"""Baked into the audio stream, which opens once at boot. A live set is
+rejected outright rather than pretending to apply."""
 
 
 class MotorSoundNode(Node):
@@ -127,7 +137,7 @@ class MotorSoundNode(Node):
             ],
         )
 
-    def _build_synth(self, params):
+    def _build_synth(self, params: dict[str, Parameter]) -> Synth:
         """The configured voice, or the motor if the name is not one we have.
 
         An unknown name falls back rather than raising: a typo in settings must
@@ -142,7 +152,7 @@ class MotorSoundNode(Node):
             return MotorSynth(rate, self._build_config(params))
         return build_voice(voice, rate, self._build_feel(params))
 
-    def _build_feel(self, params) -> VoiceFeel:
+    def _build_feel(self, params: dict[str, Parameter]) -> VoiceFeel:
         return VoiceFeel(
             max_speed=self._max_speed,
             spring_hz=float(params["spring_hz"].value),
@@ -152,7 +162,7 @@ class MotorSoundNode(Node):
             volume=float(params["volume"].value),
         )
 
-    def _build_config(self, params) -> MotorConfig:
+    def _build_config(self, params: dict[str, Parameter]) -> MotorConfig:
         return MotorConfig(
             base_hz=float(params["base_hz"].value),
             top_hz=float(params["top_hz"].value),
@@ -269,33 +279,48 @@ class MotorSoundNode(Node):
         self._synth.enabled = allowed and (self._idle_when_stopped or not parked)
         self._synth.set_drive(speed, throttle, abs(self._commanded_turn))
 
-    def _on_parameter_change(self, params):
-        for param in params:
-            if param.name == "motor_sound.enabled":
-                was_enabled = self._enabled
-                self._enabled = bool(param.value)
-                if self._enabled and not was_enabled:
-                    self._synth.trigger_startup()
-            elif param.name == "motor_sound.voice":
-                # This callback runs before the batch is committed, so the
-                # prefix lookup still reports old values and the whole batch --
-                # not just the voice -- has to be spliced in by hand, or a
-                # volume set in the same call would roll back. Rebinding the
-                # reference is the whole handover: the audio thread picks the
-                # new voice up on its next block, and it ramps its gain from
-                # zero, so the swap can't click.
-                pending = self.get_parameters_by_prefix("motor_sound")
-                pending.update({p.name.removeprefix("motor_sound."): p for p in params})
-                self._synth = self._build_synth(pending)
-                self._synth.trigger_startup()
-            elif param.name == "motor_sound.volume":
-                self._synth.volume = float(param.value)
-            elif param.name == "motor_sound.idle_when_stopped":
-                self._idle_when_stopped = bool(param.value)
-            elif param.name == "motor_sound.only_in_mad_mode":
-                self._only_in_mad_mode = bool(param.value)
+    def _on_parameter_change(self, params: list[Parameter]) -> SetParametersResult:
+        changed = {p.name.removeprefix("motor_sound."): p for p in params if p.name.startswith("motor_sound.")}
+        stuck = sorted(changed.keys() & STREAM_PARAMS)
+        if stuck:
+            reason = f"{', '.join(stuck)}: the audio stream opens once at boot; restart the node to apply"
+            return SetParametersResult(successful=False, reason=reason)
+
+        was_enabled = self._enabled
+        if "enabled" in changed:
+            self._enabled = bool(changed["enabled"].value)
+        if "volume" in changed:
+            self._synth.volume = float(changed["volume"].value)
+        if "idle_when_stopped" in changed:
+            self._idle_when_stopped = bool(changed["idle_when_stopped"].value)
+        if "only_in_mad_mode" in changed:
+            self._only_in_mad_mode = bool(changed["only_in_mad_mode"].value)
+        if "max_speed" in changed:
+            self._max_speed = max(float(changed["max_speed"].value), 1e-3)
+        if "reference_acceleration" in changed:
+            self._reference_acceleration = max(float(changed["reference_acceleration"].value), 1e-3)
+
+        if changed.keys() - LIVE_PARAMS:
+            self._swap_synth(changed)
+        if self._enabled and not was_enabled:
+            self._synth.trigger_startup()
         self._update_drive()
         return SetParametersResult(successful=True)
+
+    def _swap_synth(self, changed: dict[str, Parameter]) -> None:
+        """Rebuild the synth from the whole atomic batch. This callback runs
+        before the batch commits, so the prefix lookup still reports old values
+        and ``changed`` has to be spliced over it by hand -- or a volume set in
+        the same call would roll back. Rebinding the reference is the whole
+        handover: the audio thread picks the new synth up on its next block."""
+        pending = self.get_parameters_by_prefix("motor_sound")
+        pending.update(changed)
+        retiring = self._synth
+        self._synth = self._build_synth(pending)
+        # A retune keeps the same voice and stays quiet about it; a new voice
+        # announces itself with its wake-up.
+        if type(self._synth) is not type(retiring):
+            self._synth.trigger_startup()
 
     def destroy_node(self):
         if self._stream is not None:
