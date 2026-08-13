@@ -81,11 +81,13 @@ def build_query(task: dict, style: str) -> str:
 
 
 def score(task: dict, verdict: SearchVerdict, visibility: dict) -> tuple[float, str]:
+    if verdict.error:
+        return 0.0, f"error: {verdict.error}"  # a transport failure is not an honest no-match
     gold = task["gold"]
     if gold.get("none"):
         return (1.0, "honest no-match") if not verdict.found else (0.0, "hallucinated a match")
     if not verdict.found or verdict.memory is None:
-        return 0.0, "missed" if not verdict.error else f"error: {verdict.error}"
+        return 0.0, "missed"
     mem = verdict.memory
     seen = set(visibility.get("memories", {}).get(str(mem.id), {}))
     if gold.get("props") and seen & set(gold["props"]):
