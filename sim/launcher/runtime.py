@@ -2054,7 +2054,7 @@ def ensure_benchmark_service(config: dict[str, object]) -> None:
     if benchmark_service_running():
         return
     uv = find_uv()
-    bind = _world_server_bind_addresses()
+    bind = os.environ.get("INNATE_SIM_WORLD_BIND", "").strip() or _world_server_bind_addresses()
     if uv is None or not bind:
         warn("Benchmark service skipped (needs uv and a host-only bind address).")
         return
