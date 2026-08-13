@@ -180,9 +180,13 @@ def is_mad_scale(info: dict) -> bool:
     return False
 
 
+def clamp01(value: float) -> float:
+    return min(max(value, 0.0), 1.0)
+
+
 def _smoothstep(x: float) -> float:
     """0..1 with eased ends, so the snarl fades in rather than switching."""
-    x = min(max(x, 0.0), 1.0)
+    x = clamp01(x)
     return x * x * (3.0 - 2.0 * x)
 
 
@@ -198,6 +202,20 @@ def bandpass_kernel(sample_rate: int, low_hz: float, high_hz: float, taps: int =
 
     kernel = (lowpass(high_hz) - lowpass(low_hz)) * np.hamming(taps)
     return kernel / max(math.sqrt(float((kernel**2).sum())), 1e-9)
+
+
+class Stream:
+    """A FIR filter that carries its tail across block boundaries, so filtered
+    noise is continuous rather than restarting on every callback."""
+
+    def __init__(self, kernel: np.ndarray) -> None:
+        self._kernel = kernel
+        self._tail = np.zeros(len(kernel) - 1)
+
+    def __call__(self, block: np.ndarray) -> np.ndarray:
+        padded = np.concatenate([self._tail, block])
+        self._tail = padded[-(len(self._kernel) - 1) :]
+        return np.convolve(padded, self._kernel, mode="valid")
 
 
 @dataclass
@@ -281,18 +299,15 @@ class MotorSynth:
         self._rotor = Rotor(self.cfg.spring_hz, self.cfg.damping)
         self._gearbox = _Gearbox(self.cfg)
         self._rng = np.random.default_rng(seed)
-        self._noise_kernel = bandpass_kernel(sample_rate, *self.cfg.rolling_band_hz)
-        self._noise_tail = np.zeros(NOISE_TAPS - 1)
+        self._rolling = Stream(bandpass_kernel(sample_rate, *self.cfg.rolling_band_hz))
         # Strain noise sits lower than the rolling noise -- that is what makes
         # it read as effort. The long kernel is what holds the low edge: a
         # 63-tap filter at 48 kHz has a ~760 Hz transition band and leaks well
         # below the speaker's ~160 Hz floor, wasting amp headroom there.
-        self._growl_kernel = bandpass_kernel(sample_rate, 240.0, 700.0, taps=255)
-        self._growl_tail = np.zeros(len(self._growl_kernel) - 1)
+        self._growl = Stream(bandpass_kernel(sample_rate, 240.0, 700.0, taps=255))
         # Slip noise, banded around the squeal so tone and noise read as one
         # sound rather than two layers.
-        self._screech_kernel = bandpass_kernel(sample_rate, self.cfg.screech_hz * 0.7, self.cfg.screech_hz * 1.7)
-        self._screech_tail = np.zeros(NOISE_TAPS - 1)
+        self._slip = Stream(bandpass_kernel(sample_rate, self.cfg.screech_hz * 0.7, self.cfg.screech_hz * 1.7))
 
         # One phase per partial: the gear-whine ratio is not a whole number, so
         # a single shared phase could not be wrapped without a discontinuity.
@@ -485,9 +500,7 @@ class MotorSynth:
             weight_sum += amplitude
         tone /= weight_sum
 
-        padded = np.concatenate([self._screech_tail, self._rng.standard_normal(frames)])
-        self._screech_tail = padded[-(NOISE_TAPS - 1) :]
-        slip = np.convolve(padded, self._screech_kernel, mode="valid")
+        slip = self._slip(self._rng.standard_normal(frames))
 
         # Grab-and-release stutter, two detuned modulators beating so it rolls
         # rather than ticking. Shallower the harder the corner: at the edge of
@@ -503,17 +516,10 @@ class MotorSynth:
 
     def _growl_noise(self, frames: int) -> np.ndarray:
         """Band-limited strain noise, phase-continuous across blocks."""
-        history = len(self._growl_kernel) - 1
-        padded = np.concatenate([self._growl_tail, self._rng.standard_normal(frames)])
-        self._growl_tail = padded[-history:]
-        return np.convolve(padded, self._growl_kernel, mode="valid") * self.cfg.growl_noise_level
+        return self._growl(self._rng.standard_normal(frames)) * self.cfg.growl_noise_level
 
     def _rolling_noise(self, frames: int, speed_frac: float) -> np.ndarray:
         """Bearings and wheels on the floor. Keeps the whine from sounding like
         a bare oscillator."""
-        # Carry the kernel's worth of history across the block boundary so the
-        # filtered noise is continuous rather than restarting each callback.
-        padded = np.concatenate([self._noise_tail, self._rng.standard_normal(frames)])
-        self._noise_tail = padded[-(NOISE_TAPS - 1) :]
-        band_limited = np.convolve(padded, self._noise_kernel, mode="valid")
+        band_limited = self._rolling(self._rng.standard_normal(frames))
         return band_limited * self.cfg.rolling_level * (0.25 + 0.75 * speed_frac)

@@ -35,7 +35,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 from mars_control.accel_voices import VOICES, VoiceFeel, build_voice
-from mars_control.motor_synth import MotorConfig, MotorSynth, is_mad_scale
+from mars_control.motor_synth import MotorConfig, MotorSynth, clamp01, is_mad_scale
 
 CMD_TIMEOUT_S = 0.5
 """How long a /cmd_vel stays fresh. Matches the base's own command watchdog,
@@ -46,10 +46,6 @@ IDLE_THROB = 0.3
 """Load a parked-but-idling motor carries, so the resting sound rumbles like
 a lopey idle instead of humming sterile. Only heard when idle_when_stopped
 keeps the synth running while parked."""
-
-
-def _clamp01(value: float) -> float:
-    return min(max(value, 0.0), 1.0)
 
 
 class MotorSoundNode(Node):
@@ -264,7 +260,7 @@ class MotorSoundNode(Node):
         # never completely off-load while moving.
         throttle = 0.35 * min(speed / self._max_speed, 1.0)
         # Speeding up is "foot down"; slowing down is not (negatives clamp to 0).
-        throttle = max(throttle, _clamp01(self._acceleration / self._reference_acceleration))
+        throttle = max(throttle, clamp01(self._acceleration / self._reference_acceleration))
 
         parked = speed < STOPPED_SPEED
         if parked:

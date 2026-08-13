@@ -19,6 +19,7 @@ Made of mouths:
 * ``kazoo``       a hum with a membrane rattling against it.
 * ``whistle``     someone whistling as they zoom past.
 * ``choir``       a tiny choir going "ah", rising with the robot.
+* ``throat``      khoomei: one drone, one whistled overtone climbing it.
 
 Swiss Army Man, both halves:
 
@@ -32,6 +33,24 @@ Musical, where speed is tempo and pitch:
 * ``disco``       four on the floor, BPM tied to road speed.
 * ``chiptune``    an 8-bit racer, pulse wave and arpeggio.
 * ``bagpipe``     a fixed drone with a chanter climbing over it.
+* ``gamelan``     bronze, every note struck twice so the pair beats.
+
+Impossible, because a robot with a top speed has no honest top note:
+
+* ``shepard``     a tone that rises forever and never gets any higher.
+* ``risset``      the same illusion in time -- a beat that never arrives.
+* ``doppler``     a real flypast, modelled: it passes you, over and over.
+
+Speed borrowed from another domain entirely:
+
+* ``tape``        a tape transport spooling up, wow and flutter settling.
+* ``spoke_card``  a playing card in the spokes, flapping into a buzz.
+* ``geiger``      randomly spaced clicks. Not higher, just more alarming.
+
+Alive:
+
+* ``panting``     the robot pants harder the faster you push it.
+* ``heartbeat``   its pulse is your speed -- 57 bpm parked, 192 flat out.
 
 Not synthesised at all -- generated as sound effects, then cut into something
 road speed can drive (see ``scripts/fetch_sound_assets.py``):
@@ -74,7 +93,7 @@ from typing import ClassVar
 
 import numpy as np
 
-from mars_control.motor_synth import Rotor, bandpass_kernel
+from mars_control.motor_synth import Rotor, Stream, bandpass_kernel, clamp01
 
 MAX_HARMONICS = 32
 """Ceiling on additive partials. A 78 Hz buzz would otherwise ask for 60+ of
@@ -131,24 +150,6 @@ class Glide:
         ramp = np.linspace(self.value, target, frames)
         self.value = target
         return ramp
-
-
-class Stream:
-    """A FIR filter that carries its tail across block boundaries, so filtered
-    noise is continuous rather than restarting on every callback."""
-
-    def __init__(self, kernel: np.ndarray) -> None:
-        self._kernel = kernel
-        self._tail = np.zeros(len(kernel) - 1)
-
-    def __call__(self, block: np.ndarray) -> np.ndarray:
-        padded = np.concatenate([self._tail, block])
-        self._tail = padded[-(len(self._kernel) - 1) :]
-        return np.convolve(padded, self._kernel, mode="valid")
-
-
-def _clamp01(value: float) -> float:
-    return min(max(value, 0.0), 1.0)
 
 
 def _phase(start: float, freq: np.ndarray, sample_rate: int) -> tuple[np.ndarray, float]:
@@ -425,8 +426,8 @@ class AccelVoice:
         feel = self.feel
         dt = frames / self.sample_rate
         speed = self._rotor.update(abs(self._speed), dt)
-        load = _clamp01(self._throttle)
-        speed_frac = _clamp01(speed / max(feel.max_speed, 1e-6))
+        load = clamp01(self._throttle)
+        speed_frac = clamp01(speed / max(feel.max_speed, 1e-6))
 
         startup = 1.0
         if self._startup_elapsed < feel.startup_seconds:
