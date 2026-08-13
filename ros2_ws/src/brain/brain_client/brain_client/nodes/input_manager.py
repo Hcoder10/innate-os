@@ -50,8 +50,13 @@ class InputManagerNode(Node):
         self.declare_parameter("stt_backend", "elevenlabs_batch")
         self.declare_parameter("stt_vad_engine", "silero")
         self.declare_parameter("stt_language", "en")
+        # The batch (silero) and realtime (vendor) VAD knobs are separate on
+        # purpose: silero's speech probability and the vendors' sensitivity
+        # scales are unrelated, so one number cannot tune both.
         self.declare_parameter("stt_vad_threshold", 0.2)
         self.declare_parameter("stt_vad_silence_secs", 0.5)
+        self.declare_parameter("stt_realtime_vad_threshold", 0.3)
+        self.declare_parameter("stt_realtime_vad_silence_secs", 0.7)
         self.declare_parameter("stt_energy_threshold", 0.01)
         self.declare_parameter("elevenlabs_batch_stt_model", "scribe_v2")
         self.declare_parameter("gemini_stt_model", "gemini-3.6-flash")
@@ -66,6 +71,8 @@ class InputManagerNode(Node):
             "stt_language": self.get_parameter("stt_language").value,
             "stt_vad_threshold": self.get_parameter("stt_vad_threshold").value,
             "stt_vad_silence_secs": self.get_parameter("stt_vad_silence_secs").value,
+            "stt_realtime_vad_threshold": self.get_parameter("stt_realtime_vad_threshold").value,
+            "stt_realtime_vad_silence_secs": self.get_parameter("stt_realtime_vad_silence_secs").value,
             "stt_energy_threshold": self.get_parameter("stt_energy_threshold").value,
             "elevenlabs_batch_stt_model": self.get_parameter("elevenlabs_batch_stt_model").value,
             "gemini_stt_model": self.get_parameter("gemini_stt_model").value,

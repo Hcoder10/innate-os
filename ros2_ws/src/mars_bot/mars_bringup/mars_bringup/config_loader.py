@@ -194,6 +194,8 @@ _SETTINGS_DOUBLE_KEYS = frozenset(
         # input_manager_node
         "stt_vad_threshold",
         "stt_vad_silence_secs",
+        "stt_realtime_vad_threshold",
+        "stt_realtime_vad_silence_secs",
         "stt_energy_threshold",
         # uninavid_node
         "forward_speed",

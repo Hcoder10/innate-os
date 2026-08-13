@@ -239,8 +239,8 @@ class MicroInput(InputDevice):
         cfg = self.proxy.config
         transcribe_model = cfg.get("openai_transcribe_model", "gpt-4o-mini-transcribe")
         language = self._stt_language()
-        vad_threshold = float(cfg.get("stt_vad_threshold", 0.3))
-        silence_secs = float(cfg.get("stt_vad_silence_secs", 0.7))
+        vad_threshold = float(cfg.get("stt_realtime_vad_threshold", 0.3))
+        silence_secs = float(cfg.get("stt_realtime_vad_silence_secs", 0.7))
 
         self.logger.info("📤 WebSocket opened, sending session.update...")
         session_update = {
@@ -332,7 +332,7 @@ class MicroInput(InputDevice):
 
     def _start_batch_session(self, transcriber: Transcriber, model: str) -> None:
         cfg = self.proxy.config
-        silence_secs = float(cfg.get("stt_vad_silence_secs", 0.7))
+        silence_secs = float(cfg.get("stt_vad_silence_secs", 0.5))
         is_voiced, engine = self._make_vad(cfg)
         self.logger.info(f"📤 Batch STT config: model={model}, vad={engine}, silence={silence_secs}s")
         self.client = BatchSttSession(
@@ -354,7 +354,7 @@ class MicroInput(InputDevice):
             engine = DEFAULT_VAD_ENGINE
         detector: VoicedDetector | None = None
         if engine == "silero":
-            threshold = float(cfg.get("stt_vad_threshold", 0.3))
+            threshold = float(cfg.get("stt_vad_threshold", 0.2))
             detector = silero_detector(threshold, DEFAULT_SAMPLE_RATE, self.logger)
             if detector is None:
                 engine = "energy"  # silero_detector logged why
@@ -400,8 +400,8 @@ class MicroInput(InputDevice):
 
         cfg = self.proxy.config
         model = cfg.get("elevenlabs_stt_model", "scribe_v2_realtime")
-        vad_threshold = float(cfg.get("stt_vad_threshold", 0.3))
-        silence_secs = float(cfg.get("stt_vad_silence_secs", 0.7))
+        vad_threshold = float(cfg.get("stt_realtime_vad_threshold", 0.3))
+        silence_secs = float(cfg.get("stt_realtime_vad_silence_secs", 0.7))
 
         self.logger.info(
             f"📤 Scribe config: model={model}, audio_format={ELEVENLABS_AUDIO_FORMAT}, "

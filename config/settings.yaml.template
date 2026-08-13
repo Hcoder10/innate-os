@@ -220,9 +220,11 @@
 # (Scribe realtime) or "openai". The batch pair detects speech locally;
 # stt_vad_engine picks "silero" (neural, ignores fan/motor noise) or "energy"
 # (bare RMS threshold, the pre-Silero behavior and the fallback if the model
-# can't load). stt_vad_threshold is the speech probability for silero and the
-# vendor VAD knob for the realtime pair; stt_energy_threshold only applies to
-# the energy engine; silence closes an utterance everywhere.
+# can't load). The batch and realtime VAD knobs are separate scales — silero's
+# speech probability and the vendors' sensitivity are unrelated numbers, so
+# stt_vad_threshold / stt_vad_silence_secs tune only the local (batch)
+# endpointing and the stt_realtime_* pair tunes only the realtime backends;
+# stt_energy_threshold only applies to the energy engine.
 # The model knobs of the backends you aren't using are simply unused.
 # input_manager_node:
 #   ros__parameters:
@@ -230,8 +232,10 @@
 #     stt_vad_engine: "silero"
 #     stt_language: "en"
 #     stt_energy_threshold: 0.01    # energy engine: RMS (0-1) that counts as speech
-#     stt_vad_threshold: 0.2        # silero + realtime: lower = more sensitive to speech
-#     stt_vad_silence_secs: 0.5     # silence that closes an utterance
+#     stt_vad_threshold: 0.2        # batch/silero: lower = more sensitive to speech
+#     stt_vad_silence_secs: 0.5     # batch: silence that closes an utterance
+#     stt_realtime_vad_threshold: 0.3       # realtime pair: vendor VAD sensitivity
+#     stt_realtime_vad_silence_secs: 0.7    # realtime pair: vendor silence that ends a turn
 #     elevenlabs_batch_stt_model: "scribe_v2"
 #     gemini_stt_model: "gemini-3.6-flash"
 #     elevenlabs_stt_model: "scribe_v2_realtime"
