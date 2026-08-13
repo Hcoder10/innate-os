@@ -415,6 +415,9 @@ class AccelVoice:
         self._rng = np.random.default_rng(seed)
         self._startup_elapsed = self.feel.startup_seconds
         self._gain = 0.0
+        self._understudy: AccelVoice | None = None
+        """Stands in when a sampled voice's asset is missing; set by the
+        subclasses that load one."""
 
     def set_drive(self, speed: float, throttle: float, turn: float = 0.0) -> None:
         """Latest road speed (m/s), throttle demand (0..1) and yaw rate
@@ -467,6 +470,14 @@ class AccelVoice:
 
     def _voice(self, drive: Drive) -> np.ndarray:
         raise NotImplementedError
+
+    def _understudy_voice(self, drive: Drive) -> np.ndarray:
+        """The understudy's block, pre-scaled so the caller's trim nets out to
+        the understudy's own -- the stand-in must be exactly as loud as it is
+        when chosen directly."""
+        if self._understudy is None:
+            return np.zeros(drive.frames)
+        return self._understudy._voice(drive) * (self._understudy.trim / self.trim)
 
     def _quiet(self, dt: float) -> None:
         """Advance whatever must keep running while silent, so resuming does
@@ -566,7 +577,7 @@ class MarsVoice(AccelVoice):
 
     def _voice(self, drive: Drive) -> np.ndarray:
         if self._loop is None:
-            return self._understudy._voice(drive) if self._understudy else np.zeros(drive.frames)
+            return self._understudy_voice(drive)
 
         low, high = self.RATE
         rate = self._speed_glide.to(low + (high - low) * drive.speed_frac, drive.frames)
@@ -1248,7 +1259,7 @@ class MarsSong(AccelVoice):
 
     def _voice(self, drive: Drive) -> np.ndarray:
         if self._loop is None:
-            return self._understudy._voice(drive) if self._understudy else np.zeros(drive.frames)
+            return self._understudy_voice(drive)
 
         low, high = self.RATE
         for _ in range(self._metronome.tick(low + (high - low) * drive.speed_frac, drive.dt)):
@@ -1737,7 +1748,7 @@ class LoopVoice(AccelVoice):
 
     def _voice(self, drive: Drive) -> np.ndarray:
         if self._loop is None:
-            return self._understudy._voice(drive) if self._understudy else np.zeros(drive.frames)
+            return self._understudy_voice(drive)
         low, high = self.RATE
         rate = self._speed_glide.to(low + (high - low) * drive.speed_frac, drive.frames)
         cursor = self._cursor + np.cumsum(rate)
@@ -1778,7 +1789,7 @@ class TriggerVoice(AccelVoice):
 
     def _voice(self, drive: Drive) -> np.ndarray:
         if self._sample is None:
-            return self._understudy._voice(drive) if self._understudy else np.zeros(drive.frames)
+            return self._understudy_voice(drive)
 
         low, high = self.RATE
         for _ in range(self._metronome.tick(low + (high - low) * drive.speed_frac, drive.dt)):
