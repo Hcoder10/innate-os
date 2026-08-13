@@ -281,13 +281,15 @@ class MotorSoundNode(Node):
                 if self._enabled and not was_enabled:
                     self._synth.trigger_startup()
             elif param.name == "motor_sound.voice":
-                # This callback runs before the value is committed, so the
-                # prefix lookup still reports the old voice and the new one has
-                # to be spliced in by hand. Rebinding the reference is the whole
-                # handover: the audio thread picks the new voice up on its next
-                # block, and it ramps its gain from zero, so the swap can't click.
+                # This callback runs before the batch is committed, so the
+                # prefix lookup still reports old values and the whole batch --
+                # not just the voice -- has to be spliced in by hand, or a
+                # volume set in the same call would roll back. Rebinding the
+                # reference is the whole handover: the audio thread picks the
+                # new voice up on its next block, and it ramps its gain from
+                # zero, so the swap can't click.
                 pending = self.get_parameters_by_prefix("motor_sound")
-                pending["voice"] = param
+                pending.update({p.name.removeprefix("motor_sound."): p for p in params})
                 self._synth = self._build_synth(pending)
                 self._synth.trigger_startup()
             elif param.name == "motor_sound.volume":
