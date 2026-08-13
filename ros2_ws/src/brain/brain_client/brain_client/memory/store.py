@@ -169,27 +169,30 @@ class MemoryStore:
         is the save's session identity: a stage another session built raises
         :class:`StaleStageError` — it must never land in a foreign map.
         """
+        stage = self._root / MAPPING_SESSION
+        index = _staged_index(stage)
+        count = len(index.get("memories") or []) if index is not None else 0
+        if index is None or count == 0:
+            return 0
+        if mapping_started is not None and index.get("session") != mapping_started:
+            raise StaleStageError(f"stage session {index.get('session')!r} != save's {mapping_started!r}")
+        fingerprint = _map_fingerprint(self._maps_dir, map_name)
+        if not fingerprint:
+            return None
+        # The map hash and the stage copy run without the lock (switch_map
+        # hashes outside it too): every stage mutation runs on this same
+        # executor thread, so the stage cannot change under the copy.
+        # Build the copy aside and swap it in whole: the proxy reads these
+        # files without the lock and must never see a half-copied frame.
+        tmp = self._root / _PROMOTE_TMP
+        if tmp.is_dir():
+            shutil.rmtree(tmp)
+        shutil.copytree(stage, tmp)
+        stamped = json.loads((tmp / "index.json").read_text())
+        stamped["map"] = map_name
+        stamped["fingerprint"] = fingerprint
+        (tmp / "index.json").write_text(json.dumps(stamped))
         with self._lock:
-            stage = self._root / MAPPING_SESSION
-            index = _staged_index(stage)
-            count = len(index.get("memories") or []) if index is not None else 0
-            if index is None or count == 0:
-                return 0
-            if mapping_started is not None and index.get("session") != mapping_started:
-                raise StaleStageError(f"stage session {index.get('session')!r} != save's {mapping_started!r}")
-            fingerprint = _map_fingerprint(self._maps_dir, map_name)
-            if not fingerprint:
-                return None
-            # Build the copy aside and swap it in whole: the proxy reads these
-            # files without the lock and must never see a half-copied frame.
-            tmp = self._root / _PROMOTE_TMP
-            if tmp.is_dir():
-                shutil.rmtree(tmp)
-            shutil.copytree(stage, tmp)
-            stamped = json.loads((tmp / "index.json").read_text())
-            stamped["map"] = map_name
-            stamped["fingerprint"] = fingerprint
-            (tmp / "index.json").write_text(json.dumps(stamped))
             # Displace-then-swap, never delete-then-swap: destroying the
             # target before its replacement is in place would leave the map
             # memoryless if a crash lands between the two.
