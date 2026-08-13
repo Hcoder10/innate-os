@@ -15,10 +15,13 @@ Checks:
 """
 
 import glob
+import json
 import os
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
@@ -37,6 +40,11 @@ SPEAKER_SOUND = "/usr/share/sounds/sound-icons/electric-piano-3.wav"
 
 TMUX_SESSION = "ros_nodes"
 SYSTEMD_SERVICE = "ros-app.service"
+
+SYSTEM_ENV_PATH = "/etc/innate.env"
+INNATE_OS_ROOT = os.environ.get("INNATE_OS_ROOT", os.path.expanduser("~/innate-os"))
+ROBOT_INFO_PATH = os.path.join(INNATE_OS_ROOT, "data", "robot_info.json")
+DEFAULT_AUTH_URL = "https://auth-v1.svc.innate.bot"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # OUTPUT FORMATTING
@@ -461,6 +469,108 @@ def check_speaker():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# IDENTITY
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _auth_token(service_key):
+    """Exchange the service key for a JWT, the same way auth_client does."""
+    issuer = os.environ.get("INNATE_AUTH_URL", DEFAULT_AUTH_URL).rstrip("/")
+    request = urllib.request.Request(
+        f"{issuer}/v1/auth", data=b"", headers={"Authorization": f"Bearer {service_key}", "User-Agent": "innate-robot"}
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return json.loads(response.read()).get("token")
+
+
+def _cloud_identity(service_key):
+    issuer = os.environ.get("INNATE_AUTH_URL", DEFAULT_AUTH_URL).rstrip("/")
+    request = urllib.request.Request(
+        f"{issuer}/v1/me", headers={"Authorization": f"Bearer {_auth_token(service_key)}", "User-Agent": "innate-robot"}
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return json.loads(response.read())
+
+
+def _parse_env_file(path):
+    env = {}
+    try:
+        with open(path) as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    env[key.strip()] = value.strip()
+    except OSError:
+        pass
+    return env
+
+
+def _local_identity():
+    """(robot_id, robot_id from robot_info.json, service key) as the nodes see them.
+
+    Same precedence as print_runtime_env.py: /etc/innate.env is the fallback, the repo
+    .env layers on top and wins.
+    """
+    env = _parse_env_file(SYSTEM_ENV_PATH)
+    env.update(_parse_env_file(os.path.join(INNATE_OS_ROOT, ".env")))
+
+    robot_info_id = None
+    try:
+        with open(ROBOT_INFO_PATH) as f:
+            robot_info_id = json.load(f).get("robot_id")
+    except (OSError, ValueError):
+        pass
+
+    return env.get("ROBOT_ID"), robot_info_id, env.get("INNATE_SERVICE_KEY", "").strip()
+
+
+def check_identity():
+    """Compare the robot's stored identity against what its service key resolves to.
+
+    Provisioning writes the identity as one blob composed on a laptop, so the robot
+    never proves key↔identity agreement itself. This is the only on-robot detector of a
+    mis-composed blob — loud, never fatal.
+    """
+    header("IDENTITY")
+
+    env_id, info_id, service_key = _local_identity()
+
+    if not service_key:
+        warn(f"Unprovisioned: no INNATE_SERVICE_KEY in {SYSTEM_ENV_PATH} (robot_id {env_id or 'unset'})")
+        return True
+
+    ok(f"Service key present, robot_id {env_id or 'unset'}")
+
+    if info_id and env_id and info_id != env_id:
+        fail(f"robot_info.json says {info_id}, {SYSTEM_ENV_PATH} says {env_id}")
+        warn(f"  Delete robot_info.json and restart ros-app, or restore {SYSTEM_ENV_PATH}.bak")
+
+    try:
+        cloud = _cloud_identity(service_key)
+    except urllib.error.HTTPError as e:
+        # The service answered and said no — a revoked or mistyped key, not a network.
+        fail(f"The auth service rejected this key (HTTP {e.code})")
+        return False
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        warn(f"Offline, using cached identity (could not reach auth service: {e})")
+        return True
+
+    cloud_id = cloud.get("robot_id") or cloud.get("id")
+    if not cloud_id:
+        warn(f"Auth service returned no robot id (keys: {sorted(cloud)})")
+        return True
+
+    if env_id != cloud_id:
+        fail(f"This key belongs to {cloud_id}, but this robot calls itself {env_id or 'unset'}")
+        warn(f"  Re-provision: sudo rm {SYSTEM_ENV_PATH}, then provision.py from the laptop")
+        return False
+
+    ok(f"Key and stored identity agree: {cloud_id}")
+    return True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -496,6 +606,7 @@ def main():
     results["lidar"] = check_lidar()
     results["cameras"] = check_cameras()
     results["speaker"] = check_speaker()
+    results["identity"] = check_identity()
 
     # Summary
     header("SUMMARY")
