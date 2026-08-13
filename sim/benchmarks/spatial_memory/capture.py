@@ -25,14 +25,17 @@ import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import _paths  # noqa: F401  (sys.path: mars_sim_driver + brain_client)
 import mujoco
 from apartment import ROOMS, SCENE, TOUR, Stop, room_at
 from mars_sim_driver.core import VirtualMars
 
+from brain_client.memory.coverage import Coverage
 from brain_client.memory.selection import plan_admission
 from brain_client.memory.store import MemoryStore
+from brain_client.state.map import Map
 
 MAP_NAME = "sim_apartment.yaml"
 MAP_SRC = _paths.SIM_DIR / "assets" / "map"
@@ -173,18 +176,36 @@ def run_drive(sim: VirtualMars, rec: Recorder, speed: float, fps: float) -> floa
     return state["t"]
 
 
-def build_store(out: Path, frames: list[dict], t_end_wall: float, duration: float) -> int:
-    """Feed every frame through the production admission policy into a
-    production-format MemoryStore under out/data/."""
+def occupancy_map(sim: VirtualMars) -> Map:
+    """The world as the recorder sees it on /map (recorder._on_map). Map.grid
+    only reads raw_source.data, so a bare namespace stands in for the ROS
+    message."""
+    resolution = 0.05
+    grid, origin_x, origin_y = sim.occupancy_grid(resolution)
+    return Map(
+        resolution=resolution,
+        width=grid.shape[1],
+        height=grid.shape[0],
+        origin_x=origin_x,
+        origin_y=origin_y,
+        raw_source=SimpleNamespace(data=grid.ravel()),
+    )
+
+
+def build_store(out: Path, frames: list[dict], t_end_wall: float, duration: float, grid: Map) -> int:
+    """Feed every frame through the production admission policy — grid and
+    Coverage passed exactly as the robot's recorder does (recorder._record) —
+    into a production-format MemoryStore under out/data/."""
     maps_dir = out / "data" / "maps"
     maps_dir.mkdir(parents=True, exist_ok=True)
     for f in MAP_SRC.iterdir():
         shutil.copy2(f, maps_dir / f.name)
     store = MemoryStore(out / "data")
     store.switch_map(MAP_NAME)
+    coverage = Coverage()
     for frame in frames:
         stamp = t_end_wall - duration + frame["t_sim"]
-        adm = plan_admission(store.snapshot().memories, frame["x"], frame["y"], frame["yaw"], stamp)
+        adm = plan_admission(store.snapshot().memories, frame["x"], frame["y"], frame["yaw"], stamp, grid, coverage)
         if not adm.record:
             continue
         jpeg = (out / frame["file"]).read_bytes()
@@ -240,7 +261,7 @@ def main() -> None:
         for frame in rec.frames:
             fh.write(json.dumps(frame) + "\n")
 
-    kept = build_store(out, rec.frames, t_end, duration)
+    kept = build_store(out, rec.frames, t_end, duration, occupancy_map(sim))
     (out / "scene.json").write_text(
         json.dumps(
             {
