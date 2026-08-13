@@ -318,7 +318,11 @@ def load_loop(name: str, sample_rate: int) -> np.ndarray | None:
     if path is None:
         _LOOPS[key] = None
         return None
-    clip, clip_rate = load_wav(path)
+    decoded = load_wav(path)
+    if decoded is None:
+        _LOOPS[key] = None
+        return None
+    clip, clip_rate = decoded
     # Resample once at load, so playback rate means pitch and only pitch.
     if clip_rate != sample_rate:
         source = np.arange(len(clip)) / clip_rate
@@ -360,9 +364,14 @@ def asset_path(name: str) -> Path | None:
     return path if path.is_file() else None
 
 
-def load_wav(path: Path) -> tuple[np.ndarray, int]:
-    """Mono float samples in [-1, 1], plus the file's sample rate."""
+def load_wav(path: Path) -> tuple[np.ndarray, int] | None:
+    """Mono float samples in [-1, 1] plus the file's sample rate, or ``None``
+    for a bit depth this decoder does not speak."""
     with wave.open(str(path), "rb") as handle:
+        # int16 only: any other width decodes as garbage and is then
+        # peak-normalised to full scale. A missing clip beats a screaming one.
+        if handle.getsampwidth() != 2:
+            return None
         rate = handle.getframerate()
         channels = handle.getnchannels()
         raw = handle.readframes(handle.getnframes())
