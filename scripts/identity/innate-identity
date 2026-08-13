@@ -1,0 +1,349 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
+"""Apply the robot's identity to /etc/innate.env, as root.
+
+Two modes, one file:
+
+  --seed   serial-derived defaults for a robot nobody has provisioned yet, so ros-app
+           has a single creation path for robot_info.json. Run from
+           launch_ros_in_tmux.sh right before the runtime env is evaluated.
+  --write  the real identity, one JSON object on stdin: {env, password, wipe_data}.
+           `env` is /etc/innate.env verbatim as the laptop composed it — this script
+           never derives, resolves or looks anything up. Accepted only while the robot
+           is unprovisioned; the caller's word for that is not trusted, the file is.
+
+The payload holds the service key and the login password, so it arrives on stdin
+(argv is world-readable through `ps`) and is never logged. stdout is the contract:
+one JSON object, `{robot_id, robot_name}` as applied. Logs go to stderr.
+
+Rebooting is deliberately not done here — the BLE layer must get its reply onto the
+wire first.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import grp
+import json
+import os
+import pwd
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+SYSTEM_ENV_PATH = Path("/etc/innate.env")
+BACKUP_ENV_PATH = Path("/etc/innate.env.bak")
+LOCK_PATH = Path("/run/lock/innate-identity.lock")
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+SHORT_ID_TOOL = Path(__file__).resolve().parent / "robot-short-id"
+
+MAX_ENV_BYTES = 4096
+MAX_PASSWORD_BYTES = 256
+ENV_LINE_RE = re.compile(r"^[A-Z][A-Z0-9_]*=")
+# /etc/innate.env is injected into the environment of every ROS process, so a blob is
+# env injection by construction; the unprovisioned-only rule is the real gate.
+FORBIDDEN_PREFIXES = ("LD_", "DYLD_")
+
+EXIT_ALREADY_PROVISIONED = 3
+EXIT_BAD_PAYLOAD = 4
+
+
+class PayloadError(Exception):
+    """The blob is malformed — the caller's fault, not the robot's state."""
+
+
+def log(message: str) -> None:
+    print(f"[innate-identity] {message}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# /etc/innate.env
+# ---------------------------------------------------------------------------
+
+
+def parse_env(text: str) -> dict[str, str]:
+    env: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        env[key.strip()] = value.strip()
+    return env
+
+
+def read_system_env() -> dict[str, str]:
+    try:
+        return parse_env(SYSTEM_ENV_PATH.read_text())
+    except OSError:
+        return {}
+
+
+def has_service_key(env: dict[str, str]) -> bool:
+    return bool(env.get("INNATE_SERVICE_KEY", "").strip())
+
+
+def login_user() -> str:
+    """The account /etc/innate.env must stay group-readable for."""
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user and sudo_user != "root":
+        return sudo_user
+    try:
+        return pwd.getpwuid(REPO_ROOT.stat().st_uid).pw_name
+    except (OSError, KeyError):
+        return "jetson1"
+
+
+def write_root_file(path: Path, text: str, group: str) -> None:
+    """Write 0640 root:<group>, atomically — readers must never see a partial identity."""
+    if not text.endswith("\n"):
+        text += "\n"
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(text)
+        try:
+            os.chown(tmp, 0, grp.getgrnam(group).gr_gid)
+        except KeyError:
+            log(f"WARNING: group '{group}' does not exist; leaving {path.name} root-owned")
+        os.chmod(tmp, 0o640)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+# ---------------------------------------------------------------------------
+# --seed
+# ---------------------------------------------------------------------------
+
+
+def module_serial() -> str | None:
+    result = subprocess.run(
+        [sys.executable, str(SHORT_ID_TOOL), "--module-serial"], capture_output=True, text=True, timeout=10
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def short_id(serial: str) -> str:
+    result = subprocess.run(
+        [sys.executable, str(SHORT_ID_TOOL), "--from-serial", serial], capture_output=True, text=True, timeout=10
+    )
+    return result.stdout.strip()
+
+
+def seed_defaults(serial: str) -> dict[str, str]:
+    suffix = short_id(serial)
+    return {
+        "ROBOT_NAME": f"MARS-{suffix.upper()}",
+        # Namespaced so a default can never be mistaken for an auth id.
+        "ROBOT_ID": f"unprovisioned-{suffix}",
+        "MODULE_SERIAL": serial,
+    }
+
+
+def needs_seed(env: dict[str, str]) -> bool:
+    """Never trigger on the name (a user may rename their robot to anything) and never
+    on a file holding a key (an already-provisioned robot's identity is not ours)."""
+    if has_service_key(env):
+        return False
+    robot_id = env.get("ROBOT_ID", "").strip()
+    return not robot_id or robot_id.startswith("unprovisioned-")
+
+
+def run_seed() -> int:
+    serial = module_serial()
+    if serial is None:
+        log("no device-tree serial — not a robot, refusing to seed")
+        return 1
+
+    env = read_system_env()
+    if not needs_seed(env):
+        return 0
+
+    env.update(seed_defaults(serial))
+    text = "".join(f"{key}={value}\n" for key, value in env.items())
+    if SYSTEM_ENV_PATH.exists() and SYSTEM_ENV_PATH.read_text() == text:
+        return 0
+
+    write_root_file(SYSTEM_ENV_PATH, text, login_user())
+    log(f"seeded {SYSTEM_ENV_PATH} with {env['ROBOT_ID']}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# --write
+# ---------------------------------------------------------------------------
+
+
+def validate(env_text: str, password: str) -> dict[str, str]:
+    if len(env_text.encode()) > MAX_ENV_BYTES:
+        raise PayloadError(f"env exceeds {MAX_ENV_BYTES} bytes")
+    if len(password.encode()) > MAX_PASSWORD_BYTES:
+        raise PayloadError("password too long")
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in password):
+        raise PayloadError("password contains control characters")
+
+    for raw_line in env_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if not ENV_LINE_RE.match(line):
+            raise PayloadError(f"malformed env line: {line.split('=', 1)[0][:32]!r}")
+        key, value = line.split("=", 1)
+        if key.startswith(FORBIDDEN_PREFIXES):
+            raise PayloadError(f"refusing loader-steering variable {key}")
+        if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
+            raise PayloadError(f"value of {key} contains control characters")
+
+    env = parse_env(env_text)
+    if not has_service_key(env):
+        raise PayloadError("env carries no INNATE_SERVICE_KEY — that blob would not provision anything")
+    if not env.get("ROBOT_ID", "").strip():
+        raise PayloadError("env carries no ROBOT_ID")
+    return env
+
+
+def set_password(user: str, password: str) -> None:
+    """Hash locally and apply the hash, so the plaintext never reaches disk."""
+    hashed = subprocess.run(
+        ["openssl", "passwd", "-6", "-stdin"], input=password, capture_output=True, text=True, timeout=30
+    )
+    if hashed.returncode != 0:
+        raise RuntimeError(f"openssl passwd failed: {hashed.stderr.strip()[-200:]}")
+    applied = subprocess.run(
+        ["chpasswd", "-e"], input=f"{user}:{hashed.stdout.strip()}\n", capture_output=True, text=True, timeout=30
+    )
+    if applied.returncode != 0:
+        raise RuntimeError(f"chpasswd failed: {applied.stderr.strip()[-200:]}")
+
+
+def unshadow_repo_key(new_key: str) -> None:
+    """The repo .env outranks /etc/innate.env in print_runtime_env.py, so a stale key
+    there would silently shadow the one just written."""
+    repo_env = REPO_ROOT / ".env"
+    try:
+        lines = repo_env.read_text().splitlines()
+    except OSError:
+        return
+    out: list[str] = []
+    changed = False
+    for line in lines:
+        if line.startswith("INNATE_SERVICE_KEY=") and line.split("=", 1)[1].strip() != new_key:
+            out.append(f"# superseded by /etc/innate.env at provisioning: {line}")
+            changed = True
+            continue
+        out.append(line)
+    if changed:
+        repo_env.write_text("\n".join(out) + "\n")
+        log(f"commented out a stale INNATE_SERVICE_KEY in {repo_env}")
+
+
+def wipe_bench_data() -> None:
+    """Clear what a robot accumulates on the bench. The locations are the ones
+    migrate_user_data.sh enumerates; innate_skills/ and inputs/ are left alone because
+    shipped tracked files and downloaded assets live intermixed there and nothing
+    re-fetches them after provisioning."""
+    for path in (REPO_ROOT / "data" / ".last_mode", REPO_ROOT / "data" / ".last_map"):
+        path.unlink(missing_ok=True)
+    for directory in (
+        REPO_ROOT / "data" / "maps",
+        REPO_ROOT / "workspace" / "custom_skills",
+        REPO_ROOT / "workspace" / "custom_agents",
+    ):
+        if not directory.is_dir():
+            continue
+        for child in directory.iterdir():
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)
+        log(f"wiped {directory}")
+
+
+def run_write(payload: dict[str, object]) -> int:
+    env_text = payload.get("env")
+    password = payload.get("password") or ""
+    if not isinstance(env_text, str) or not isinstance(password, str):
+        raise PayloadError("expected {env: str, password: str, wipe_data?: bool}")
+    env = validate(env_text, password)
+
+    # Read by root under the lock rather than trusted from the caller, so two operators
+    # cannot both pass the "no key yet" check.
+    if has_service_key(read_system_env()):
+        log("already provisioned — refusing to overwrite an identity that holds a key")
+        return EXIT_ALREADY_PROVISIONED
+
+    user = login_user()
+    if password:
+        set_password(user, password)
+
+    serial = module_serial()
+    if serial and "MODULE_SERIAL" not in env:
+        env_text = env_text.rstrip("\n") + f"\nMODULE_SERIAL={serial}\n"
+
+    write_root_file(SYSTEM_ENV_PATH, env_text, user)
+    # Byte-identical, so recovery from a later hand-edit is a cp away.
+    write_root_file(BACKUP_ENV_PATH, env_text, user)
+    log(f"wrote {SYSTEM_ENV_PATH} and {BACKUP_ENV_PATH}")
+
+    unshadow_repo_key(env["INNATE_SERVICE_KEY"])
+
+    # ros-app re-creates it from the new environment, and mars_control renames the host
+    # from the name it finds there.
+    (REPO_ROOT / "data" / "robot_info.json").unlink(missing_ok=True)
+
+    if payload.get("wipe_data"):
+        wipe_bench_data()
+
+    print(json.dumps({"robot_id": env["ROBOT_ID"], "robot_name": env.get("ROBOT_NAME", "")}))
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Apply this robot's identity to /etc/innate.env.")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--seed", action="store_true", help="Write serial-derived defaults if unprovisioned")
+    mode.add_argument("--write", action="store_true", help="Apply an identity blob read from stdin")
+    args = parser.parse_args()
+
+    if os.geteuid() != 0:
+        log("must run as root")
+        return 1
+
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOCK_PATH, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+
+        if args.seed:
+            return run_seed()
+
+        try:
+            payload = json.loads(sys.stdin.read())
+            if not isinstance(payload, dict):
+                raise PayloadError("expected a JSON object on stdin")
+            return run_write(payload)
+        except (json.JSONDecodeError, PayloadError) as e:
+            log(f"bad payload: {e}")
+            return EXIT_BAD_PAYLOAD
+        except (OSError, RuntimeError, subprocess.SubprocessError) as e:
+            log(f"failed to apply identity: {e}")
+            return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

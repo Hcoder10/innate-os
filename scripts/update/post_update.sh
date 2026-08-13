@@ -515,6 +515,18 @@ if [ -d "$REPO_DIR/scripts" ]; then
         sudo -u "$ACTUAL_USER" "$REPO_DIR/scripts/innate" completions > "$REPO_DIR/scripts/build/completions/_innate"
     fi
 
+    # Symlink the identity applier and the short-id tool. The applier is what gives an
+    # unprovisioned robot its defaults (from the launch script) and what BLE provisioning
+    # writes through, so it must reach robots in the field, not only fresh images.
+    for identity_tool in innate-identity robot-short-id; do
+        if [ -f "$REPO_DIR/scripts/identity/$identity_tool" ]; then
+            log "  Symlinking $identity_tool"
+            chmod +x "$REPO_DIR/scripts/identity/$identity_tool"
+            rm -f "/usr/local/bin/$identity_tool"
+            ln -s "$REPO_DIR/scripts/identity/$identity_tool" "/usr/local/bin/$identity_tool"
+        fi
+    done
+
     # Symlink restart script if it exists
     if [ -f "$REPO_DIR/scripts/restart_robot_networking.sh" ]; then
         log "  Symlinking restart_robot_networking.sh"
@@ -889,6 +901,13 @@ cat > "$SUDOERS_FILE" << EOF
 
 # Restart robot networking (called by BLE provisioner)
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/local/bin/restart_robot_networking.sh
+
+# Identity applier: --seed from the launch script, --write from the BLE provisioner.
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/local/bin/innate-identity
+
+# Reboot after BLE provisioning writes an identity (the reply goes out first).
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/sbin/reboot
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /sbin/reboot
 
 # Post-update script (called by innate-update)
 $ACTUAL_USER ALL=(ALL) NOPASSWD: $REPO_DIR/scripts/update/post_update.sh
