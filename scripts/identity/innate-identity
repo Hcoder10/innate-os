@@ -85,6 +85,17 @@ def read_system_env() -> dict[str, str]:
         return {}
 
 
+def read_effective_env() -> dict[str, str]:
+    """What the ROS processes actually see: print_runtime_env.py layers the repo .env
+    on top of /etc/innate.env. An R7.0 robot's key lives only there."""
+    env = read_system_env()
+    try:
+        env.update(parse_env((REPO_ROOT / ".env").read_text()))
+    except OSError:
+        pass
+    return env
+
+
 def has_service_key(env: dict[str, str]) -> bool:
     return bool(env.get("INNATE_SERVICE_KEY", "").strip())
 
@@ -153,7 +164,8 @@ def seed_defaults(serial: str) -> dict[str, str]:
 
 def needs_seed(env: dict[str, str]) -> bool:
     """Never trigger on the name (a user may rename their robot to anything) and never
-    on a file holding a key (an already-provisioned robot's identity is not ours)."""
+    where a key is in effect (an already-provisioned robot's identity is not ours) —
+    including an R7.0 robot whose key is still only in the repo .env."""
     if has_service_key(env):
         return False
     robot_id = env.get("ROBOT_ID", "").strip()
@@ -166,10 +178,11 @@ def run_seed() -> int:
         log("no device-tree serial — not a robot, refusing to seed")
         return 1
 
-    env = read_system_env()
-    if not needs_seed(env):
+    if not needs_seed(read_effective_env()):
         return 0
 
+    # Seeded into the system file only — the repo .env is the user's.
+    env = read_system_env()
     env.update(seed_defaults(serial))
     text = "".join(f"{key}={value}\n" for key, value in env.items())
     if SYSTEM_ENV_PATH.exists() and SYSTEM_ENV_PATH.read_text() == text:

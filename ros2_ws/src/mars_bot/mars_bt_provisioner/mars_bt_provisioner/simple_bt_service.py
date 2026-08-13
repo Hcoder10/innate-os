@@ -83,15 +83,24 @@ def is_provisioned():
     return bool(parse_env_file(SYSTEM_ENV_PATH).get("INNATE_SERVICE_KEY", "").strip())
 
 
-def short_id():
-    """Four hex chars from the compute module serial, or None when unavailable."""
+def _run_short_id_tool(*args):
     try:
-        result = subprocess.run([SHORT_ID_TOOL_PATH], capture_output=True, text=True, timeout=10)
+        result = subprocess.run([SHORT_ID_TOOL_PATH, *args], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return None
     if result.returncode != 0:
         return None
     return result.stdout.strip() or None
+
+
+def short_id():
+    """Four hex chars from the compute module serial, or None when unavailable."""
+    return _run_short_id_tool()
+
+
+def module_serial():
+    """The compute module serial straight from the device tree."""
+    return _run_short_id_tool("--module-serial")
 
 
 def load_robot_name():
@@ -429,7 +438,8 @@ class BleProvisionerServer:
             "command": command,
             "status": "success",
             "short_id": short_id(),
-            "module_serial": env.get("MODULE_SERIAL"),
+            # A robot whose ros-app has never launched has no seeded env file yet.
+            "module_serial": env.get("MODULE_SERIAL") or module_serial(),
             "robot_id": env.get("ROBOT_ID"),
             "robot_name": ROBOT_NAME,
             "hostname": socket.gethostname(),

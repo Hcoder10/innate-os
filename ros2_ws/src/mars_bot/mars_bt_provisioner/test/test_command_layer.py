@@ -603,12 +603,18 @@ class TestSetIdentity:
             returncode=0, stdout='{"robot_id": "R7-41", "robot_name": "MARS the 41st"}\n', stderr=""
         )
         server = self._server_unprovisioned()
+        order = []
+        server._send_notification_threadsafe = MagicMock(side_effect=lambda r: order.append("reply"))
         with patch.object(simple_bt_service.subprocess, "Popen") as mock_popen:
+            mock_popen.side_effect = lambda *a, **kw: order.append("reboot") or MagicMock()
             resp = _send_command(server, {"command": "set_identity", "data": VALID_PAYLOAD})
 
             assert resp["status"] == "in_progress"
-            assert _wait_for(lambda: server._send_notification_threadsafe.called)
             assert _wait_for(lambda: mock_popen.called)
+
+        # The reply has to be on the wire first: a reboot racing systemd's teardown of
+        # this unit against GLib.idle_add drops it silently.
+        assert order == ["reply", "reboot"]
 
         write_call = [c for c in mock_run.call_args_list if "--write" in c.args[0]][0]
         assert write_call.args[0][:2] == ["sudo", simple_bt_service.IDENTITY_TOOL_PATH]

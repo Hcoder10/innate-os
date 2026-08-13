@@ -208,6 +208,15 @@ class TestSeed:
         assert applier.run_seed() == 0
         assert robot.env_path.read_text() == f"INNATE_SERVICE_KEY={SERVICE_KEY}\n"
 
+    def test_leaves_an_r7_0_robot_alone(self, robot):
+        """Its key lives only in the repo .env, which outranks /etc/innate.env for
+        readers — seeding unprovisioned defaults would make it lie about itself and
+        reopen BLE provisioning on a robot that is already keyed."""
+        (robot.repo / ".env").write_text(f"INNATE_SERVICE_KEY={SERVICE_KEY}\n")
+
+        assert applier.run_seed() == 0
+        assert not robot.env_path.exists()
+
     def test_never_triggers_on_the_robot_name(self, robot):
         """A user who renames their robot to exactly MARS must not be clobbered."""
         robot.env_path.write_text("ROBOT_NAME=MARS\nROBOT_ID=R7-41\n")
