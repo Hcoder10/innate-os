@@ -91,6 +91,7 @@ class MemoryStore:
         self._stat_sig: tuple[int, int] | None = None
         self._revision = 0
         self.last_change_monotonic = 0.0
+        self._finish_interrupted_promotion()
 
     def switch_map(self, map_name: str | None) -> None:
         """Point the store at a map's memories, loading them from disk.
@@ -189,6 +190,23 @@ class MemoryStore:
                 self._revision += 1
                 self.last_change_monotonic = time.monotonic()
             return count
+
+    def _finish_interrupted_promotion(self) -> None:
+        """Land a promotion a crash cut short. Between promote's two
+        os.replace calls the map's directory is gone — a crash there would
+        wake the map memoryless, with both sets in scratch dirs the next
+        session wipes. The stamped copy names its map, so finish the swap.
+        An unstamped copy names ``.mapping``, whose dir exists: a no-op.
+        """
+        tmp = self._root / _PROMOTE_TMP
+        try:
+            map_name = str(json.loads((tmp / "index.json").read_text())["map"])
+            target = self._root / Path(map_name).stem
+            if not target.is_dir():
+                os.replace(tmp, target)
+        except (OSError, json.JSONDecodeError, TypeError, KeyError):
+            pass  # nothing stamped to land; session entry sweeps the scratch
+        shutil.rmtree(self._root / _DISPLACED_TMP, ignore_errors=True)
 
     def snapshot(self) -> MemorySnapshot:
         with self._lock:

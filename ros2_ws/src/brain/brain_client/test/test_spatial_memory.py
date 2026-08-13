@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 import threading
 import time
 from dataclasses import replace
@@ -532,6 +533,44 @@ def test_session_entry_sweeps_crashed_promotion_scratch(data_dir):
     store.use_mapping_session()
     assert not (data_dir / "spatial_memory" / ".mapping.promote").exists()
     assert not (data_dir / "spatial_memory" / ".mapping.displaced").exists()
+
+
+def test_restart_lands_a_promotion_cut_down_mid_swap(data_dir):
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-tour")
+    (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-map-content")
+    assert store.promote_mapping_session("tour.yaml") == 1
+
+    # Rewind to the crash window between promote's two os.replace calls: the
+    # stamped copy back in scratch, the old memories displaced, the map's
+    # directory gone.
+    root = data_dir / "spatial_memory"
+    (root / "tour").rename(root / ".mapping.promote")
+    (root / ".mapping.displaced").mkdir()
+
+    reloaded = MemoryStore(data_dir)
+    reloaded.switch_map("tour.yaml")
+    (memory,) = reloaded.snapshot().memories
+    assert memory.id == 1
+    path = reloaded.image_path(1)
+    assert path is not None and path.read_bytes() == b"jpg-tour"
+    assert not (root / ".mapping.promote").exists()
+    assert not (root / ".mapping.displaced").exists()
+
+
+def test_restart_leaves_an_unstamped_promotion_copy_alone(data_dir):
+    # A crash before the stamp landed leaves the copy still naming ".mapping";
+    # landing it anywhere would mint a bogus map dir. Session entry sweeps it.
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-tour")
+    root = data_dir / "spatial_memory"
+    shutil.copytree(root / MAPPING_SESSION, root / ".mapping.promote")
+
+    MemoryStore(data_dir)
+    assert (root / ".mapping.promote").is_dir()
+    assert (root / MAPPING_SESSION / "1.jpg").exists()
 
 
 def test_entering_a_session_wipes_the_previous_ones_leftovers(data_dir):
