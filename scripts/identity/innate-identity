@@ -142,17 +142,24 @@ def write_root_file(path: Path, text: str, group: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def short_id_tool(*args: str) -> str | None:
-    """Ask robot-short-id — --module-serial for the raw serial, --from-serial X for the
-    four hex chars. None when it cannot answer, so the derivation stays in one file."""
-    result = subprocess.run([sys.executable, str(SHORT_ID_TOOL), *args], capture_output=True, text=True, timeout=10)
+def short_id_tool(*, serial: str | None = None, raw_serial: bool = False) -> str | None:
+    """Ask robot-short-id for the four hex chars, or for the raw module serial, deriving
+    from `serial` when given and the device tree otherwise. None when it cannot answer.
+
+    Shelling out rather than importing keeps one implementation of the derivation, which
+    is what stops the advertised name and the seeded env from ever disagreeing.
+    """
+    flags = ["--module-serial"] if raw_serial else []
+    if serial is not None:
+        flags += ["--from-serial", serial]
+    result = subprocess.run([sys.executable, str(SHORT_ID_TOOL), *flags], capture_output=True, text=True, timeout=10)
     if result.returncode != 0:
         return None
     return result.stdout.strip() or None
 
 
 def seed_defaults(serial: str) -> dict[str, str]:
-    suffix = short_id_tool("--from-serial", serial)
+    suffix = short_id_tool(serial=serial)
     return {
         "ROBOT_NAME": f"MARS-{suffix.upper()}",
         # Namespaced so a default can never be mistaken for an auth id.
@@ -172,7 +179,7 @@ def needs_seed(env: dict[str, str]) -> bool:
 
 
 def run_seed() -> int:
-    serial = short_id_tool("--module-serial")
+    serial = short_id_tool(raw_serial=True)
     if serial is None:
         log("no device-tree serial — not a robot, refusing to seed")
         return 1
@@ -316,7 +323,7 @@ def run_write(payload: dict[str, object]) -> int:
     # undoing a later hand-edit is a cp away.
     user = login_user()
 
-    serial = short_id_tool("--module-serial")
+    serial = short_id_tool(raw_serial=True)
     if serial and "MODULE_SERIAL" not in env:
         env_text = env_text.rstrip("\n") + f"\nMODULE_SERIAL={serial}\n"
 

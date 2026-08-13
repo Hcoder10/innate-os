@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import signal
 import socket
 import subprocess
@@ -82,12 +81,13 @@ def is_provisioned():
     return bool(parse_env_file(SYSTEM_ENV_PATH).get("INNATE_SERVICE_KEY", "").strip())
 
 
-def short_id_tool(*args):
-    """Ask robot-short-id — no args for the four hex chars, --module-serial for the raw
-    serial. None when it cannot answer, so the name derivation has one implementation
-    and this service never grows a second."""
+def short_id_tool(raw_serial=False):
+    """Ask robot-short-id for the four hex chars, or for the raw module serial. None
+    when it cannot answer. Shelling out rather than deriving keeps one implementation,
+    which is what stops the advertised name and the seeded env from disagreeing."""
     try:
-        result = subprocess.run([SHORT_ID_TOOL_PATH, *args], capture_output=True, text=True, timeout=10)
+        flags = ["--module-serial"] if raw_serial else []
+        result = subprocess.run([SHORT_ID_TOOL_PATH, *flags], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return None
     if result.returncode != 0:
@@ -374,48 +374,32 @@ class BleProvisionerServer:
         directly rather than asking the ROS stack."""
         command = data.get("command")
         logger.info(f"Handling {command} command")
-        repeat = data.get("data", {}).get("repeat", 1)
-
-        if not isinstance(repeat, int) or not 1 <= repeat <= 10:
-            return {"command": command, "status": "error", "message": "repeat must be an integer 1-10"}
-
-        threading.Thread(target=self._play_identify, args=(command, repeat), daemon=True).start()
+        threading.Thread(target=self._play_identify, args=(command,), daemon=True).start()
         return {"command": command, "status": "in_progress", "message": "Playing identify tune…"}
 
-    def _play_identify(self, command, repeat):
-        # Mirrors the launch script's playback: SCHED_FIFO so the node import storm can't
-        # starve the player, and XDG_RUNTIME_DIR set explicitly because this unit does
-        # not preserve it.
-        env = dict(os.environ, XDG_RUNTIME_DIR="/run/user/1000")
-        prefix = []
-        if shutil.which("chrt"):
-            probe = subprocess.run(["chrt", "-f", "30", "true"], capture_output=True)
-            if probe.returncode == 0:
-                prefix = ["chrt", "-f", "30"]
-
+    def _play_identify(self, command):
+        # XDG_RUNTIME_DIR has to be set explicitly: this unit does not preserve it, and
+        # without it the player cannot reach the audio session.
         try:
-            for _ in range(repeat):
-                result = subprocess.run(
-                    prefix + ["gst-play-1.0", IDENTIFY_SOUND],
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                    env=env,
-                )
-                if result.returncode != 0:
-                    message = (result.stderr or "").strip().splitlines()
-                    self._send_notification_threadsafe(
-                        {
-                            "command": command,
-                            "status": "error",
-                            "message": f"Playback failed: {message[-1] if message else 'unknown error'}",
-                        }
-                    )
-                    return
+            result = subprocess.run(
+                ["gst-play-1.0", IDENTIFY_SOUND],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=dict(os.environ, XDG_RUNTIME_DIR="/run/user/1000"),
+            )
         except (OSError, subprocess.SubprocessError) as e:
             self._send_notification_threadsafe(
                 {"command": command, "status": "error", "message": f"Playback failed: {e}"}
             )
+            return
+
+        if result.returncode != 0:
+            # A nonzero exit is what separates "couldn't play it" from "played it and
+            # you heard nothing" — the operator needs to know which.
+            stderr_lines = (result.stderr or "").strip().splitlines()
+            message = f"Playback failed: {stderr_lines[-1] if stderr_lines else 'unknown error'}"
+            self._send_notification_threadsafe({"command": command, "status": "error", "message": message})
             return
 
         self._send_notification_threadsafe({"command": command, "status": "success", "message": "Played identify tune"})
@@ -431,7 +415,7 @@ class BleProvisionerServer:
             "status": "success",
             "short_id": short_id_tool(),
             # A robot whose ros-app has never launched has no seeded env file yet.
-            "module_serial": env.get("MODULE_SERIAL") or short_id_tool("--module-serial"),
+            "module_serial": env.get("MODULE_SERIAL") or short_id_tool(raw_serial=True),
             "robot_id": env.get("ROBOT_ID"),
             "robot_name": ROBOT_NAME,
             "hostname": socket.gethostname(),

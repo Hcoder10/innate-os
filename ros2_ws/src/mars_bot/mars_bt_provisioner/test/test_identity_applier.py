@@ -37,9 +37,9 @@ applier = _load("innate-identity")
 short_id_tool = _load("robot-short-id")
 
 
-def _short_id_tool(*args):
+def _short_id_tool(*, serial=None, raw_serial=False):
     """Stand in for robot-short-id: a fixed serial, a fixed suffix."""
-    return "1424523016164" if args[0] == "--module-serial" else "a1b2"
+    return "1424523016164" if raw_serial else "a1b2"
 
 
 @pytest.fixture

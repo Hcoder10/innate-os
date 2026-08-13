@@ -517,14 +517,14 @@ class TestIdentify:
         server = _make_server()
         server._send_notification_threadsafe = MagicMock()
 
-        resp = _send_command(server, {"command": "identify", "data": {"repeat": 2}})
+        resp = _send_command(server, {"command": "identify"})
 
         assert resp["status"] == "in_progress"
         assert _wait_for(lambda: server._send_notification_threadsafe.called)
         assert server._send_notification_threadsafe.call_args[0][0]["status"] == "success"
-        plays = [c for c in mock_run.call_args_list if "gst-play-1.0" in c.args[0]]
-        assert len(plays) == 2
-        assert plays[0].kwargs["env"]["XDG_RUNTIME_DIR"] == "/run/user/1000"
+        play = [c for c in mock_run.call_args_list if "gst-play-1.0" in c.args[0]][0]
+        # The unit does not preserve it, and without it there is no audio session.
+        assert play.kwargs["env"]["XDG_RUNTIME_DIR"] == "/run/user/1000"
 
     @patch.object(simple_bt_service.subprocess, "run")
     def test_player_failure_is_distinguishable(self, mock_run):
@@ -533,16 +533,11 @@ class TestIdentify:
         server = _make_server()
         server._send_notification_threadsafe = MagicMock()
 
-        server._play_identify("identify", 1)
+        server._play_identify("identify")
 
         final = server._send_notification_threadsafe.call_args[0][0]
         assert final["status"] == "error"
         assert "No such element" in final["message"]
-
-    def test_rejects_absurd_repeat(self):
-        server = _make_server()
-        resp = _send_command(server, {"command": "identify", "data": {"repeat": 9999}})
-        assert resp["status"] == "error"
 
 
 # ---------------------------------------------------------------------------
