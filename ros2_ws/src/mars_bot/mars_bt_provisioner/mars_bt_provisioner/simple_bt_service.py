@@ -492,6 +492,16 @@ class BleProvisionerServer:
                 return f"value of {key} contains control characters"
         return None
 
+    def _run_identity_tool(self, mode):
+        """Run a side-effect-only helper mode; a failure is logged, never fatal."""
+        try:
+            result = subprocess.run(["sudo", IDENTITY_TOOL_PATH, mode], capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.SubprocessError) as e:
+            logger.error(f"Identity helper {mode} failed: {e}")
+            return
+        if result.returncode != 0:
+            logger.error(f"Identity helper {mode} exited {result.returncode}: {(result.stderr or '').strip()[-200:]}")
+
     def _apply_identity(self, command, payload):
         """Run the root helper, reply, then reboot from a detached child.
 
@@ -521,6 +531,13 @@ class BleProvisionerServer:
             logger.error(f"Identity helper exited {result.returncode}: {message}")
             self._send_notification_threadsafe({"command": command, "status": "error", "message": message})
             return
+
+        # Housekeeping, after the identity is committed and never able to fail it:
+        # robot_info.json must go or ros-app keeps serving the old name, and the bench
+        # data goes only if this run asked for it.
+        self._run_identity_tool("--reset-info")
+        if payload.get("wipe_data"):
+            self._run_identity_tool("--wipe-data")
 
         applied = {}
         stdout_lines = (result.stdout or "").strip().splitlines()

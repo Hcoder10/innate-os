@@ -3,15 +3,21 @@
 # Copyright (c) 2026 Innate Inc
 """Apply the robot's identity to /etc/innate.env, as root.
 
-Two modes, one file:
+Four modes, one file:
 
-  --seed   serial-derived defaults for a robot nobody has provisioned yet, so ros-app
-           has a single creation path for robot_info.json. Run from
-           launch_ros_in_tmux.sh right before the runtime env is evaluated.
-  --write  the real identity, one JSON object on stdin: {env, password, wipe_data}.
-           `env` is /etc/innate.env verbatim as the laptop composed it — this script
-           never derives, resolves or looks anything up. Accepted only while the robot
-           is unprovisioned; the caller's word for that is not trusted, the file is.
+  --seed        serial-derived defaults for a robot nobody has provisioned yet, so
+                ros-app has a single creation path for robot_info.json. Run from
+                launch_ros_in_tmux.sh right before the runtime env is evaluated.
+  --write       the real identity, one JSON object on stdin: {env, password}. `env` is
+                /etc/innate.env verbatim as the laptop composed it — this script never
+                derives, resolves or looks anything up. Accepted only while the robot
+                is unprovisioned; the caller's word for that is not trusted, the file is.
+  --reset-info  drop robot_info.json, so ros-app re-derives it from the environment.
+  --wipe-data   clear the maps, nav state and custom skills/agents a robot picks up on
+                the bench.
+
+The last two are their own modes rather than steps of --write: both are useful on
+their own, and neither should be able to fail a provisioning run.
 
 The payload holds the service key and the login password, so it arrives on stdin
 (argv is world-readable through `ps`) and is never logged. stdout is the contract:
@@ -261,7 +267,18 @@ def unshadow_repo_key(new_key: str) -> None:
         log(f"commented out a stale INNATE_SERVICE_KEY in {repo_env}")
 
 
-def wipe_bench_data() -> None:
+def run_reset_info() -> int:
+    """Drop robot_info.json so ros-app re-creates it from the current environment.
+
+    Its own mode rather than part of --write: it is derived state, and re-deriving it
+    is equally useful after a rename, a hand-edited env file, or a de-provision.
+    """
+    (REPO_ROOT / "data" / "robot_info.json").unlink(missing_ok=True)
+    log("removed robot_info.json; ros-app will re-create it from the environment")
+    return 0
+
+
+def run_wipe_data() -> int:
     """Clear what a robot accumulates on the bench. The locations are the ones
     migrate_user_data.sh enumerates; innate_skills/ and inputs/ are left alone because
     shipped tracked files and downloaded assets live intermixed there and nothing
@@ -281,13 +298,14 @@ def wipe_bench_data() -> None:
             else:
                 child.unlink(missing_ok=True)
         log(f"wiped {directory}")
+    return 0
 
 
 def run_write(payload: dict[str, object]) -> int:
     env_text = payload.get("env")
     password = payload.get("password") or ""
     if not isinstance(env_text, str) or not isinstance(password, str):
-        raise PayloadError("expected {env: str, password: str, wipe_data?: bool}")
+        raise PayloadError("expected {env: str, password: str}")
     env = validate(env_text, password)
 
     # Read by root under the lock rather than trusted from the caller, so two operators
@@ -297,10 +315,12 @@ def run_write(payload: dict[str, object]) -> int:
         return EXIT_ALREADY_PROVISIONED
 
     # Writing /etc/innate.env is the commit point: once it holds a key this helper
-    # refuses to run again, so everything that can fail runs before it and leaves the
-    # robot exactly as provisionable as it was. The password lands after, since a
-    # password that fails to apply is recoverable over SSH and the laptop checks it
-    # before printing a label anyway.
+    # refuses to run again, so everything that can fail runs before it and any failure
+    # short of it leaves the robot exactly as provisionable as it was. The .bak goes
+    # first on purpose — it proves /etc is writable, the group resolves and the mode
+    # sticks, so by the time the password and the real file follow, the risky part is
+    # already known to work. It doubles as the recovery copy: byte-identical, so
+    # undoing a later hand-edit is a cp away.
     user = login_user()
 
     serial = module_serial()
@@ -308,20 +328,11 @@ def run_write(payload: dict[str, object]) -> int:
         env_text = env_text.rstrip("\n") + f"\nMODULE_SERIAL={serial}\n"
 
     unshadow_repo_key(env["INNATE_SERVICE_KEY"])
-    # Byte-identical, so recovery from a later hand-edit is a cp away.
     write_root_file(BACKUP_ENV_PATH, env_text, user)
-    write_root_file(SYSTEM_ENV_PATH, env_text, user)
-    log(f"wrote {SYSTEM_ENV_PATH} and {BACKUP_ENV_PATH}")
-
     if password:
         set_password(user, password)
-
-    # ros-app re-creates it from the new environment, and mars_control renames the host
-    # from the name it finds there.
-    (REPO_ROOT / "data" / "robot_info.json").unlink(missing_ok=True)
-
-    if payload.get("wipe_data"):
-        wipe_bench_data()
+    write_root_file(SYSTEM_ENV_PATH, env_text, user)
+    log(f"wrote {SYSTEM_ENV_PATH} and {BACKUP_ENV_PATH}")
 
     print(json.dumps({"robot_id": env["ROBOT_ID"], "robot_name": env.get("ROBOT_NAME", "")}))
     return 0
@@ -337,6 +348,8 @@ def main() -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--seed", action="store_true", help="Write serial-derived defaults if unprovisioned")
     mode.add_argument("--write", action="store_true", help="Apply an identity blob read from stdin")
+    mode.add_argument("--reset-info", action="store_true", help="Drop robot_info.json so ros-app re-derives it")
+    mode.add_argument("--wipe-data", action="store_true", help="Clear maps, nav state and custom skills/agents")
     args = parser.parse_args()
 
     if os.geteuid() != 0:
@@ -349,6 +362,10 @@ def main() -> int:
 
         if args.seed:
             return run_seed()
+        if args.reset_info:
+            return run_reset_info()
+        if args.wipe_data:
+            return run_wipe_data()
 
         try:
             payload = json.loads(sys.stdin.read())

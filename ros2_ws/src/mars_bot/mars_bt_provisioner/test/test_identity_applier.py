@@ -100,9 +100,6 @@ class TestWrite:
         robot.set_password.assert_called_once()
         assert robot.set_password.call_args[0][1] == "goodbot41"
 
-        # ros-app re-creates it from the new environment.
-        assert not (robot.repo / "data" / "robot_info.json").exists()
-
         applied = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
         assert applied == {"robot_id": "R7-41", "robot_name": "MARS the 41st"}
 
@@ -152,8 +149,10 @@ class TestWrite:
             with pytest.raises(OSError):
                 applier.run_write({"env": VALID_ENV, "password": "goodbot41"})
 
+        # The .bak lands first as a canary — it is why a failure here is a surprise —
+        # and the retry is what repairs the run, not a rollback.
+        assert applier.BACKUP_ENV_PATH.exists()
         assert not applier.has_service_key(applier.read_system_env())
-        robot.set_password.assert_not_called()
         assert applier.run_write({"env": VALID_ENV, "password": "goodbot41"}) == 0
 
     def test_oversized_env_is_refused(self, robot):
@@ -174,6 +173,20 @@ class TestWrite:
         assert "\nINNATE_SERVICE_KEY=innate-test-key-stale" not in "\n" + text
         assert "TELEMETRY_URL=https://logs.svc.innate.bot" in text
 
+
+# ---------------------------------------------------------------------------
+# --reset-info / --wipe-data
+# ---------------------------------------------------------------------------
+
+
+class TestHousekeeping:
+    """Their own modes: both are useful on their own, and neither should be able to
+    fail a provisioning run."""
+
+    def test_reset_info_drops_the_derived_file(self, robot):
+        assert applier.run_reset_info() == 0
+        assert not (robot.repo / "data" / "robot_info.json").exists()
+
     def test_wipe_data_clears_the_bench_leftovers(self, robot):
         (robot.repo / "data" / "maps").mkdir()
         (robot.repo / "data" / "maps" / "bench.yaml").write_text("bench")
@@ -182,7 +195,7 @@ class TestWrite:
         (robot.repo / "workspace" / "innate_skills").mkdir(parents=True)
         (robot.repo / "workspace" / "innate_skills" / "pick.h5").write_text("shipped")
 
-        applier.run_write({"env": VALID_ENV, "password": "goodbot41", "wipe_data": True})
+        assert applier.run_wipe_data() == 0
 
         assert list((robot.repo / "data" / "maps").iterdir()) == []
         assert not (robot.repo / "data" / ".last_map").exists()

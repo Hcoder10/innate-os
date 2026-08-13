@@ -612,10 +612,6 @@ class TestSetIdentity:
             assert resp["status"] == "in_progress"
             assert _wait_for(lambda: mock_popen.called)
 
-        # The reply has to be on the wire first: a reboot racing systemd's teardown of
-        # this unit against GLib.idle_add drops it silently.
-        assert order == ["reply", "reboot"]
-
         write_call = [c for c in mock_run.call_args_list if "--write" in c.args[0]][0]
         assert write_call.args[0][:2] == ["sudo", simple_bt_service.IDENTITY_TOOL_PATH]
         assert SERVICE_KEY not in " ".join(write_call.args[0])
@@ -627,8 +623,28 @@ class TestSetIdentity:
         assert SERVICE_KEY not in json.dumps(final)
         assert "goodbot41" not in json.dumps(final)
 
-        # Reply first, then reboot — a reboot racing the notification drops it.
+        # The reply has to be on the wire first: a reboot racing systemd's teardown of
+        # this unit against GLib.idle_add drops it silently.
+        assert order == ["reply", "reboot"]
         assert "reboot" in " ".join(mock_popen.call_args[0][0])
+
+        # robot_info.json must go or ros-app keeps serving the old name; the bench data
+        # only when this run asked for it.
+        modes = [c.args[0][-1] for c in mock_run.call_args_list]
+        assert "--reset-info" in modes
+        assert "--wipe-data" not in modes
+
+    @patch.object(simple_bt_service, "is_provisioned", return_value=False)
+    @patch.object(simple_bt_service.subprocess, "run")
+    def test_wipe_data_rides_along_as_its_own_call(self, mock_run, mock_provisioned):
+        mock_run.return_value = MagicMock(returncode=0, stdout='{"robot_id": "R7-41"}\n', stderr="")
+        server = self._server_unprovisioned()
+
+        with patch.object(simple_bt_service.subprocess, "Popen") as mock_popen:
+            _send_command(server, {"command": "set_identity", "data": {**VALID_PAYLOAD, "wipe_data": True}})
+            assert _wait_for(lambda: mock_popen.called)
+
+        assert "--wipe-data" in [c.args[0][-1] for c in mock_run.call_args_list]
 
     @patch.object(simple_bt_service, "is_provisioned", return_value=True)
     def test_refused_once_provisioned(self, mock_provisioned):
