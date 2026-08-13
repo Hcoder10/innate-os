@@ -976,7 +976,10 @@ class SteamTrain(AccelVoice):
     def _voice(self, drive: Drive) -> np.ndarray:
         low, high = self.CHUFF
         rate = low + (high - low) * drive.speed_frac
-        chuff, self._chuff_phase = _phase(self._chuff_phase, np.full(drive.frames, rate), self.sample_rate)
+        chuff = self._chuff_phase + 2.0 * np.pi * np.cumsum(np.full(drive.frames, rate)) / self.sample_rate
+        # Carried mod 4pi, not _phase's 2pi: the half-rate cylinder square
+        # below needs the chuff's parity, which a 2pi wrap throws away.
+        self._chuff_phase = float(chuff[-1] % (4.0 * np.pi))
 
         position = _cycle(chuff)
         burst = np.exp(-position * 11.0)
