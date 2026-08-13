@@ -122,13 +122,9 @@ def test_ducking_gap_does_not_count_as_silence():
     assert ep.feed(LOUD) is None  # still open after an arbitrary pause
 
 
-def test_energy_detector_survives_a_partial_frame():
+def test_endpointer_survives_a_partial_frame():
     """arecord's pipe is raw (bufsize=0), so a read can return an odd byte count.
     The reader realigns, but int16 parsing must not explode if one slips through."""
-    assert EnergyDetector(0.01)(b"\x01" * 333) in (True, False)
-
-
-def test_endpointer_survives_a_partial_frame():
     assert make_endpointer().feed(b"\x01" * 333) is None
 
 

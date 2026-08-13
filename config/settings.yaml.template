@@ -217,12 +217,12 @@
 # stt_backend picks the transcription service. Batch backends cut utterances on
 # the robot and send each one whole: "elevenlabs_batch" (Scribe) or "gemini".
 # Realtime backends stream audio and let the vendor endpoint it: "elevenlabs"
-# (Scribe realtime) or "openai". The batch pair detects speech locally with
-# stt_vad_engine: "silero" (neural, ignores fan/motor noise) or "energy" (bare
-# RMS threshold, the pre-Silero behavior and the fallback if the model can't
-# load). stt_vad_threshold is the speech probability for silero and the vendor
-# VAD knob for the realtime pair; stt_energy_threshold only applies to the
-# energy engine; silence closes an utterance everywhere.
+# (Scribe realtime) or "openai". The batch pair detects speech locally;
+# stt_vad_engine picks "silero" (neural, ignores fan/motor noise) or "energy"
+# (bare RMS threshold, the pre-Silero behavior and the fallback if the model
+# can't load). stt_vad_threshold is the speech probability for silero and the
+# vendor VAD knob for the realtime pair; stt_energy_threshold only applies to
+# the energy engine; silence closes an utterance everywhere.
 # The model knobs of the backends you aren't using are simply unused.
 # input_manager_node:
 #   ros__parameters:

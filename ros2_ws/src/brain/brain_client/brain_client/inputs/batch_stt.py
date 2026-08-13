@@ -257,6 +257,7 @@ class BatchSttSession:
         self._endpointer = Endpointer(sample_rate=sample_rate, is_voiced=is_voiced, silence_secs=silence_secs)
         self._utterances: queue.Queue[bytes | None] = queue.Queue(maxsize=MAX_PENDING_UTTERANCES)
         self._worker: threading.Thread | None = None
+        self._stopped = False
         self.utterance_count = 0
         self.failure_count = 0
 
@@ -295,6 +296,7 @@ class BatchSttSession:
         }
 
     def stop(self) -> None:
+        self._stopped = True
         self._enqueue(None)
         if self._worker:
             self._worker.join(timeout=2.0)
@@ -307,9 +309,10 @@ class BatchSttSession:
                 return
             try:
                 text = self._transcriber(pcm_to_wav(utterance, self._sample_rate))
+                # A call that outlives stop() must not publish: by the time it
+                # returns, the mic may be active again under a newer session.
+                if text and not self._stopped:
+                    self._on_transcript(text)
             except Exception as e:  # noqa: BLE001 — one failed call must not kill the mic
                 self.failure_count += 1
                 self._logger.error(f"❌ Batch transcription failed: {e}")
-                continue
-            if text:
-                self._on_transcript(text)
