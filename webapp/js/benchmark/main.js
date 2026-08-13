@@ -90,6 +90,7 @@ export function mount(stage) {
 
   let destroyed = false;
   let pollTimer = 0;
+  let failedPolls = 0;
   let selectedDataset = "";
   let selectedRun = "";
 
@@ -340,10 +341,17 @@ export function mount(stage) {
     try {
       state = parseState(await api("/api/state"));
     } catch {
-      if (!destroyed) offline();
+      if (destroyed) return;
+      failedPolls += 1;
+      // One dropped poll must not kill an active job's log view: keep the
+      // panel through brief hiccups, and keep the offline screen retrying.
+      if (failedPolls >= 3 || !root.contains(grid)) offline();
+      clearTimeout(pollTimer);
+      pollTimer = window.setTimeout(() => void refresh(), failedPolls >= 3 ? 5000 : 1500);
       return;
     }
     if (destroyed) return;
+    failedPolls = 0;
     if (!root.contains(grid)) {
       root.textContent = "";
       root.append(head, grid);
