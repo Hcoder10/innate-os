@@ -21,7 +21,10 @@ import subprocess
 import sys
 import time
 import urllib.error
-import urllib.request
+from pathlib import Path
+
+import me
+import print_runtime_env
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
@@ -41,10 +44,9 @@ SPEAKER_SOUND = "/usr/share/sounds/sound-icons/electric-piano-3.wav"
 TMUX_SESSION = "ros_nodes"
 SYSTEMD_SERVICE = "ros-app.service"
 
-SYSTEM_ENV_PATH = "/etc/innate.env"
+SYSTEM_ENV_PATH = print_runtime_env.SYSTEM_ENV_PATH
 INNATE_OS_ROOT = os.environ.get("INNATE_OS_ROOT", os.path.expanduser("~/innate-os"))
 ROBOT_INFO_PATH = os.path.join(INNATE_OS_ROOT, "data", "robot_info.json")
-DEFAULT_AUTH_URL = "https://auth-v1.svc.innate.bot"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # OUTPUT FORMATTING
@@ -473,47 +475,13 @@ def check_speaker():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _auth_token(service_key):
-    """Exchange the service key for a JWT, the same way auth_client does."""
-    issuer = os.environ.get("INNATE_AUTH_URL", DEFAULT_AUTH_URL).rstrip("/")
-    request = urllib.request.Request(
-        f"{issuer}/v1/auth", data=b"", headers={"Authorization": f"Bearer {service_key}", "User-Agent": "innate-robot"}
-    )
-    with urllib.request.urlopen(request, timeout=10) as response:
-        return json.loads(response.read()).get("token")
-
-
-def _cloud_identity(service_key):
-    issuer = os.environ.get("INNATE_AUTH_URL", DEFAULT_AUTH_URL).rstrip("/")
-    request = urllib.request.Request(
-        f"{issuer}/v1/me", headers={"Authorization": f"Bearer {_auth_token(service_key)}", "User-Agent": "innate-robot"}
-    )
-    with urllib.request.urlopen(request, timeout=10) as response:
-        return json.loads(response.read())
-
-
-def _parse_env_file(path):
-    env = {}
-    try:
-        with open(path) as f:
-            for raw_line in f:
-                line = raw_line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    env[key.strip()] = value.strip()
-    except OSError:
-        pass
-    return env
-
-
 def _local_identity():
     """(robot_id, robot_id from robot_info.json, service key) as the nodes see them.
 
-    Same precedence as print_runtime_env.py: /etc/innate.env is the fallback, the repo
-    .env layers on top and wins.
+    The merge — /etc/innate.env as fallback, repo .env on top — belongs to
+    print_runtime_env.py, which is what the ROS processes are actually launched with.
     """
-    env = _parse_env_file(SYSTEM_ENV_PATH)
-    env.update(_parse_env_file(os.path.join(INNATE_OS_ROOT, ".env")))
+    env = print_runtime_env.build_runtime_env(Path(INNATE_OS_ROOT))
 
     robot_info_id = None
     try:
@@ -547,7 +515,7 @@ def check_identity():
         warn(f"  Delete robot_info.json and restart ros-app, or restore {SYSTEM_ENV_PATH}.bak")
 
     try:
-        cloud = _cloud_identity(service_key)
+        cloud = me.fetch_identity(service_key)
     except urllib.error.HTTPError as e:
         # The service answered and said no — a revoked or mistyped key, not a network.
         fail(f"The auth service rejected this key (HTTP {e.code})")
@@ -556,7 +524,7 @@ def check_identity():
         warn(f"Offline, using cached identity (could not reach auth service: {e})")
         return True
 
-    cloud_id = cloud.get("robot_id") or cloud.get("id")
+    cloud_id = me.robot_id(cloud)
     if not cloud_id:
         warn(f"Auth service returned no robot id (keys: {sorted(cloud)})")
         return True
