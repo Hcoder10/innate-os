@@ -79,6 +79,14 @@ def main() -> None:
     args = ap.parse_args()
     root = args.dataset.resolve()
 
+    scene = json.loads((root / "scene.json").read_text())
+    if scene.get("capture", {}).get("mode") == "drive":
+        print(
+            "WARNING: drive-mode capture — the physics tour can nudge floor props, but this\n"
+            "annotation raycasts the pristine scene: prop-visibility labels assume undisturbed\n"
+            "props and may be wrong for any prop the robot brushed."
+        )
+
     sim = VirtualMars()
     build_scene(sim)
     cam_id = sim.model.camera("main").id
