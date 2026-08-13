@@ -1184,6 +1184,28 @@ def test_a_mode_change_restarts_the_confidence_hold(data_dir, clock):
     assert len(store.snapshot().memories) == 1
 
 
+def test_a_latched_old_map_grid_never_vouches_for_slam(data_dir, clock):
+    # /map is TRANSIENT_LOCAL: entering mapping can replay the previous map's
+    # grid, which must not stand in for a slam_toolbox that hasn't spoken yet.
+    recorder, store = make_recorder(data_dir)
+    recorder._on_nav_mode(SimpleNamespace(data="navigation"))
+    recorder._on_map(grid_msg(open_room(40)))  # the old map, latched
+    recorder._on_nav_mode(SimpleNamespace(data="mapping"))
+    recorder._on_mapping_session(SimpleNamespace(data=json.dumps({"started": 1000.0})))
+    recorder._on_head(SimpleNamespace(data=json.dumps({"current_position": -10.0})))
+    recorder._on_image(SimpleNamespace(data=GOOD_JPEG))
+    recorder.tick()
+    clock.now += 3.1
+    recorder._on_image(SimpleNamespace(data=GOOD_JPEG))
+    recorder.tick()  # would record by now if the stale grid still counted
+    assert store.snapshot().memories == ()
+
+    recorder._on_map(grid_msg(open_room(40)))  # slam's first grid: the hold starts here
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    assert len(store.snapshot().memories) == 1
+
+
 def test_a_respawned_recorder_adopts_its_sessions_stage(data_dir, clock):
     # A brain-only restart mid-tour: the mode arrives before the latched
     # session replay, and the recorder must not touch the stage until it

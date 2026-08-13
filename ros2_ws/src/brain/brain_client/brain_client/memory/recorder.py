@@ -174,8 +174,12 @@ class MemoryRecorder:
     def _on_nav_mode(self, msg: String) -> None:
         if msg.data != self._nav_mode:
             # A mode change swaps the coordinate frame; confidence held in the
-            # old frame says nothing about the new one — the hold restarts.
+            # old frame says nothing about the new one — the hold restarts,
+            # and the latched /map replay is the old frame's too: only grids
+            # received in this mode may vouch for SLAM (_slam_alive).
             self._confident_since = None
+            self._grid = None
+            self._grid_at = 0.0
         self._nav_mode = msg.data
 
     def _on_current_map(self, msg: String) -> None:
