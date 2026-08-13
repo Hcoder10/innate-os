@@ -153,6 +153,7 @@ class TestWrite:
                 applier.run_write({"env": VALID_ENV, "password": "goodbot41"})
 
         assert not applier.has_service_key(applier.read_system_env())
+        robot.set_password.assert_not_called()
         assert applier.run_write({"env": VALID_ENV, "password": "goodbot41"}) == 0
 
     def test_oversized_env_is_refused(self, robot):
