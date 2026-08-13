@@ -136,8 +136,8 @@ class ProxyClient:
             kwargs["content"] = data
         if files is not None:
             kwargs["files"] = files
-            if form is not None:
-                kwargs["data"] = form  # multipart form fields, not raw content
+        if form is not None:
+            kwargs["data"] = form  # form fields: multipart beside files, urlencoded alone
         if timeout is not None:
             kwargs["timeout"] = timeout
 

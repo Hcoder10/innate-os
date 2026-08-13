@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
 """Wire behavior of the batch STT transcribers (no ROS, no network): the
-per-call transcribe timeout, Gemini's empty-candidates shape, and decorated
-NO_SPEECH replies."""
+per-call transcribe timeout, Gemini's empty-candidates shape, decorated
+NO_SPEECH replies, and the proxy client's form-only body."""
 
 import json
+
+import httpx
+import pytest
 
 from brain_client.brain.transport import GeminiRest, proxy_rest
 from brain_client.inputs.batch_stt import (
@@ -108,3 +111,26 @@ def test_no_speech_survives_model_decoration():
 def test_no_speech_inside_longer_text_is_a_real_transcript():
     for text in ("NO_SPEECH is what he said", "she whispered NO_SPEECH"):
         assert gemini_transcriber(gemini_rest(gemini_reply(text)), GEMINI_MODEL, "en")(WAV) == text
+
+
+# ---------- proxy client body encoding ----------
+
+
+def test_proxy_form_without_files_sends_an_urlencoded_body():
+    innate_proxy = pytest.importorskip("innate_proxy")
+
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={})
+
+    proxy = innate_proxy.ProxyClient(proxy_url="https://proxy.test", innate_service_key="test-key")
+    proxy._sync_client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    with proxy.request_stream("elevenlabs", "v1/speech-to-text", form={"model_id": "scribe_v2"}) as resp:
+        resp.read()
+
+    request = requests[0]
+    assert request.headers["content-type"] == "application/x-www-form-urlencoded"
+    assert request.read() == b"model_id=scribe_v2"
