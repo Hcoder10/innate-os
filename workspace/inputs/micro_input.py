@@ -525,10 +525,11 @@ class MicroInput(InputDevice):
                     if not self._is_connected:
                         continue
 
-                    # Status rides the chunk cadence even while ducking, so the
-                    # panel's DUCKING chip stays live while audio is suppressed.
+                    # Status rides the chunk cadence for every backend — the webapp
+                    # marks the voice panel stale after 2.5 s of silence — and keeps
+                    # flowing while ducking, so the DUCKING chip stays live too.
                     chunks_seen += 1
-                    if self._backend in BATCH_BACKENDS and chunks_seen % VAD_STATUS_EVERY_CHUNKS == 0:
+                    if chunks_seen % VAD_STATUS_EVERY_CHUNKS == 0:
                         self._send_vad_status()
 
                     # Skip sending while ducking (robot is speaking)
