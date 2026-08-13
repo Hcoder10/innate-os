@@ -30,15 +30,17 @@ def module_serial() -> str | None:
     return serial or None
 
 
-def _bluetooth_mac() -> str | None:
+def _mac_fallback() -> str:
+    """The BT adapter MAC, for a board whose device tree has no serial."""
     try:
         out = subprocess.run(["hciconfig", "hci0"], capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError):
-        return None
-    for token in out.split():
-        if token.count(":") == 5:
-            return token
-    return None
+        out = ""
+    mac = next((token for token in out.split() if token.count(":") == 5), None)
+    if mac is None:
+        raise SystemExit("no device-tree serial and no Bluetooth adapter to fall back on")
+    print("warning: no device-tree serial; falling back to the BT adapter MAC", file=sys.stderr)
+    return mac
 
 
 def short_id(serial: str | None = None) -> str:
@@ -47,13 +49,7 @@ def short_id(serial: str | None = None) -> str:
     The serial names the compute module, so it survives an M.2 Wi-Fi/BT card swap —
     which is why the adapter MAC is only a fallback.
     """
-    source = serial if serial is not None else module_serial()
-    if source is None:
-        source = _bluetooth_mac()
-        if source is None:
-            raise SystemExit("no device-tree serial and no Bluetooth adapter to fall back on")
-        print("warning: no device-tree serial; falling back to the BT adapter MAC", file=sys.stderr)
-    return hashlib.sha256(source.encode()).hexdigest()[:4]
+    return hashlib.sha256((serial or module_serial() or _mac_fallback()).encode()).hexdigest()[:4]
 
 
 def main() -> int:
