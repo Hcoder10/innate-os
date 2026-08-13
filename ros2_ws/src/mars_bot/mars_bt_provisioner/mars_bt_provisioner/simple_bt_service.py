@@ -43,11 +43,11 @@ CHARACTERISTIC_UUID = "abcdef01-1234-5678-1234-56789abcdef0"
 
 # Path to the helper script for restarting services (adjust if moved)
 RESTART_SCRIPT_PATH = "/usr/local/bin/restart_robot_networking.sh"
-IDENTITY_TOOL_PATH = "/usr/local/bin/innate-identity"
-SHORT_ID_TOOL_PATH = "/usr/local/bin/robot-short-id"
 SYSTEM_ENV_PATH = "/etc/innate.env"
 
 INNATE_OS_ROOT = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
+IDENTITY_TOOL_PATH = os.path.join(INNATE_OS_ROOT, "scripts", "identity", "innate-identity")
+SHORT_ID_TOOL_PATH = os.path.join(INNATE_OS_ROOT, "scripts", "identity", "robot-short-id")
 IDENTIFY_SOUND = os.path.join(INNATE_OS_ROOT, "config", "sounds", "turnon.mp3")
 
 # The identity blob is validated here and again by the root helper. Sizes are the BLE

@@ -8,9 +8,7 @@ DDS_SETUP_SCRIPT="$INNATE_OS_ROOT/config/dds/setup_dds.zsh"
 # read, so ros-app has one creation path for robot_info.json either way. Never
 # blocking: a repo updated ahead of post_update.sh has no sudoers grant yet, and a
 # password prompt here would hang the launch.
-if [ -x /usr/local/bin/innate-identity ]; then
-    sudo -n /usr/local/bin/innate-identity --seed >/dev/null 2>&1 || true
-fi
+sudo -n "$INNATE_OS_ROOT/scripts/identity/innate-identity" --seed >/dev/null 2>&1 || true
 
 RUNTIME_ENV_EXPORTS=$(python3 "$INNATE_OS_ROOT/scripts/print_runtime_env.py" --shell 2>/dev/null || true)
 WEBAPP_URI_SCRIPT="$INNATE_OS_ROOT/scripts/webapp_uri.zsh"
