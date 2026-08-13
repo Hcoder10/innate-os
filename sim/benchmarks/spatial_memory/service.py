@@ -179,7 +179,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(payload)))
         if cache:
-            self.send_header("Cache-Control", "max-age=86400, immutable")
+            # Short-lived: a re-capture rewrites the same dataset URLs in place.
+            self.send_header("Cache-Control", "max-age=60")
         self.end_headers()
         self.wfile.write(payload)
 
@@ -195,6 +196,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json(500, {"error": str(error)})
 
     def do_POST(self) -> None:  # noqa: N802
+        try:
+            self._post()
+        except BrokenPipeError:
+            pass
+        except Exception as error:  # noqa: BLE001 -- one bad request must not kill the thread silently
+            self._json(500, {"error": str(error)})
+
+    def _post(self) -> None:
         path = self.path.split("?", 1)[0]
         if path != "/api/run":
             self._json(404, {"error": "not found"})
@@ -204,6 +213,9 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, json.JSONDecodeError):
             self._json(400, {"error": "bad json"})
+            return
+        if not isinstance(body, dict):
+            self._json(400, {"error": "body must be a JSON object"})
             return
         code, payload = _run_request(body)
         self._json(code, payload)
