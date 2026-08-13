@@ -50,10 +50,9 @@ IDENTITY_TOOL_PATH = os.path.join(INNATE_OS_ROOT, "scripts", "identity", "innate
 SHORT_ID_TOOL_PATH = os.path.join(INNATE_OS_ROOT, "scripts", "identity", "robot-short-id")
 IDENTIFY_SOUND = os.path.join(INNATE_OS_ROOT, "config", "sounds", "turnon.mp3")
 
-# The identity blob is validated here and again by the root helper. Sizes are the BLE
-# side of the contract: a long write carries up to 512 bytes, and the worst real payload
-# measures ~320.
-MAX_IDENTITY_PAYLOAD_BYTES = 512
+# The identity blob is validated here and again by the root helper. No size check: a
+# payload this layer can see already crossed the air, and the bound that matters is the
+# helper's, enforced by root.
 ENV_LINE_RE = re.compile(r"^[A-Z][A-Z0-9_]*=")
 # /etc/innate.env is injected into every ROS process's environment, so a blob is env
 # injection by construction. The unprovisioned-only rule is the real gate; this narrows
@@ -477,8 +476,6 @@ class BleProvisionerServer:
         password = payload.get("password", "")
         if not isinstance(env_text, str) or not isinstance(password, str):
             return "expected {env, password, wipe_data?}"
-        if len(json.dumps(payload).encode()) > MAX_IDENTITY_PAYLOAD_BYTES:
-            return f"payload exceeds {MAX_IDENTITY_PAYLOAD_BYTES} bytes"
         if any(ord(c) < 0x20 or ord(c) == 0x7F for c in password):
             return "password contains control characters"
 

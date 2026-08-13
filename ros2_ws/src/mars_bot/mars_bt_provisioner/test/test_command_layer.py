@@ -669,17 +669,6 @@ class TestSetIdentity:
 
         assert mock_run.call_count == 0
 
-    @patch.object(simple_bt_service, "is_provisioned", return_value=False)
-    @patch.object(simple_bt_service.subprocess, "run")
-    def test_oversized_payload_is_refused(self, mock_run, mock_provisioned):
-        server = self._server_unprovisioned()
-        env = VALID_ENV + "PADDING=" + "x" * simple_bt_service.MAX_IDENTITY_PAYLOAD_BYTES + "\n"
-
-        resp = _send_command(server, {"command": "set_identity", "data": {"env": env, "password": "goodbot41"}})
-
-        assert resp["status"] == "error"
-        assert mock_run.call_count == 0
-
 
 # ---------------------------------------------------------------------------
 # Advertised name
