@@ -30,6 +30,17 @@ FOVX_DEG = math.degrees(2 * math.atan(math.tan(math.radians(CAMERA_FOVY / 2)) * 
 _RAY_START_OFFSET = 0.08  # start past the head shell so the ray doesn't hit the robot itself
 
 
+def _top_z(model: mujoco.MjModel, data: mujoco.MjData, body_id: int) -> float:
+    """Highest world z over the body's geom AABBs at its current pose."""
+    adr, num = model.body_geomadr[body_id], model.body_geomnum[body_id]
+    tops = []
+    for gid in range(adr, adr + num):
+        rot = data.geom_xmat[gid].reshape(3, 3)
+        aabb_center, half = model.geom_aabb[gid, :3], model.geom_aabb[gid, 3:]
+        tops.append(float(data.geom_xpos[gid][2] + rot[2] @ aabb_center + np.abs(rot[2]) @ half))
+    return max(tops)
+
+
 def visible_props(sim: VirtualMars, cam_id: int) -> dict[str, dict]:
     mujoco.mj_forward(sim.model, sim.data)
     cam_pos = sim.data.cam_xpos[cam_id]
@@ -39,7 +50,8 @@ def visible_props(sim: VirtualMars, cam_id: int) -> dict[str, dict]:
     for name, pose in sim.object_poses().items():
         body_id = sim.model.body(name).id
         center = np.array(pose[:3])
-        top = center + [0.0, 0.0, 0.5 * float(sim.model.body(body_id).pos[2] + 0.05)]
+        # 2cm under the exact top so the ray lands on the surface instead of grazing the edge
+        top = np.array([center[0], center[1], max(_top_z(sim.model, sim.data, body_id) - 0.02, center[2])])
         for point in (center, top):
             to_prop = point - cam_pos
             dist = float(np.linalg.norm(to_prop))
