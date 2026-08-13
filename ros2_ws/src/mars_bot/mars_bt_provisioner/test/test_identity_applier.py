@@ -138,6 +138,23 @@ class TestWrite:
             applier.run_write({"env": env, "password": "goodbot41"})
         assert not robot.env_path.exists()
 
+    def test_a_failed_write_leaves_the_robot_provisionable(self, robot):
+        """Writing /etc/innate.env is the commit point, so a failure short of it must
+        leave nothing that would make this helper refuse the retry."""
+        real_write = applier.write_root_file
+
+        def fail_on_system_env(path, text, group):
+            if path == applier.SYSTEM_ENV_PATH:
+                raise OSError("no space left on device")
+            real_write(path, text, group)
+
+        with patch.object(applier, "write_root_file", side_effect=fail_on_system_env):
+            with pytest.raises(OSError):
+                applier.run_write({"env": VALID_ENV, "password": "goodbot41"})
+
+        assert not applier.has_service_key(applier.read_system_env())
+        assert applier.run_write({"env": VALID_ENV, "password": "goodbot41"}) == 0
+
     def test_oversized_env_is_refused(self, robot):
         env = VALID_ENV + "PADDING=" + "x" * applier.MAX_ENV_BYTES + "\n"
 

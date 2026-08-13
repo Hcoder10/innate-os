@@ -296,6 +296,11 @@ def run_write(payload: dict[str, object]) -> int:
         log("already provisioned — refusing to overwrite an identity that holds a key")
         return EXIT_ALREADY_PROVISIONED
 
+    # Writing /etc/innate.env is the commit point: once it holds a key this helper
+    # refuses to run again, so everything that can fail happens before it. The password
+    # goes first for the same reason — a robot left with a new password and no identity
+    # is one the operator just provisions again (the retry derives the same password),
+    # whereas a label printed for a password that was never set outlives the session.
     user = login_user()
     if password:
         set_password(user, password)
@@ -304,12 +309,11 @@ def run_write(payload: dict[str, object]) -> int:
     if serial and "MODULE_SERIAL" not in env:
         env_text = env_text.rstrip("\n") + f"\nMODULE_SERIAL={serial}\n"
 
-    write_root_file(SYSTEM_ENV_PATH, env_text, user)
+    unshadow_repo_key(env["INNATE_SERVICE_KEY"])
     # Byte-identical, so recovery from a later hand-edit is a cp away.
     write_root_file(BACKUP_ENV_PATH, env_text, user)
+    write_root_file(SYSTEM_ENV_PATH, env_text, user)
     log(f"wrote {SYSTEM_ENV_PATH} and {BACKUP_ENV_PATH}")
-
-    unshadow_repo_key(env["INNATE_SERVICE_KEY"])
 
     # ros-app re-creates it from the new environment, and mars_control renames the host
     # from the name it finds there.
