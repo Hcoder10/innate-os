@@ -165,12 +165,15 @@ class Endpointer:
         return utterance if long_enough else None
 
 
+# Tighter than the transports' shared defaults (60 s proxy / 120 s direct) —
+# a transcript this late is stale anyway, and the worker should move on to
+# newer speech. Both vendor transcribers pass it per call.
+TRANSCRIBE_TIMEOUT_SECS = 30.0
+
+
 # ---------- ElevenLabs Scribe batch ----------
 
 ELEVENLABS_PROXY_ENDPOINT = "v1/speech-to-text"
-# Tighter than the proxy client's shared 60 s default — a transcript this
-# late is stale anyway, and the worker should move on to newer speech.
-TRANSCRIBE_TIMEOUT_SECS = 30.0
 
 
 def elevenlabs_proxy_transcriber(proxy: ProxyClient, model: str, language: str) -> Transcriber:
@@ -202,6 +205,12 @@ _GEMINI_PROMPT = (
 )
 
 
+def _says_no_speech(text: str) -> bool:
+    """The sentinel survives light model decoration ('"NO_SPEECH".') but never
+    matches inside longer text — that would eat a real transcript."""
+    return text.strip("'\".,!? \t") == NO_SPEECH
+
+
 def gemini_transcriber(rest: GeminiRest, model: str, language: str) -> Transcriber:
     def transcribe(wav: bytes) -> str:
         body: dict[str, Any] = {
@@ -216,10 +225,11 @@ def gemini_transcriber(rest: GeminiRest, model: str, language: str) -> Transcrib
             ],
             "generationConfig": {"temperature": 0.0, "thinkingConfig": {"thinkingLevel": "minimal"}},
         }
-        response = rest.post(GENERATE_PATH.format(model=model), body)
-        parts = response.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        response = rest.post(GENERATE_PATH.format(model=model), body, timeout=TRANSCRIBE_TIMEOUT_SECS)
+        # candidates can be [] outright (blocked or empty response), not just absent.
+        parts = (response.get("candidates") or [{}])[0].get("content", {}).get("parts", [])
         text = "".join(p.get("text", "") for p in parts).strip()
-        return "" if text == NO_SPEECH else text
+        return "" if _says_no_speech(text) else text
 
     return transcribe
 
