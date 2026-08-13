@@ -48,6 +48,7 @@ from brain_client.common.geometry import quaternion_to_yaw
 from brain_client.memory.coverage import Coverage
 from brain_client.memory.quality import MIN_SHARPNESS, frame_sharpness
 from brain_client.memory.selection import plan_admission
+from brain_client.memory.store import StaleStageError
 from brain_client.state.map import Map
 
 if TYPE_CHECKING:
@@ -116,6 +117,7 @@ class MemoryRecorder:
         self._last_published: dict | None = None
         self._nav_mode: str | None = None
         self._map_name = ""
+        self._mapping_started: float | None = None  # the live SLAM session's identity (/nav/mapping_session)
         self._covariance: tuple[float, float, float] | None = None  # (var x, var y, var yaw)
         self._covariance_at = 0.0  # monotonic arrival of the last AMCL message
         self._head_pitch = 0.0
@@ -141,6 +143,7 @@ class MemoryRecorder:
         node.create_subscription(String, config.current_map_topic, self._on_current_map, 10)
         node.create_subscription(PoseWithCovarianceStamped, config.amcl_pose_topic, self._on_amcl_pose, latched_qos)
         node.create_subscription(String, config.map_saved_topic, self._on_map_saved, latched_qos)
+        node.create_subscription(String, config.mapping_session_topic, self._on_mapping_session, latched_qos)
         node.create_subscription(OccupancyGrid, "/map", self._on_map, latched_qos)
         node.create_subscription(String, "/mars/head/current_position", self._on_head, 10)
         node.create_timer(_TICK_SEC, self.tick)
@@ -165,7 +168,7 @@ class MemoryRecorder:
 
     def _recordable_moment(self) -> bool:
         if self._nav_mode == "mapping":
-            return self._slam_alive()
+            return self._mapping_started is not None and self._slam_alive()
         return self._nav_mode == "navigation" and bool(self._map_name) and self._confident()
 
     def _on_nav_mode(self, msg: String) -> None:
@@ -178,17 +181,27 @@ class MemoryRecorder:
     def _on_current_map(self, msg: String) -> None:
         self._map_name = msg.data
 
+    def _on_mapping_session(self, msg: String) -> None:
+        try:
+            self._mapping_started = float(json.loads(msg.data)["started"])
+        except (json.JSONDecodeError, TypeError, KeyError, ValueError):
+            self._logger.error(f"[Memory] unreadable mapping-session announcement: {msg.data!r}")
+
     def _on_map_saved(self, msg: String) -> None:
         try:
             payload = json.loads(msg.data)
             map_name, stamp = str(payload["map"]), float(payload["stamp"])
+            mapping_started = float(payload["mapping_started"]) if "mapping_started" in payload else None
         except (json.JSONDecodeError, TypeError, KeyError, ValueError):
             self._logger.error(f"[Memory] unreadable map-save announcement: {msg.data!r}")
             return
         if time.time() - stamp > _SAVE_ANNOUNCEMENT_FRESH_SEC:
             return  # the latch replaying an old save — see _SAVE_ANNOUNCEMENT_FRESH_SEC
         try:
-            promoted = self._store.promote_mapping_session(map_name)
+            promoted = self._store.promote_mapping_session(map_name, mapping_started)
+        except StaleStageError as error:
+            self._logger.error(f"[Memory] stage not promoted to {map_name} — another session built it: {error}")
+            return
         except Exception as error:  # noqa: BLE001 — a full disk must not take the brain node down
             self._logger.error(f"[Memory] promoting the mapping session to {map_name} failed: {error!r}")
             return
@@ -224,7 +237,11 @@ class MemoryRecorder:
     def tick(self) -> None:
         try:
             if self._nav_mode == "mapping":
-                self._store.use_mapping_session()
+                # Entering the stage needs the session's identity: before the
+                # latched /nav/mapping_session replay arrives, touching it
+                # could wipe a half-tour this very session staged.
+                if self._mapping_started is not None:
+                    self._store.use_mapping_session(self._mapping_started)
             else:
                 self._store.switch_map(self._map_name or None)
             self._maybe_record()

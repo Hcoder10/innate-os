@@ -11,9 +11,10 @@ a new frame, and the stale memories are wiped rather than trusted.
 Memories recorded *during* mapping have no saved map yet: they stage under
 ``spatial_memory/.mapping/`` (a name save_map's validation can never produce)
 and are copied into the saved map's directory when the save lands. The stage
-outlives the promotion — a re-saved map re-promotes the whole tour — and is
-wiped when the next session begins: its coordinates only meant anything in
-the SLAM frame that made them.
+outlives the promotion — a re-saved map re-promotes the whole tour — and its
+index remembers which SLAM session built it (mode_manager's start stamp): the
+same session re-adopts it across a brain restart, any other session wipes it,
+because its coordinates only meant anything in the frame that made them.
 
 Thread contract: mutations come from the recorder's timer (executor thread);
 :meth:`snapshot` serves readers on the agent loop and search threads. Every
@@ -38,6 +39,12 @@ MAPPING_SESSION = ".mapping"
 # can collide; leftovers from a crash are cleaned on the next session's entry.
 _PROMOTE_TMP = f"{MAPPING_SESSION}.promote"
 _DISPLACED_TMP = f"{MAPPING_SESSION}.displaced"
+
+
+class StaleStageError(Exception):
+    """The stage on disk was built by a different mapping session than the one
+    the save came from; promoting it would plant a dead frame's memories in
+    the new map."""
 
 
 @dataclass(frozen=True)
@@ -88,6 +95,7 @@ class MemoryStore:
         self._memories: list[Memory] = []
         self._next_id = 1
         self._fingerprint = ""
+        self._session: float | None = None
         self._stat_sig: tuple[int, int] | None = None
         self._revision = 0
         self.last_change_monotonic = 0.0
@@ -117,31 +125,37 @@ class MemoryStore:
             self._memories = []
             self._next_id = 1
             self._fingerprint = fingerprint
+            self._session = None
             self._revision += 1
             self.last_change_monotonic = time.monotonic()
             if self._dir is not None:
                 self._load_locked()
 
-    def use_mapping_session(self) -> None:
+    def use_mapping_session(self, session_started: float | None = None) -> None:
         """Point the store at the mapping-session stage. Idempotent per tick;
         actually entering wipes what a previous session left behind and mints a
         fresh fingerprint — every consumer tells coordinate frames apart by
         map+fingerprint, and two SLAM sessions are two frames despite sharing
-        the ``.mapping`` name."""
+        the ``.mapping`` name. ``session_started`` (mode_manager's stamp for
+        the live slam_toolbox activation) names the frame: a stage this same
+        session already built is adopted instead of wiped, so a brain restart
+        mid-tour keeps the half-tour."""
         with self._lock:
-            if self._map_name == MAPPING_SESSION:
+            if self._map_name == MAPPING_SESSION and self._session == session_started:
                 return
             self._map_name = MAPPING_SESSION
             self._dir = self._root / MAPPING_SESSION
             self._stat_sig = None
-            self._fingerprint = os.urandom(16).hex()
-            self._wipe_locked()
+            self._session = session_started
+            if session_started is None or not self._adopt_stage_locked(session_started):
+                self._fingerprint = os.urandom(16).hex()
+                self._wipe_locked()
             for scratch in (_PROMOTE_TMP, _DISPLACED_TMP):
                 shutil.rmtree(self._root / scratch, ignore_errors=True)  # crash leftovers from a promotion
             self._revision += 1
             self.last_change_monotonic = time.monotonic()
 
-    def promote_mapping_session(self, map_name: str) -> int | None:
+    def promote_mapping_session(self, map_name: str, mapping_started: float | None = None) -> int | None:
         """Hand the staged mapping-session memories to the just-saved map:
         copy the stage into the map's directory with its fingerprint stamped,
         replacing whatever the name held before (the room was just re-mapped,
@@ -151,13 +165,18 @@ class MemoryStore:
         The stage itself stays behind: a re-save — the webapp retrying after
         a failed mode switch — promotes the whole tour again. Returns how
         many were promoted (0 when nothing is staged); None when the saved
-        map can't be fingerprinted, with the stage kept.
+        map can't be fingerprinted, with the stage kept. ``mapping_started``
+        is the save's session identity: a stage another session built raises
+        :class:`StaleStageError` — it must never land in a foreign map.
         """
         with self._lock:
             stage = self._root / MAPPING_SESSION
-            count = _staged_count(stage)
-            if count == 0:
+            index = _staged_index(stage)
+            count = len(index.get("memories") or []) if index is not None else 0
+            if index is None or count == 0:
                 return 0
+            if mapping_started is not None and index.get("session") != mapping_started:
+                raise StaleStageError(f"stage session {index.get('session')!r} != save's {mapping_started!r}")
             fingerprint = _map_fingerprint(self._maps_dir, map_name)
             if not fingerprint:
                 return None
@@ -167,10 +186,10 @@ class MemoryStore:
             if tmp.is_dir():
                 shutil.rmtree(tmp)
             shutil.copytree(stage, tmp)
-            index = json.loads((tmp / "index.json").read_text())
-            index["map"] = map_name
-            index["fingerprint"] = fingerprint
-            (tmp / "index.json").write_text(json.dumps(index))
+            stamped = json.loads((tmp / "index.json").read_text())
+            stamped["map"] = map_name
+            stamped["fingerprint"] = fingerprint
+            (tmp / "index.json").write_text(json.dumps(stamped))
             # Displace-then-swap, never delete-then-swap: destroying the
             # target before its replacement is in place would leave the map
             # memoryless if a crash lands between the two.
@@ -290,12 +309,33 @@ class MemoryStore:
                 and index.get("fingerprint") == self._fingerprint
             )
             if fresh:
-                self._memories = [Memory(**entry) for entry in index.get("memories", [])]
-                self._next_id = int(index.get("next_id", 1))
+                self._restore_locked(index)
                 return
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             pass  # a wrong-shaped index is as stale as a wrong fingerprint
         self._wipe_locked()
+
+    def _adopt_stage_locked(self, session_started: float) -> bool:
+        """Re-attach to a stage this same SLAM session built (a brain restart
+        mid-tour): the frame is still live, so the half-tour — memories,
+        fingerprint, ids — survives. False means the stage is another
+        session's (or unreadable) and the caller wipes it."""
+        assert self._dir is not None
+        try:
+            index = json.loads((self._dir / "index.json").read_text())
+            if not isinstance(index, dict) or index.get("version") != _INDEX_VERSION:
+                return False
+            if index.get("session") != session_started or not index.get("fingerprint"):
+                return False
+            self._restore_locked(index)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return False
+        self._fingerprint = str(index["fingerprint"])
+        return True
+
+    def _restore_locked(self, index: dict) -> None:
+        self._memories = [Memory(**entry) for entry in index.get("memories", [])]
+        self._next_id = int(index.get("next_id", 1))
 
     def _wipe_locked(self) -> None:
         """The map was re-made (or the index is unreadable): the coordinates lie."""
@@ -323,6 +363,7 @@ class MemoryStore:
             "version": _INDEX_VERSION,
             "map": self._map_name,
             "fingerprint": self._fingerprint,
+            "session": self._session,
             "next_id": self._next_id,
             "memories": [asdict(m) for m in self._memories],
         }
@@ -334,17 +375,17 @@ class MemoryStore:
         self.last_change_monotonic = time.monotonic()
 
 
-def _staged_count(stage: Path) -> int:
-    """How many memories the on-disk stage holds; 0 when absent or unreadable.
-    Every mutation commits inside the store lock, so the disk index is never
+def _staged_index(stage: Path) -> dict | None:
+    """The on-disk stage's index; None when absent or unreadable. Every
+    mutation commits inside the store lock, so the disk index is never
     behind the live session."""
     try:
         index = json.loads((stage / "index.json").read_text())
     except (OSError, json.JSONDecodeError, ValueError):
-        return 0
+        return None
     if not isinstance(index, dict) or index.get("version") != _INDEX_VERSION or index.get("map") != MAPPING_SESSION:
-        return 0
-    return len(index.get("memories") or [])
+        return None
+    return index
 
 
 def _map_source(maps_dir: Path, map_name: str) -> Path:
