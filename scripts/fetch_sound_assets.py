@@ -17,12 +17,18 @@ accelerate. So each one is cut down to a part that can be driven by road speed:
 * ``trigger`` one isolated hit, cut from just before its onset and faded out,
               for the voices that fire it at a rate set by speed.
 
-Run it only to regenerate the assets -- the results are committed, so a robot
-never needs the network (or an ElevenLabs bill) to make engine noises::
+Run it only to regenerate the assets. They are not committed -- they live in
+``gs://karmanyaah-public/sounds/motor_voices/`` and ``post_update.sh`` (step
+11c) fetches them, so publishing is the second half of regenerating::
 
     export ELEVENLABS_API_KEY=sk_...
     python3 scripts/fetch_sound_assets.py            # all of them
     python3 scripts/fetch_sound_assets.py gallop f1  # just these
+    gsutil cp config/sounds/motor_voices/*.wav gs://karmanyaah-public/sounds/motor_voices/
+
+A robot verifies each clip against the sha256 pinned in ``post_update.sh``, so
+a *changed* clip is published by updating that line -- ``sha256sum`` on the new
+file -- and every robot re-downloads it on the next update.
 
 The key is read from the environment and never written to disk.
 """
@@ -45,7 +51,7 @@ from fetch_mars_voice_loop import pitch, resample, save, seamless, whole_periods
 ENDPOINT = "https://api.elevenlabs.io/v1/sound-generation"
 FETCH_RATE = 44100
 ASSET_RATE = 22050
-OUT = REPO / "ros2_ws/src/mars_bot/mars_control/assets"
+OUT = REPO / "config/sounds/motor_voices"
 
 PITCHED = 0.45
 """Above this periodicity a loop is trimmed to whole pitch periods. Below it

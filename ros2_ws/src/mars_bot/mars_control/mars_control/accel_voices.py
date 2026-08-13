@@ -66,6 +66,7 @@ because ``render`` runs on the PortAudio thread.
 from __future__ import annotations
 
 import math
+import os
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -347,17 +348,15 @@ def _read_loop(loop: np.ndarray, index: np.ndarray) -> np.ndarray:
 
 
 def asset_path(name: str) -> Path | None:
-    """Locate a shipped audio asset, installed share directory first so a
-    built workspace wins over the source tree."""
-    candidates: list[Path] = []
-    try:
-        from ament_index_python.packages import get_package_share_directory
+    """Locate a downloaded clip, or ``None`` if this robot never fetched it.
 
-        candidates.append(Path(get_package_share_directory("mars_control")) / "assets" / name)
-    except (ImportError, KeyError):
-        pass
-    candidates.append(Path(__file__).resolve().parent.parent / "assets" / name)
-    return next((path for path in candidates if path.is_file()), None)
+    They sit beside the boot sounds in ``config/sounds/``, not in the package,
+    because ``post_update.sh`` downloads them and downloads do not belong in a
+    source tree. ``$INNATE_OS_ROOT`` is how every other node finds the repo.
+    """
+    root = Path(os.environ.get("INNATE_OS_ROOT", Path.home() / "innate-os"))
+    path = root / "config" / "sounds" / "motor_voices" / name
+    return path if path.is_file() else None
 
 
 def load_wav(path: Path) -> tuple[np.ndarray, int]:
@@ -534,8 +533,8 @@ class MarsVoice(AccelVoice):
     robot doing an impression of itself. That is the joke, so it is not
     corrected for.
 
-    Falls back to :class:`LipTrill` if the clip is missing, so a workspace that
-    never ran the fetch script still makes a mouth noise rather than silence.
+    Falls back to :class:`LipTrill` if the clip is missing, so a workspace whose
+    assets were never fetched still makes a mouth noise rather than silence.
     """
 
     slug = "mars_voice"
@@ -1716,8 +1715,8 @@ class LoopVoice(AccelVoice):
     ASSET: ClassVar[str] = ""
     RATE: ClassVar[tuple[float, float]] = (0.9, 1.8)
     UNDERSTUDY: ClassVar[type[AccelVoice]] = Hyperdrive
-    """Stands in when the asset is missing, so a workspace that never ran the
-    fetch script makes a noise rather than silence."""
+    """Stands in when the asset is missing, so a workspace whose assets were
+    never fetched makes a noise rather than silence."""
 
     def __init__(self, sample_rate: int = 48000, feel: VoiceFeel | None = None, seed: int = 0) -> None:
         super().__init__(sample_rate, feel, seed)

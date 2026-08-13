@@ -127,6 +127,29 @@ apt_update() {
     return 1
 }
 
+# Fetch an asset too heavy for git, pinned by checksum: a fresh download is
+# verified before it is installed, and one already on disk is verified rather
+# than trusted, so a truncated or tampered file heals on the next update — and
+# a changed asset is republished by changing its sha here, not its filename.
+# Never fatal: every caller degrades to silence or a substitute, so a failed
+# download must not fail the update.
+fetch_asset() {
+    local url="$1" dest="$2" sha256="$3"
+    if [ -f "$dest" ]; then
+        echo "$sha256  $dest" | sha256sum -c --status - && return 0
+        rm -f "$dest"
+        log "  WARNING: $(basename "$dest") failed its checksum; re-downloading"
+    fi
+    log "  Downloading $dest"
+    if sudo -u "$ACTUAL_USER" curl -fsSL --create-dirs -o "$dest.tmp" "$url" \
+        && echo "$sha256  $dest.tmp" | sha256sum -c --status -; then
+        mv "$dest.tmp" "$dest"
+    else
+        rm -f "$dest.tmp"
+        log "  WARNING: failed to download $url (retried next update)"
+    fi
+}
+
 log "========================================"
 log "Starting post-update script"
 log "Repository: $REPO_DIR"
@@ -932,32 +955,27 @@ for meta_file in "$REPO_DIR"/workspace/innate_skills/*/metadata.json "$REPO_DIR"
 done
 
 # -----------------------------------------------------------------------------
-# 11c. Download boot sounds
-# 48 kHz PCM WAVs (dmix's rate: no decode/resample in the boot-time playback
-# window) — too heavy for git, so fetched from GCS, pinned by checksum so a
-# truncated or tampered file self-heals next update. Non-fatal: a missing sound
-# only means a silent boot, never a failed update.
+# 11c. Download the sounds
+# The boot pair and the motor-sound voices, all 48 kHz PCM — dmix's rate, so
+# the boot-time playback window costs no decode and no resample. Too heavy for
+# git, so fetched from GCS into the layout the bucket already has. Non-fatal:
+# a missing one means a silent boot or a substituted voice, never a failed
+# update.
 # -----------------------------------------------------------------------------
 SOUNDS_BASE_URL="https://storage.googleapis.com/karmanyaah-public/sounds"
-sudo -u "$ACTUAL_USER" mkdir -p "$REPO_DIR/config/sounds"
 while read -r sound sha256; do
-    dest="$REPO_DIR/config/sounds/$sound"
-    if [ -f "$dest" ]; then
-        echo "$sha256  $dest" | sha256sum -c --status - && continue
-        rm -f "$dest"
-        log "  WARNING: $sound failed its checksum; re-downloading"
-    fi
-    log "  Downloading $dest"
-    if sudo -u "$ACTUAL_USER" curl -fsSL -o "$dest.tmp" "$SOUNDS_BASE_URL/$sound" \
-        && echo "$sha256  $dest.tmp" | sha256sum -c --status -; then
-        mv "$dest.tmp" "$dest"
-    else
-        rm -f "$dest.tmp"
-        log "  WARNING: failed to download $sound (boot will be silent; retried next update)"
-    fi
+    fetch_asset "$SOUNDS_BASE_URL/$sound" "$REPO_DIR/config/sounds/$sound" "$sha256"
 done <<'EOF'
 turnon.wav 3c9ac04fbb1e93b62353a5e77789dd5099764a0e48a7d56661f3a18eb7b37190
 turnoff.wav ccef2517800ffe84f337fde4b986ae2cb0fb2bc70e255ac16ba4d6b0c55066a8
+motor_voices/boing.wav 154d66a8894f75e2e04ed95897f604243fcdce23d1780139389793f0b48de575
+motor_voices/crowd.wav 230c65934f9a23d7cdc465322e6e3623511907978638d64ce68afcb2b87cd93a
+motor_voices/didgeridoo.wav f5f37cf3a4f3370b14916cbddc91992c2b8f548b5134e6485b18412ab387ec5e
+motor_voices/f1.wav f7b4cbd0f5c7ae2b79191952a981e96008ddf96e33b4050265be9a8974d4ad8a
+motor_voices/gallop.wav 287cadf2a96c2f7fa1c72888c10f5dbd52b4c38f6ed18926509e2949cad4c246
+motor_voices/mars_voice_brr.wav 672c048e65b39ac5b69e67f868524aaffcaa491d1376f7fb792630d26adb32ef
+motor_voices/quack.wav f381e7d43c51c0266cbbd77af8d0fc32c75def94c799c922596b30a6319ae01d
+motor_voices/whale.wav cb0904ecbf2fd4f1d985026e24fd8c975753387eb41373cb8d95c087666577d7
 EOF
 
 # -----------------------------------------------------------------------------

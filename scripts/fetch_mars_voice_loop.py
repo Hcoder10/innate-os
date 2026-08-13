@@ -17,10 +17,12 @@ model rather than a workaround.
 The loop is cut to a whole number of pitch periods so the wrap lands in phase;
 a short crossfade then only has to hide amplitude, not a pitch step.
 
-Run it only to regenerate the asset -- the result is committed, so a robot
-never needs the network (or a Cartesia bill) to make engine noises::
+Run it only to regenerate the asset. It is not committed -- it lives in
+``gs://karmanyaah-public/sounds/motor_voices/`` and ``post_update.sh`` (step
+11c) fetches it, so publishing is the second half of regenerating::
 
     python3 scripts/fetch_mars_voice_loop.py
+    gsutil cp config/sounds/motor_voices/mars_voice_brr.wav gs://karmanyaah-public/sounds/motor_voices/
 
 ``INNATE_SERVICE_KEY`` must be set (``.env`` is read automatically).
 """
@@ -47,8 +49,8 @@ it back fast turns the robot into a chipmunk."""
 FETCH_RATE = 44100
 ASSET_RATE = 22050
 """The loop is a low buzz played back below 2x, so nothing in it lives near
-11 kHz -- half the sample rate keeps the committed asset small for free."""
-OUT = REPO / "ros2_ws/src/mars_bot/mars_control/assets/mars_voice_brr.wav"
+11 kHz -- half the sample rate keeps the asset small for free."""
+OUT = REPO / "config/sounds/motor_voices/mars_voice_brr.wav"
 
 LOOP_SECONDS = 0.22
 CROSSFADE_SECONDS = 0.02
