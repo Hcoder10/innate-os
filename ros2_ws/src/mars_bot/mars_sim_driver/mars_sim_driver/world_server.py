@@ -35,7 +35,7 @@ try:
 except ImportError:  # view-only feature; the sim must not die without it
     ws_serve = None
 
-from .challenges import ChallengeEngine, SkillEventBridge
+from .challenges import ChallengeEngine, SkillEventBridge, TelemetryEventBridge
 from .core import CAMERA_HEIGHT, CAMERA_WIDTH, VirtualMars, encode_jpeg, release_freed_heap
 
 # Depth renders at the pointcloud grid: identical published cloud, 16x less fill.
@@ -98,7 +98,9 @@ class WorldServer:
         self.state_cond = threading.Condition()
         # Challenge judge: evaluated on each published state, driven by
         # observer commands, fed skill events by SkillEventBridge (main()).
-        self.challenges = ChallengeEngine(sim, self.lock)
+        # Challenge outcomes go back out over rosbridge for the usage logger,
+        # which runs in the container and cannot see this process.
+        self.challenges = ChallengeEngine(sim, self.lock, telemetry=TelemetryEventBridge())
         self._challenge_error_at = 0.0  # last throttled challenge-failure log
 
     # --- physics (side thread; MuJoCo stepping is pure CPU) ---

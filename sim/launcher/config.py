@@ -48,6 +48,8 @@ DOWN_LOG_PATH = LOG_DIR / "down.log"
 ROS_INSTALL_STATE_PATH = STATE_DIR / "ros-install.inputs.sha256"
 OS_SESSION_READY_POLL_SECONDS = 0.25
 GENERATED_OS_ENV_PATH = STATE_DIR / "innate-os.env"
+# The UUID this checkout reports usage under (see identity.install_id).
+INSTALL_ID_PATH = STATE_DIR / "install-id"
 # How brain_client reaches Gemini: through the Innate proxy with a service key,
 # straight at Google with a Gemini key, or not at all.
 INNATE_BACKEND = "innate"
@@ -618,10 +620,48 @@ def write_env_file(path: Path, values: dict[str, str]) -> None:
 def build_os_env(config: dict[str, object]) -> Path:
     raw_env: dict[str, str] = config["raw_env"]  # type: ignore[assignment]
     os_env: dict[str, str] = dict(raw_env)
+    os_env.update(sim_identity_env(config))
 
     ensure_state_dir()
     write_env_file(GENERATED_OS_ENV_PATH, os_env)
     return GENERATED_OS_ENV_PATH
+
+
+def sim_identity_env(config: dict[str, object]) -> dict[str, str]:
+    """Who/what/where for the usage logger inside the container.
+
+    Imported lazily: identity imports this module for its paths, so a
+    module-level import would be circular.
+    """
+    import identity
+
+    if not identity.telemetry_enabled(dict(config["raw_env"])):  # type: ignore[arg-type]
+        return {"INNATE_TELEMETRY": "0"}
+
+    # Checked before install_id(), which creates the file it asks about.
+    first_run = not INSTALL_ID_PATH.exists()
+    if first_run:
+        log(
+            f"{CYAN}Innate collects anonymous simulator usage{NC} (version, platform, "
+            "performance, which features were used) to see how onboarding is going. "
+            f"No prompts or code. Opt out with {YELLOW}INNATE_TELEMETRY=0{NC} in .env."
+        )
+
+    os_image = str(config.get("os_image") or "")
+    return {
+        "INNATE_SIM_INSTALL_ID": identity.install_id(),
+        "INNATE_SIM_DEVICE_HASH": identity.device_hash(),
+        # The container has no .git, so a commit read in there is always
+        # "unknown" -- resolve it out here where the repo actually is.
+        "INNATE_SIM_COMMIT": identity.repo_commit(),
+        "INNATE_SIM_LAUNCHER_VERSION": identity.launcher_version(),
+        # Empty when running the locally built deps-image, which is itself the
+        # useful distinction: prebuilt users versus source-tree users.
+        "INNATE_SIM_IMAGE_REF": os_image or LOCAL_OS_IMAGE,
+        "INNATE_SIM_PLATFORM": identity.host_platform(),
+        "INNATE_SIM_PLATFORM_RELEASE": identity.platform_release(),
+        "INNATE_SIM_BRAIN_BACKEND": str(config.get("brain_backend") or ""),
+    }
 
 
 if __name__ == "__main__":

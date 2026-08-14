@@ -14,17 +14,21 @@ setup(
             ["resource/" + package_name],
         ),
         ("share/" + package_name, ["package.xml"]),
-        ("share/" + package_name + "/launch", ["launch/logger.launch.py"]),
+        (
+            "share/" + package_name + "/launch",
+            ["launch/logger.launch.py", "launch/sim_logger.launch.py"],
+        ),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
     maintainer="Innate Engineering",
     maintainer_email="eng@innate.bot",
-    description="ROS 2 node for logging robot vitals, directives, and chat to the cloud.",
+    description="ROS 2 nodes for logging robot vitals and simulator usage to the cloud.",
     license="Apache-2.0",
     entry_points={
         "console_scripts": [
             "logger_node = innate_logger.logger_node:main",
+            "sim_logger_node = innate_logger.sim_logger_node:main",
         ],
     },
 )

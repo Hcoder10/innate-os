@@ -41,6 +41,7 @@ import json
 import math
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -293,10 +294,16 @@ class ChallengeEngine:
     """
 
     def __init__(
-        self, sim, sim_lock: threading.Lock, roots: list[Path] | None = None, progress_path: Path | None = None
+        self,
+        sim,
+        sim_lock: threading.Lock,
+        roots: list[Path] | None = None,
+        progress_path: Path | None = None,
+        telemetry: "TelemetryEventBridge | None" = None,
     ):
         self.sim = sim
         self.sim_lock = sim_lock
+        self.telemetry = telemetry
         # Tracked source dir plus anything the asset bundle shipped, like the
         # props (core.VirtualMars): a pack can carry its scenarios with it.
         if roots is None:  # an explicitly empty list means "load nothing"
@@ -363,6 +370,16 @@ class ChallengeEngine:
             self._save_progress()
         except OSError as exc:
             print(f"[challenges] could not write {self.progress_path}: {exc}", flush=True)
+        if self.telemetry is not None:
+            # "passed" is the funnel's completion stage, so it gets the name the
+            # dashboard counts; the other outcomes keep theirs.
+            name = "completed" if result == "passed" else result
+            self.telemetry.emit(
+                f"challenge_{name}",
+                challenge_id=challenge_id,
+                time_s=round(time_s, 1) if time_s is not None else None,
+                attempts=entry.get("attempts", 0),
+            )
 
     # -- commands (observer connection threads) --
 
@@ -417,6 +434,8 @@ class ChallengeEngine:
                 entry = self.progress.setdefault(challenge_id, {"attempts": 0, "passed": False, "best_time_s": None})
                 entry["attempts"] += 1
                 self.active = challenge  # last: judging starts here
+        if self.telemetry is not None:
+            self.telemetry.emit("challenge_started", challenge_id=challenge_id)
         return True
 
     def abort(self) -> None:
@@ -586,6 +605,64 @@ class SkillEventBridge:
                                 self.engine.post_event(json.loads(frame["msg"]["data"]))
                         except Exception as exc:  # noqa: BLE001 -- junk on the bus; keep listening
                             print(f"[challenges] ignoring skill event: {exc!r}", flush=True)
+            except Exception:  # noqa: BLE001,S110 -- rosbridge down/restarting; retry
+                pass
+            time.sleep(5)
+
+
+class TelemetryEventBridge:
+    """Publishes challenge outcomes onto the ROS bus for the usage logger.
+
+    Its own websocket rather than SkillEventBridge's: that one blocks forever
+    iterating inbound frames, and websockets.sync connections are not safe to
+    write to from a second thread.
+
+    Challenge results live in the world server, which runs on the host and
+    outside ROS, while the logger node runs inside the container. Publishing a
+    plain topic hands the problem to rosbridge, which both already speak --
+    a shared spool file would need locking across the host/container
+    filesystem boundary, where flock is not dependable.
+    """
+
+    TOPIC = "/sim/telemetry_event"
+    # Dropping the oldest is right for telemetry: a backlog means rosbridge has
+    # been down a while, and the recent events are the informative ones.
+    MAX_PENDING = 256
+
+    def __init__(self, url: str = "ws://127.0.0.1:9090"):
+        self.url = url
+        self._pending: deque[dict] = deque(maxlen=self.MAX_PENDING)
+        self._wake = threading.Event()
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def emit(self, event: str, **payload: object) -> None:
+        """Queue an event. Never raises -- telemetry cannot fail the sim."""
+        self._pending.append({"event": event, "payload": payload, "occurred_at": time.time()})
+        self._wake.set()
+
+    def _run(self) -> None:
+        try:
+            from websockets.sync.client import connect
+        except ImportError:
+            return
+        while True:
+            try:
+                with connect(self.url, open_timeout=5) as ws:
+                    ws.send(json.dumps({"op": "advertise", "topic": self.TOPIC, "type": "std_msgs/String"}))
+                    while True:
+                        while self._pending:
+                            frame = self._pending.popleft()
+                            ws.send(
+                                json.dumps(
+                                    {
+                                        "op": "publish",
+                                        "topic": self.TOPIC,
+                                        "msg": {"data": json.dumps(frame)},
+                                    }
+                                )
+                            )
+                        self._wake.wait(timeout=5)
+                        self._wake.clear()
             except Exception:  # noqa: BLE001,S110 -- rosbridge down/restarting; retry
                 pass
             time.sleep(5)

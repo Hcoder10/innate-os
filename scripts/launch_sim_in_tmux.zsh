@@ -140,6 +140,12 @@ tmux new-window -t "$SESSION_NAME" -n foxglove
 tmux send-keys -t "${TMUX_TARGET_PREFIX}:foxglove" "ros2 launch foxglove_bridge foxglove_bridge_launch.xml send_buffer_limit:=2000000 max_qos_depth:=1" C-m
 echo "Started Foxglove bridge (ws :${SIM_FOXGLOVE_PORT:-8765})..."
 
+# Shares the foxglove window: both are passive observers, and neither prints
+# anything worth its own pane.
+tmux split-window -t "${TMUX_TARGET_PREFIX}:foxglove" -h
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:foxglove.1" "ros2 launch innate_logger sim_logger.launch.py" C-m
+echo "Started sim usage logger..."
+
 # Select the rosbridge-app window
 tmux select-window -t "${TMUX_TARGET_PREFIX}:rosbridge-app"
 

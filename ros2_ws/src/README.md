@@ -21,7 +21,7 @@ drivers, control, navigation, and simulation).
 | --- | --- |
 | [`clients`](cloud/clients) | Cloud client libraries: auth, proxy, and training. |
 | [`innate_cloud_msgs`](cloud/innate_cloud_msgs) | Message/service definitions for cloud training. |
-| [`innate_logger`](cloud/innate_logger) | Logs robot vitals, directives, and chat to the cloud. |
+| [`innate_logger`](cloud/innate_logger) | Logs robot vitals, directives, and chat to the cloud; `sim_logger_node` reports anonymous simulator usage. |
 | [`innate_training_node`](cloud/innate_training_node) | Training job management, status publishing, and file transfer. |
 | [`innate_uninavid`](cloud/innate_uninavid) | Bridges compressed camera images to a cloud websocket and publishes `cmd_vel` in response. |
 
