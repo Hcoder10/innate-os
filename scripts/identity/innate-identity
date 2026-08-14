@@ -98,10 +98,10 @@ def read_system_env() -> dict[str, str]:
     return read_env_file(SYSTEM_ENV_PATH)
 
 
-def read_effective_env() -> dict[str, str]:
+def read_effective_env(system: dict[str, str] | None = None) -> dict[str, str]:
     """What the ROS processes actually see: print_runtime_env.py layers the repo .env
     on top of /etc/innate.env. An R7.0 robot's key lives only there."""
-    env = read_system_env()
+    env = read_system_env() if system is None else dict(system)
     env.update(read_env_file(REPO_ROOT / ".env"))
     return env
 
@@ -183,16 +183,18 @@ def needs_seed(env: dict[str, str]) -> bool:
 
 
 def run_seed() -> int:
+    # The cheap check first: this runs at every boot, and a provisioned robot must not
+    # pay two interpreter spawns for a serial it is about to discard.
+    env = read_system_env()
+    if not needs_seed(read_effective_env(env)):
+        return 0
+
     serial = short_id_tool(raw_serial=True)
     if serial is None:
         log("no device-tree serial — not a robot, refusing to seed")
         return 1
 
-    if not needs_seed(read_effective_env()):
-        return 0
-
     # Seeded into the system file only — the repo .env is the user's.
-    env = read_system_env()
     env.update(seed_defaults(serial))
     text = "".join(f"{key}={value}\n" for key, value in env.items())
     if SYSTEM_ENV_PATH.exists() and SYSTEM_ENV_PATH.read_text() == text:
