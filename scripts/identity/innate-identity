@@ -3,7 +3,7 @@
 # Copyright (c) 2026 Innate Inc
 """Apply the robot's identity to /etc/innate.env, as root.
 
-Five modes, one file:
+Six modes, one file:
 
   --seed        serial-derived defaults for a robot nobody has provisioned yet, so
                 ros-app has a single creation path for robot_info.json. Run from
@@ -19,6 +19,8 @@ Five modes, one file:
   --migrate-info  record facts that live only in robot_info.json into
                 /etc/innate_migrated.env, a layer below /etc/innate.env — inferred, so
                 any provisioned value shadows it and --write cannot destroy it.
+  --unprovision DESTRUCTIVE. Delete the identity and reset the login password to the
+                factory default, so the robot can be re-keyed or handed on.
 
 --reset-info and --wipe-data are their own modes rather than steps of --write: both are
 useful on their own, and neither should be able to fail a provisioning run.
@@ -67,6 +69,10 @@ FORBIDDEN_PREFIXES = ("LD_", "DYLD_")
 
 EXIT_ALREADY_PROVISIONED = 3
 EXIT_BAD_PAYLOAD = 4
+
+# What a factory image ships with, and what --unprovision restores.
+FACTORY_PASSWORD = "goodbot"
+IDENTITY_KEYS = ("INNATE_SERVICE_KEY", "ROBOT_ID", "ROBOT_NAME", "MODULE_SERIAL")
 
 # Says so in the name an operator reads off a BLE scan, and namespaces the id so a
 # default can never be mistaken for an auth id.
@@ -424,6 +430,85 @@ def run_write(payload: dict[str, object]) -> int:
 
 
 # ---------------------------------------------------------------------------
+# --unprovision
+# ---------------------------------------------------------------------------
+
+
+def shout(*lines: str) -> None:
+    """A de-provision changes two things an operator must not find out about later."""
+    rule = "*" * 76
+    print(f"\n{rule}", file=sys.stderr)
+    for line in lines:
+        print(f"** {line}", file=sys.stderr)
+    print(f"{rule}\n", file=sys.stderr)
+
+
+def strip_repo_identity() -> None:
+    """The repo .env outranks /etc/innate.env in print_runtime_env.py, so an identity
+    left there survives the delete and the robot keeps answering to its old name.
+    Every key here is re-derived by --seed, so commenting them out costs nothing."""
+    repo_env = REPO_ROOT / ".env"
+    try:
+        lines = repo_env.read_text().splitlines()
+    except OSError:
+        return
+    out = [f"# de-provisioned: {line}" if line.split("=", 1)[0].strip() in IDENTITY_KEYS else line for line in lines]
+    if out == lines:
+        return
+    repo_env.write_text("\n".join(out) + "\n")
+    log(f"commented out identity lines in {repo_env}")
+
+
+def run_unprovision() -> int:
+    """Return this robot to the state a factory image ships in: no key, no identity, the
+    default login password, and seeded defaults so it advertises itself as unprovisioned.
+
+    Not an undo of --write — the key is deleted rather than stashed, because an identity
+    still recoverable from the robot's own disk was never really removed. Migrated facts
+    survive: de-provisioning does not change which hardware this is.
+    """
+    shout(
+        "DE-PROVISIONING THIS ROBOT",
+        "",
+        f"Deleting the service key from {SYSTEM_ENV_PATH} and {BACKUP_ENV_PATH}.",
+        "Nothing on this robot can put it back — re-keying needs the laptop tool.",
+    )
+
+    SYSTEM_ENV_PATH.unlink(missing_ok=True)
+    BACKUP_ENV_PATH.unlink(missing_ok=True)
+    strip_repo_identity()
+    log(f"removed {SYSTEM_ENV_PATH} and {BACKUP_ENV_PATH}")
+
+    run_reset_info()
+    run_seed()
+
+    # Last on purpose: a failure before this point leaves an unprovisioned robot the
+    # operator can still log into, not a keyed one open on a published default.
+    user = login_user()
+    try:
+        set_password(user, FACTORY_PASSWORD)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as e:
+        shout(
+            "PASSWORD RESET FAILED — DE-PROVISIONED, BUT NOT BACK TO FACTORY DEFAULT",
+            "",
+            str(e),
+            f"'{user}' still holds the password provisioning gave it. Reset it by hand:",
+            f"    sudo passwd {user}",
+        )
+        return 1
+
+    shout(
+        f"THE LOGIN PASSWORD FOR '{user}' IS NOW '{FACTORY_PASSWORD}'",
+        "",
+        "That is the published factory default. Anyone who can reach this robot",
+        "on the network can log in over SSH and sudo.",
+        "",
+        "Keep it off shared networks until it has been re-provisioned.",
+    )
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -436,6 +521,9 @@ def main() -> int:
     mode.add_argument("--reset-info", action="store_true", help="Drop robot_info.json so ros-app re-derives it")
     mode.add_argument("--wipe-data", action="store_true", help="Clear maps, nav state and custom skills/agents")
     mode.add_argument("--migrate-info", action="store_true", help="Record facts that live only in robot_info.json")
+    mode.add_argument(
+        "--unprovision", action="store_true", help="DESTRUCTIVE: delete the identity, reset the login password"
+    )
     args = parser.parse_args()
 
     if os.geteuid() != 0:
@@ -454,6 +542,8 @@ def main() -> int:
             return run_wipe_data()
         if args.migrate_info:
             return run_migrate_info()
+        if args.unprovision:
+            return run_unprovision()
 
         try:
             payload = json.loads(sys.stdin.read())

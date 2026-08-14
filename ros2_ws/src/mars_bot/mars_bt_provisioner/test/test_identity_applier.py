@@ -51,7 +51,9 @@ def robot(tmp_path):
     with (
         patch.object(applier, "SYSTEM_ENV_PATH", system_env),
         patch.object(applier, "BACKUP_ENV_PATH", tmp_path / "innate.env.bak"),
+        patch.object(applier, "MIGRATED_ENV_PATH", tmp_path / "innate_migrated.env"),
         patch.object(applier, "REPO_ROOT", repo),
+        patch.object(applier, "ros_app_running", return_value=False),
         patch.object(applier, "short_id_tool", side_effect=_short_id_tool),
         patch.object(applier, "set_password") as set_password,
         patch.object(applier.os, "chown"),
@@ -175,6 +177,60 @@ class TestWrite:
         assert "\n# superseded" in "\n" + text
         assert "\nINNATE_SERVICE_KEY=innate-test-key-stale" not in "\n" + text
         assert "TELEMETRY_URL=https://logs.svc.innate.bot" in text
+
+
+# ---------------------------------------------------------------------------
+# --unprovision
+# ---------------------------------------------------------------------------
+
+
+class TestUnprovision:
+    def test_removes_the_key_reseeds_and_resets_the_password(self, robot, capsys):
+        assert applier.run_write({"env": VALID_ENV, "password": "goodbot41"}) == 0
+        robot.set_password.reset_mock()
+
+        assert applier.run_unprovision() == 0
+
+        # The .bak holds the same key, so leaving it would not be a de-provision.
+        assert not applier.BACKUP_ENV_PATH.exists()
+        env = applier.read_effective_env()
+        assert not applier.has_service_key(env)
+        assert env["ROBOT_ID"] == "unprovisioned-a1b2"
+        assert env["ROBOT_NAME"] == "MARS-A1B2-unprovisioned"
+        assert not (robot.repo / "data" / "robot_info.json").exists()
+
+        assert robot.set_password.call_args[0][1] == "goodbot"
+        assert "PASSWORD" in capsys.readouterr().err
+
+    def test_an_identity_in_the_repo_env_cannot_survive_it(self, robot):
+        """The repo .env outranks /etc/innate.env, so a copy left there would keep the
+        robot answering to its old name after the delete."""
+        repo_env = robot.repo / ".env"
+        repo_env.write_text(f"INNATE_SERVICE_KEY={SERVICE_KEY}\nROBOT_ID=R7-41\nTELEMETRY_URL=https://logs.svc\n")
+
+        assert applier.run_unprovision() == 0
+
+        assert "TELEMETRY_URL=https://logs.svc" in repo_env.read_text()
+        env = applier.read_effective_env()
+        assert not applier.has_service_key(env)
+        assert env["ROBOT_ID"] == "unprovisioned-a1b2"
+
+    def test_migrated_hardware_facts_survive(self, robot):
+        """De-provisioning changes who the robot is, not which hardware it is."""
+        applier.MIGRATED_ENV_PATH.write_text("HARDWARE_REVISION=R7\n")
+
+        assert applier.run_unprovision() == 0
+        assert applier.read_effective_env()["HARDWARE_REVISION"] == "R7"
+
+    def test_a_failed_password_reset_says_so_and_fails(self, robot, capsys):
+        robot.set_password.side_effect = RuntimeError("chpasswd failed")
+
+        assert applier.run_unprovision() == 1
+
+        # The identity is gone either way — it is deleted before the password is touched,
+        # so a robot that dies here is unreachable-by-cloud, not open on a known password.
+        assert not applier.has_service_key(applier.read_effective_env())
+        assert "PASSWORD RESET FAILED" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
