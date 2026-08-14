@@ -59,8 +59,20 @@ ENV_LINE_RE = re.compile(r"^[A-Z][A-Z0-9_]*=")
 # what the open window buys an attacker.
 FORBIDDEN_ENV_PREFIXES = ("LD_", "DYLD_")
 
+# The root helper's exit codes and refusal wording; scripts/identity/innate-identity is
+# authoritative for both.
+EXIT_ALREADY_PROVISIONED = 3
+EXIT_BAD_PAYLOAD = 4
+ALREADY_PROVISIONED_MSG = "Already provisioned — delete /etc/innate.env to de-provision"
 
-def system_env():
+
+def _stderr_summary(result: subprocess.CompletedProcess, default: str) -> str:
+    """The last line a failed helper wrote, or a default when it said nothing."""
+    lines = (result.stderr or "").strip().splitlines()
+    return lines[-1] if lines else default
+
+
+def system_env() -> dict[str, str | None]:
     """/etc/innate.env as a dict. Absent or unreadable reads as empty: this service has
     to start on a robot whose env file post_update.sh has not fixed the mode on yet."""
     try:
@@ -69,12 +81,16 @@ def system_env():
         return {}
 
 
-def is_provisioned():
+def has_service_key(env: dict[str, str | None]) -> bool:
     """A robot is provisioned exactly when /etc/innate.env holds a service key."""
-    return bool((system_env().get("INNATE_SERVICE_KEY") or "").strip())
+    return bool((env.get("INNATE_SERVICE_KEY") or "").strip())
 
 
-def load_robot_name():
+def is_provisioned() -> bool:
+    return has_service_key(system_env())
+
+
+def load_robot_name() -> str:
     """The advertised name, provisioned or not — and it must never raise.
 
     robot_info.json is created by the ROS app, so on a never-booted robot it does not
@@ -373,8 +389,7 @@ class BleProvisionerServer:
         if result.returncode != 0:
             # A nonzero exit is what separates "couldn't play it" from "played it and
             # you heard nothing" — the operator needs to know which.
-            stderr_lines = (result.stderr or "").strip().splitlines()
-            message = f"Playback failed: {stderr_lines[-1] if stderr_lines else 'unknown error'}"
+            message = f"Playback failed: {_stderr_summary(result, 'unknown error')}"
             self._send_notification_threadsafe({"command": command, "status": "error", "message": message})
             return
 
@@ -393,7 +408,7 @@ class BleProvisionerServer:
             "env": {key: value for key, value in env.items() if key != "INNATE_SERVICE_KEY"},
             # The mDNS name, not the system one: every other robot URL is <robot>.local.
             "hostname": f"{socket.gethostname()}.local",
-            "provisioned": is_provisioned(),
+            "provisioned": has_service_key(env),
         }
 
     def handle_set_identity(self, data):
@@ -419,7 +434,7 @@ class BleProvisionerServer:
     def _reject_identity_payload(self, payload):
         """Reason to refuse the blob, or None. Never quotes a value back at the client."""
         if is_provisioned():
-            return "Already provisioned — delete /etc/innate.env to de-provision"
+            return ALREADY_PROVISIONED_MSG
         if not isinstance(payload, dict):
             return "data must be an object"
 
@@ -480,11 +495,10 @@ class BleProvisionerServer:
             return
 
         if result.returncode != 0:
-            stderr_lines = (result.stderr or "").strip().splitlines()
             message = {
-                3: "Already provisioned — delete /etc/innate.env to de-provision",
-                4: "Bad identity payload",
-            }.get(result.returncode, stderr_lines[-1] if stderr_lines else "Identity helper failed")
+                EXIT_ALREADY_PROVISIONED: ALREADY_PROVISIONED_MSG,
+                EXIT_BAD_PAYLOAD: "Bad identity payload",
+            }.get(result.returncode, _stderr_summary(result, "Identity helper failed"))
             logger.error(f"Identity helper exited {result.returncode}: {message}")
             self._send_notification_threadsafe({"command": command, "status": "error", "message": message})
             return

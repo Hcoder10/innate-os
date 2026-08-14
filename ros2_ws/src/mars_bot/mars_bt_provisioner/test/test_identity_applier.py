@@ -15,12 +15,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from conftest import SERVICE_KEY, VALID_ENV
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 IDENTITY_DIR = REPO_ROOT / "scripts" / "identity"
-
-SERVICE_KEY = "innate-test-key-not-a-real-credential"
-VALID_ENV = f"INNATE_SERVICE_KEY={SERVICE_KEY}\nROBOT_ID=R7-41\nROBOT_NAME=MARS the 41st\nCOLOR_VARIANT=blue\n"
 
 
 def _load(name: str):

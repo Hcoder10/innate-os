@@ -28,6 +28,7 @@ sys.modules["bluezero.peripheral"] = MagicMock()
 
 import nmcli_utils  # noqa: E402
 import simple_bt_service  # noqa: E402
+from conftest import SERVICE_KEY, VALID_ENV  # noqa: E402
 from simple_bt_service import BleProvisionerServer  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -503,8 +504,6 @@ class TestConnectNetwork:
 # identify
 # ---------------------------------------------------------------------------
 
-SERVICE_KEY = "innate-test-key-not-a-real-credential"
-VALID_ENV = f"INNATE_SERVICE_KEY={SERVICE_KEY}\nROBOT_ID=R7-41\nROBOT_NAME=MARS the 41st\nCOLOR_VARIANT=blue\n"
 VALID_PAYLOAD = {"env": VALID_ENV, "password": "goodbot41"}
 
 
