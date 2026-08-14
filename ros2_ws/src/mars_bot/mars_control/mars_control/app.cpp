@@ -590,8 +590,8 @@ class AppControl : public rclcpp::Node {
             {"color_variant", env_or("COLOR_VARIANT", "black")},
             {"volume_percent", 80},
             {"microphone_enabled", true}};
-        const char* env_robot_id = std::getenv("ROBOT_ID");
-        if (env_robot_id && *env_robot_id) {
+        const std::string env_robot_id = env_or("ROBOT_ID", "");
+        if (!env_robot_id.empty()) {
             default_robot_info["robot_id"] = env_robot_id;
         }
 
