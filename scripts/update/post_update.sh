@@ -698,7 +698,20 @@ fi
 # -----------------------------------------------------------------------------
     # Apt dependencies
     log "Checking apt dependencies..."
-    
+
+    # curl, gpg and lsb_release add the ROS and Innate repos below (setup_repos.sh says
+    # so in its header). They are in no apt-dependency list because a robot has always
+    # had them — but a bare rootfs under --image-build has none of them, and the first
+    # thing that needs one is the ROS key, before any repo is configured.
+    if ! command -v curl >/dev/null || ! command -v gpg >/dev/null || ! command -v lsb_release >/dev/null; then
+        log "  Installing repo tooling (curl, gnupg, ca-certificates, lsb-release)..."
+        apt_update || log "  WARNING: apt update failed before installing repo tooling"
+        apt-get -o DPkg::Lock::Timeout=45 install -y curl gnupg ca-certificates lsb-release || {
+            log "  ERROR: could not install the tooling needed to add apt repositories"
+            exit 1
+        }
+    fi
+
     # Check if ROS 2 Humble is installed
     if ! dpkg -l | grep -q "^ii.*ros-humble-ros-base"; then
         log "  ROS 2 Humble not found. Installing ROS 2 Humble base..."
