@@ -480,7 +480,15 @@ def run_unprovision() -> int:
     log(f"removed {SYSTEM_ENV_PATH} and {BACKUP_ENV_PATH}")
 
     run_reset_info()
-    run_seed()
+    reseeded = run_seed() == 0
+    if not reseeded:
+        shout(
+            "COULD NOT RE-SEED A DEFAULT IDENTITY",
+            "",
+            f"{SYSTEM_ENV_PATH} is gone and nothing replaced it, so this robot falls",
+            "back to advertising a bare 'MARS' with no short id to tell it apart.",
+            "Re-run --seed once the module serial is readable.",
+        )
 
     # Last on purpose: a failure before this point leaves an unprovisioned robot the
     # operator can still log into, not a keyed one open on a published default.
@@ -505,7 +513,7 @@ def run_unprovision() -> int:
         "",
         "Keep it off shared networks until it has been re-provisioned.",
     )
-    return 0
+    return 0 if reseeded else 1
 
 
 # ---------------------------------------------------------------------------

@@ -222,6 +222,17 @@ class TestUnprovision:
         assert applier.run_unprovision() == 0
         assert applier.read_effective_env()["HARDWARE_REVISION"] == "R7"
 
+    def test_a_robot_that_cannot_reseed_says_so_and_fails(self, robot, capsys):
+        """With no serial there is no /etc/innate.env left at all, so the robot falls
+        back to a bare 'MARS' — reporting success would hide that until a scan."""
+        with patch.object(applier, "short_id_tool", return_value=None):
+            assert applier.run_unprovision() == 1
+
+        assert not robot.env_path.exists()
+        # The de-provision still has to finish: the key is gone either way.
+        assert robot.set_password.call_args[0][1] == "goodbot"
+        assert "COULD NOT RE-SEED" in capsys.readouterr().err
+
     def test_a_failed_password_reset_says_so_and_fails(self, robot, capsys):
         robot.set_password.side_effect = RuntimeError("chpasswd failed")
 
