@@ -1,0 +1,118 @@
+name: Robot ROS workspace (arm64 tarball)
+
+# Builds ros2_ws the way a robot builds it -- common *and* hardware apt
+# dependencies, plain `colcon build` -- on the native arm64 runner, and uploads
+# install/ as a tarball for innate-jetson's image build to unpack.
+#
+# Why this exists (INN-756): a fresh robot spends 246-323 s of every first boot
+# rebuilding this workspace, 80-90% of the whole post_update run. Shipping the
+# artifacts in the image removes that, and the artifacts have to be built
+# somewhere. Measured options: ~20 min under qemu on a 12-thread x86 laptop,
+# ~5.5 min natively on the Orin itself, minutes here.
+#
+# Why it is not sim/Dockerfile.ros-prebuilt, which already builds this workspace
+# on this runner: that one builds against the sim base with the *common*
+# dependency list only, so its install/ has no mars_cam, mars_arm or the rest of
+# the hardware tree. Same runner, same idea, different dependency closure.
+#
+# Known gap: mars_cam links against libnvvpi, whose own dependencies
+# (libnvpvaintf.so, libEGL_nvidia.so.0) live in the L4T BSP that
+# apply_binaries.sh unpacks into a flashing rootfs, and which NVIDIA's public
+# apt repo does not carry. It therefore fails to link here, and the summary
+# step below reports it rather than hiding it.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci/arm-workspace-tarball]
+
+jobs:
+  build:
+    if: github.repository == 'innate-inc/innate-os'
+    # Native arm64 larger runner (8 cores / 32 GB), the same one publish-sim-images
+    # uses. The container is jammy because ROS Humble is, and the runner image is not.
+    runs-on: my-medium-runner-arm
+    container:
+      image: ros:humble-ros-base
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Add innate and NVIDIA L4T apt repositories
+        shell: bash
+        run: |
+          set -euxo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends curl gnupg ca-certificates
+
+          curl -fsSL https://innate-inc.github.io/innate-packages/pubkey.gpg \
+            | gpg --dearmor -o /usr/share/keyrings/innate-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/innate-archive-keyring.gpg] https://innate-inc.github.io/innate-packages/ jammy main" \
+            > /etc/apt/sources.list.d/innate.list
+
+          # The marker keeps the nvidia-l4t postinst from trying to flash boot
+          # firmware, which is meaningless off a Jetson.
+          mkdir -p /opt/nvidia/l4t-packages
+          touch /opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall
+          curl -fsSL https://repo.download.nvidia.com/jetson/jetson-ota-public.asc \
+            -o /etc/apt/trusted.gpg.d/jetson-ota-public.asc
+          printf 'deb https://repo.download.nvidia.com/jetson/common r36.4 main\ndeb https://repo.download.nvidia.com/jetson/t234 r36.4 main\n' \
+            > /etc/apt/sources.list.d/nvidia-l4t-apt-source.list
+
+      - name: Install apt dependencies (common + hardware)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          apt-get update
+          grep -vE '^#|^$' ros2_ws/apt-dependencies.common.txt | xargs apt-get install -y
+          grep -vE '^#|^$' ros2_ws/apt-dependencies.hardware.txt | xargs apt-get install -y
+
+          # NVIDIA's libopencv-dev (jetson/common, 4.8.0) ships a CMake config
+          # pointing at /usr/lib/libopencv_core.so.4.8.0, but apt satisfies the
+          # runtime from Ubuntu universe at 4.5.4 -- so every OpenCV consumer
+          # (mars_arm, mars_cam, manipulation) dies at CMake configure. A flashing
+          # rootfs already carries NVIDIA's 4.8.0 runtime; here it must be asked for.
+          apt-get install -y libopencv
+          ldconfig
+
+      - name: colcon build
+        shell: bash
+        run: |
+          set -uxo pipefail
+          source /opt/ros/humble/setup.bash
+          cd ros2_ws
+          # Plain `colcon build`, matching post_update.sh, so install/ has the
+          # isolated layout the robot's launch scripts source.
+          colcon build --continue-on-error 2>&1 | tee ../colcon.log
+
+      - name: Package install/ as a tarball
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd ros2_ws
+          # Provenance: which revision produced these artifacts. post_update.sh is
+          # meant to compare this and skip its rebuild when it matches.
+          echo "${GITHUB_SHA}" > install/.built-from
+          tar -czf "../ros2_ws-install-${GITHUB_SHA:0:8}.tar.gz" install
+          ls -lh "../ros2_ws-install-${GITHUB_SHA:0:8}.tar.gz"
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: ros2_ws-install-arm64
+          path: ros2_ws-install-*.tar.gz
+          if-no-files-found: error
+
+      - name: Report what did not build
+        shell: bash
+        run: |
+          set -uo pipefail
+          grep -E '^Summary:|packages failed|not processed' colcon.log || true
+          # The tarball is uploaded either way, so a partial build stays
+          # inspectable -- but it must not pass as a green build.
+          if grep -q 'packages failed' colcon.log; then
+            echo "::error::some packages failed to build; see the summary above"
+            exit 1
+          fi
