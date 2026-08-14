@@ -80,12 +80,21 @@ jobs:
       - name: colcon build
         shell: bash
         run: |
-          set -uxo pipefail
+          set -x
+          # ROS's setup.bash reads unset variables, so `set -u` aborts on
+          # AMENT_TRACE_SETUP_FILES before colcon ever starts.
+          set +u
           source /opt/ros/humble/setup.bash
+          set -u
           cd ros2_ws
           # Plain `colcon build`, matching post_update.sh, so install/ has the
           # isolated layout the robot's launch scripts source.
-          colcon build --continue-on-error 2>&1 | tee ../colcon.log
+          #
+          # --continue-on-error keeps building past a failed package but still
+          # exits non-zero, and the step runs under GitHub's default `-e -o
+          # pipefail`. Swallow it here so the tarball is still packaged and
+          # uploaded; the summary step at the end decides whether the job passes.
+          colcon build --continue-on-error 2>&1 | tee ../colcon.log || true
 
       - name: Package install/ as a tarball
         shell: bash
