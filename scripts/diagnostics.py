@@ -47,6 +47,7 @@ SYSTEMD_SERVICE = "ros-app.service"
 SYSTEM_ENV_PATH = print_runtime_env.SYSTEM_ENV_PATH
 INNATE_OS_ROOT = os.environ.get("INNATE_OS_ROOT", os.path.expanduser("~/innate-os"))
 ROBOT_INFO_PATH = os.path.join(INNATE_OS_ROOT, "data", "robot_info.json")
+REPO_ENV_PATH = os.path.join(INNATE_OS_ROOT, ".env")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # OUTPUT FORMATTING
@@ -505,13 +506,23 @@ def check_identity():
     env_id, info_id, service_key = _local_identity()
 
     if not service_key:
-        warn(f"Unprovisioned: no INNATE_SERVICE_KEY in {SYSTEM_ENV_PATH} (robot_id {env_id or 'unset'})")
+        # An unreadable file parses as an empty one, so a provisioned robot whose
+        # /etc/innate.env lost its group would otherwise report a clean "Unprovisioned"
+        # — the same state that silently drops the key out of the runtime env.
+        if SYSTEM_ENV_PATH.exists() and not os.access(SYSTEM_ENV_PATH, os.R_OK):
+            fail(f"{SYSTEM_ENV_PATH} exists but this account cannot read it — the nodes lose the key too")
+            warn(f"  sudo chown root:$(id -gn) {SYSTEM_ENV_PATH} && sudo chmod 640 {SYSTEM_ENV_PATH}")
+            return False
+        warn(
+            f"Unprovisioned: no INNATE_SERVICE_KEY in {SYSTEM_ENV_PATH} or the repo .env (robot_id {env_id or 'unset'})"
+        )
         return True
 
     ok(f"Service key present, robot_id {env_id or 'unset'}")
 
     if info_id and env_id and info_id != env_id:
-        fail(f"robot_info.json says {info_id}, {SYSTEM_ENV_PATH} says {env_id}")
+        fail(f"robot_info.json says {info_id}, the merged env says {env_id}")
+        warn(f"  ROBOT_ID is read from {SYSTEM_ENV_PATH} with {REPO_ENV_PATH} layered on top — check both")
         warn(f"  Delete robot_info.json and restart ros-app, or restore {SYSTEM_ENV_PATH}.bak")
 
     try:
