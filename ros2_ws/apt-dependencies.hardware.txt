@@ -94,6 +94,8 @@ libusb-1.0-0-dev
 portaudio19-dev
 python3-serial
 python3-pygame
+# pipe.wav — the BLE provisioner's identify tune
+sound-icons
 
 # Disk SMART health (innate_logger reads it hourly via sudo smartctl)
 smartmontools

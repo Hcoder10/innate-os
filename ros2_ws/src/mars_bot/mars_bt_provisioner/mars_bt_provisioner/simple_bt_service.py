@@ -13,7 +13,8 @@ import sys
 import threading
 import time
 
-from bluezero import adapter, peripheral
+import dbus.service
+from bluezero import adapter, advertisement, peripheral
 from dotenv import dotenv_values
 from gi.repository import GLib
 from nmcli_utils import (
@@ -42,13 +43,41 @@ logger = logging.getLogger("BLE_Server")
 SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 CHARACTERISTIC_UUID = "abcdef01-1234-5678-1234-56789abcdef0"
 
+# BlueZ's default leaves ~1.28s between packets. A phone's default scan samples ~10% of
+# the time, so the two rarely coincide and the robot reads as absent.
+ADV_INTERVAL_MS = 100
+
+
+class IntervalAdvertisement(advertisement.Advertisement):
+    """An advertisement that also tells BlueZ how often to send it.
+
+    bluezero's GetAll hardcodes the property list it hands BlueZ, so the interval is
+    unreachable through it. Setting interval_ms to None falls back to BlueZ's default,
+    which is what a controller that rejects MGMT_ADV_PARAM_INTERVAL needs.
+    """
+
+    def __init__(self, advert_id, ad_type):
+        super().__init__(advert_id, ad_type)
+        self.interval_ms = ADV_INTERVAL_MS
+
+    # Spelled out rather than taken from bluezero.constants: the decorator runs at import,
+    # and the command-layer tests import this module with bluezero mocked out.
+    @dbus.service.method("org.freedesktop.DBus.Properties", in_signature="s", out_signature="a{sv}")
+    def GetAll(self, interface_name):
+        props = super().GetAll(interface_name)
+        if self.interval_ms is not None:
+            props["MinInterval"] = dbus.UInt32(self.interval_ms)
+            props["MaxInterval"] = dbus.UInt32(self.interval_ms)
+        return props
+
 # Path to the helper script for restarting services (adjust if moved)
 RESTART_SCRIPT_PATH = "/usr/local/bin/restart_robot_networking.sh"
 SYSTEM_ENV_PATH = "/etc/innate.env"
 
 INNATE_OS_ROOT = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
 IDENTITY_TOOL_PATH = os.path.join(INNATE_OS_ROOT, "scripts", "identity", "innate-identity")
-IDENTIFY_SOUND = os.path.join(INNATE_OS_ROOT, "config", "sounds", "turnon.mp3")
+# Ships in the sound-icons apt package, not the repo — see apt-dependencies.hardware.txt.
+IDENTIFY_SOUND = "/usr/share/sounds/sound-icons/pipe.wav"
 
 # The identity blob is validated here and again by the root helper. No size check: a
 # payload this layer can see already crossed the air, and the bound that matters is the
@@ -361,7 +390,7 @@ class BleProvisionerServer:
 
     # --- Identity ---
     def handle_identify(self, data):
-        """Handle identify command: play the boot tune so an operator can tell which
+        """Handle identify command: play a short tune so an operator can tell which
         physical robot this is. Must work with ros-app down, so it plays the file
         directly rather than asking the ROS stack."""
         command = data.get("command")
@@ -654,9 +683,13 @@ class BleProvisionerServer:
         try:
             # Create Peripheral - AdvertisingManager will set discoverable=True internally
             logger.info(f"Creating BLE peripheral with local_name='{ROBOT_NAME}'...")
+            # Peripheral reads this module attribute at construction, so swapping it here
+            # is the only seam for giving the advertisement an interval.
+            advertisement.Advertisement = IntervalAdvertisement
             self.peripheral = peripheral.Peripheral(
                 adapter_address, local_name=ROBOT_NAME, appearance=192
             )  # 192: Generic Computer
+            logger.info(f"Advertising interval set to {ADV_INTERVAL_MS}ms.")
             logger.info("Peripheral created successfully.")
 
             # Set connection callbacks
@@ -710,6 +743,15 @@ class BleProvisionerServer:
             _adv.register_ad_cb = lambda: logger.info("BLE advertisement registered successfully.")
 
             def _on_ad_error(error):
+                # BlueZ fails the whole registration when the controller cannot take an
+                # interval, so give up the interval before giving up on LE advertising.
+                advert = self.peripheral.advert
+                if getattr(advert, "interval_ms", None) is not None:
+                    logger.warning(f"Advertisement rejected with an interval set ({error}); retrying at the default.")
+                    advert.interval_ms = None
+                    self.peripheral.ad_manager.register_advertisement(advert, {})
+                    return
+
                 logger.error(f"BLE advertisement registration FAILED: {error}")
                 # Fallback: re-enable legacy discoverable so the device name
                 # is still visible even if LE advertising failed
