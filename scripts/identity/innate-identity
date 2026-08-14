@@ -49,6 +49,7 @@ LOCK_PATH = Path("/run/lock/innate-identity.lock")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SHORT_ID_TOOL = Path(__file__).resolve().parent / "robot-short-id"
+IDENTITY_TOOL = Path(__file__).resolve()
 
 MAX_ENV_BYTES = 4096
 MAX_PASSWORD_BYTES = 256
@@ -273,6 +274,13 @@ def unshadow_repo_key(new_key: str) -> None:
         log(f"commented out a stale INNATE_SERVICE_KEY in {repo_env}")
 
 
+def ros_app_running() -> bool:
+    try:
+        return subprocess.run(["systemctl", "is-active", "--quiet", "ros-app.service"], timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False  # an advisory check must never fail the reset it is advising on
+
+
 def run_reset_info() -> int:
     """Drop robot_info.json so ros-app re-creates it from the current environment.
 
@@ -281,6 +289,19 @@ def run_reset_info() -> int:
     """
     (REPO_ROOT / "data" / "robot_info.json").unlink(missing_ok=True)
     log("removed robot_info.json; ros-app will re-create it from the environment")
+
+    # A running ros-app re-creates the file from its launch-time environment within a
+    # second, so a hand-run reset silently does nothing — say so while it is still fixable.
+    if ros_app_running():
+        log("ros-app is running and re-creates it within a second — this reset will not stick")
+        log("to reset it for real:")
+        for step in (
+            "sudo systemctl stop ros-app",
+            f"sudo {IDENTITY_TOOL} --reset-info",
+            "sudo systemctl start ros-app        # wait ~45s",
+            "sudo systemctl restart ble-provisioner",
+        ):
+            log(f"  {step}")
     return 0
 
 
