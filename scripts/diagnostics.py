@@ -520,7 +520,10 @@ def check_identity():
         )
         return True
 
-    ok(f"Service key present, robot_id {env_id or 'unset'}")
+    # app.cpp fills robot_info.json only where a key is missing or null, so a stored id is
+    # the one the robot answers to and the env merge below it only ever seeds.
+    local_id = info_id or env_id
+    ok(f"Service key present, robot_id {local_id or 'unset'}")
 
     if info_id and env_id and info_id != env_id:
         fail(f"robot_info.json says {info_id}, the merged env says {env_id}")
@@ -542,9 +545,9 @@ def check_identity():
         warn(f"Auth service returned no robot id (keys: {sorted(cloud)})")
         return True
 
-    if env_id != cloud_id:
-        fail(f"This key belongs to {cloud_id}, but this robot calls itself {env_id or 'unset'}")
-        warn(f"  Re-provision: sudo rm {SYSTEM_ENV_PATH}, then provision.py from the laptop")
+    if local_id != cloud_id:
+        fail(f"This key belongs to {cloud_id}, but this robot calls itself {local_id or 'unset'}")
+        warn(f"  Ask for help — {SYSTEM_ENV_PATH} holds the service key, so do not delete it")
         return False
 
     ok(f"Key and stored identity agree: {cloud_id}")
