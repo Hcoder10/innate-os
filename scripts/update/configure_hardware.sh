@@ -41,8 +41,11 @@ REBOOT_REQUIRED=false
 # -----------------------------------------------------------------------------
 log "Checking I2S audio configuration..."
 
-# Only run on Jetson (check if jetson-io exists)
-if [ -f "/opt/nvidia/jetson-io/config-by-hardware.py" ]; then
+# jetson-io edits the *running* board's device tree, so offline it only fails noisily
+# ("Failed to get active rootfs partition"). First boot applies it.
+if [ "${IMAGE_BUILD:-false}" = true ]; then
+    log "  Skipping I2S overlay (--image-build)"
+elif [ -f "/opt/nvidia/jetson-io/config-by-hardware.py" ]; then
     # Check if Adafruit UDA1334A overlay is already configured
     if grep -q "UDA1334" /boot/extlinux/extlinux.conf 2>/dev/null; then
         log "  I2S audio overlay already configured"
@@ -111,7 +114,10 @@ fi
 log "Configuring Arducam microphone..."
 
 ARDUCAM_SCRIPT="$REPO_DIR/scripts/update/setup_arducam.sh"
-if [ -f "$ARDUCAM_SCRIPT" ]; then
+if [ "${IMAGE_BUILD:-false}" = true ]; then
+    # Probes for an attached card; there is none in a chroot.
+    log "  Skipping Arducam setup (--image-build)"
+elif [ -f "$ARDUCAM_SCRIPT" ]; then
     chmod +x "$ARDUCAM_SCRIPT"
     if "$ARDUCAM_SCRIPT"; then
         log "  Arducam setup completed successfully"

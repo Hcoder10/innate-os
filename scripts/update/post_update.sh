@@ -661,7 +661,7 @@ HARDWARE_REBOOT_REQUIRED=false
 HARDWARE_SCRIPT="$REPO_DIR/scripts/update/configure_hardware.sh"
 if [ -f "$HARDWARE_SCRIPT" ]; then
     chmod +x "$HARDWARE_SCRIPT"
-    "$HARDWARE_SCRIPT" "$REPO_DIR" 2>&1 | tee -a "$LOG_FILE"
+    IMAGE_BUILD="$IMAGE_BUILD" "$HARDWARE_SCRIPT" "$REPO_DIR" 2>&1 | tee -a "$LOG_FILE"
     HARDWARE_EXIT_CODE=${PIPESTATUS[0]}
     if [ $HARDWARE_EXIT_CODE -eq 0 ]; then
         log "  Hardware configuration completed successfully"
