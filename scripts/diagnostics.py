@@ -45,7 +45,9 @@ TMUX_SESSION = "ros_nodes"
 SYSTEMD_SERVICE = "ros-app.service"
 
 SYSTEM_ENV_PATH = print_runtime_env.SYSTEM_ENV_PATH
-INNATE_OS_ROOT = os.environ.get("INNATE_OS_ROOT", os.path.expanduser("~/innate-os"))
+# Fall back to this checkout rather than ~/innate-os: with the variable unset, guessing
+# the home directory reads another checkout's env and reports on the wrong robot config.
+INNATE_OS_ROOT = os.environ.get("INNATE_OS_ROOT") or str(Path(__file__).resolve().parent.parent)
 ROBOT_INFO_PATH = os.path.join(INNATE_OS_ROOT, "data", "robot_info.json")
 REPO_ENV_PATH = os.path.join(INNATE_OS_ROOT, ".env")
 
