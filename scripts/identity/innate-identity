@@ -68,6 +68,10 @@ FORBIDDEN_PREFIXES = ("LD_", "DYLD_")
 EXIT_ALREADY_PROVISIONED = 3
 EXIT_BAD_PAYLOAD = 4
 
+# Says so in the name an operator reads off a BLE scan, and namespaces the id so a
+# default can never be mistaken for an auth id.
+UNPROVISIONED = "unprovisioned"
+
 
 class PayloadError(Exception):
     """The blob is malformed — the caller's fault, not the robot's state."""
@@ -174,9 +178,8 @@ def short_id_tool(*, serial: str | None = None, raw_serial: bool = False) -> str
 def seed_defaults(serial: str) -> dict[str, str]:
     suffix = short_id_tool(serial=serial)
     return {
-        "ROBOT_NAME": f"MARS-{suffix.upper()}",
-        # Namespaced so a default can never be mistaken for an auth id.
-        "ROBOT_ID": f"unprovisioned-{suffix}",
+        "ROBOT_NAME": f"MARS-{suffix.upper()}-{UNPROVISIONED}",
+        "ROBOT_ID": f"{UNPROVISIONED}-{suffix}",
         "MODULE_SERIAL": serial,
     }
 
@@ -188,7 +191,7 @@ def needs_seed(env: dict[str, str]) -> bool:
     if has_service_key(env):
         return False
     robot_id = env.get("ROBOT_ID", "").strip()
-    return not robot_id or robot_id.startswith("unprovisioned-")
+    return not robot_id or robot_id.startswith(f"{UNPROVISIONED}-")
 
 
 def run_seed() -> int:

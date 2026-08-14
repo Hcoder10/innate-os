@@ -230,7 +230,7 @@ class TestSeed:
         assert applier.run_seed() == 0
 
         env = applier.parse_env_text(robot.env_path.read_text())
-        assert env["ROBOT_NAME"] == "MARS-A1B2"
+        assert env["ROBOT_NAME"] == "MARS-A1B2-unprovisioned"
         assert env["ROBOT_ID"] == "unprovisioned-a1b2"
         assert env["MODULE_SERIAL"] == "1424523016164"
 
@@ -268,4 +268,4 @@ class TestSeed:
 
         assert applier.run_seed() == 0
 
-        assert applier.parse_env_text(robot.env_path.read_text())["ROBOT_NAME"] == "MARS-A1B2"
+        assert applier.parse_env_text(robot.env_path.read_text())["ROBOT_NAME"] == "MARS-A1B2-unprovisioned"
