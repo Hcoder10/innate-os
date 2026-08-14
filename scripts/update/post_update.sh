@@ -795,9 +795,18 @@ fi
         TORCHAUDIO_VERSION="2.8.0"
         
         CUDA_AVAILABLE=$(sudo -u "$ACTUAL_USER" python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null || echo "False")
+        # Under --image-build there is no GPU to report CUDA, so this is always False;
+        # installing the wheels is exactly what the image wants.
         if [[ "$CUDA_AVAILABLE" != "True" ]]; then
             log "  PyTorch CUDA not available, reinstalling from Jetson AI Lab..."
             sudo -u "$ACTUAL_USER" pip3 uninstall -y torch torchvision torchaudio 2>/dev/null || true
+            # torch needs sympy>=1.13.3, and pip refuses to uninstall apt's
+            # distutils-installed python3-sympy ("cannot accurately determine which
+            # files belong to it"), which aborts the whole torch install. Shadow it in
+            # /usr/local instead. Scoped to sympy: as a blanket flag --ignore-installed
+            # would reinstall torch's entire dependency tree, numpy included.
+            sudo -u "$ACTUAL_USER" pip3 install --no-cache-dir --ignore-installed "sympy>=1.13.3" \
+                || log "  WARNING: sympy pre-install failed; torch install may follow"
             sudo -u "$ACTUAL_USER" pip3 install --no-cache-dir \
                 "torch==$TORCH_VERSION" \
                 "torchvision==$TORCHVISION_VERSION" \
