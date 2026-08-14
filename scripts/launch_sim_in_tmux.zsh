@@ -143,7 +143,10 @@ echo "Started Foxglove bridge (ws :${SIM_FOXGLOVE_PORT:-8765})..."
 # Shares the foxglove window: both are passive observers, and neither prints
 # anything worth its own pane.
 tmux split-window -t "${TMUX_TARGET_PREFIX}:foxglove" -h
-tmux send-keys -t "${TMUX_TARGET_PREFIX}:foxglove.1" "ros2 launch innate_logger sim_logger.launch.py" C-m
+# The cd is load-bearing: compose mounts the generated env as a FILE at
+# ~/innate-os/.env rather than passing env_file, so the node's find_dotenv has
+# to be able to walk up to it.
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:foxglove.1" "cd ~/innate-os && ros2 launch innate_logger sim_logger.launch.py" C-m
 echo "Started sim usage logger..."
 
 # Select the rosbridge-app window
