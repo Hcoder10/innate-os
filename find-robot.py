@@ -26,8 +26,10 @@ CONNECT_TIMEOUT_S = 12
 bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
 
 
-def call(path: str, iface: str, method: str, args: GLib.Variant | None = None) -> GLib.Variant:
-    return bus.call_sync("org.bluez", path, iface, method, args, None, Gio.DBusCallFlags.NONE, -1, None)
+def call(
+    path: str, iface: str, method: str, args: GLib.Variant | None = None, timeout_ms: int = -1
+) -> GLib.Variant:
+    return bus.call_sync("org.bluez", path, iface, method, args, None, Gio.DBusCallFlags.NONE, timeout_ms, None)
 
 
 def managed_objects() -> dict:
@@ -36,6 +38,14 @@ def managed_objects() -> dict:
 
 def prop(path: str, iface: str, name: str):
     return call(path, "org.freedesktop.DBus.Properties", "Get", GLib.Variant("(ss)", (iface, name)))[0]
+
+
+def try_prop(path: str, iface: str, name: str):
+    """A property BlueZ has not learned yet is absent, not empty."""
+    try:
+        return prop(path, iface, name)
+    except GLib.Error:
+        return None
 
 
 def wait_until(predicate, timeout_s: int):
@@ -69,29 +79,20 @@ def gatt_device_name(device_path: str) -> str | None:
     return None
 
 
-def connect(device_path: str) -> bool:
-    """Connecting to a 1280 ms advertiser routinely loses the first race; one retry wins it."""
-    for attempt in range(2):
-        try:
-            call(device_path, "org.bluez.Device1", "Connect")
-            return True
-        except GLib.Error:
-            if attempt == 0:
-                wait_until(lambda: False, 2)
-    return False
-
-
 def resolve_name(device_path: str) -> str | None:
     """Connect just long enough to learn the robot's name, then let it go.
 
-    BlueZ usually fills in Name from the GAP read during connection setup; the explicit
-    characteristic read is the fallback for when it does not.
+    A Connect that outlives the D-Bus reply still lands, so the error is ignored and the
+    name polled for regardless. ServicesResolved never turns true against these robots,
+    so it cannot be the thing waited on; BlueZ fills in Name from the GAP read within a
+    second or two of the link coming up, and the characteristic read is the fallback.
     """
-    if not connect(device_path):
-        return None
     try:
-        wait_until(lambda: prop(device_path, "org.bluez.Device1", "ServicesResolved"), CONNECT_TIMEOUT_S)
-        name = prop(device_path, "org.bluez.Device1", "Name")
+        call(device_path, "org.bluez.Device1", "Connect", timeout_ms=CONNECT_TIMEOUT_S * 1000)
+    except GLib.Error:
+        pass
+    try:
+        name = wait_until(lambda: try_prop(device_path, "org.bluez.Device1", "Name"), CONNECT_TIMEOUT_S)
         return name or gatt_device_name(device_path)
     except GLib.Error:
         return None
@@ -149,7 +150,9 @@ if not robots:
     raise SystemExit(1)
 
 for path, robot in sorted(robots.items(), key=lambda kv: -(kv[1]["rssi"] or -999)):
-    if not robot["name"] and "--fast" not in sys.argv:
+    for _ in range(2 if "--fast" not in sys.argv else 0):
+        if robot["name"]:
+            break
         robot["name"] = resolve_name(path)
     rssi = robot["rssi"] if robot["rssi"] is not None else "?"
     print(f"{robot['address']}  rssi={rssi:>4}  {robot['name'] or '(name unavailable)'}")
