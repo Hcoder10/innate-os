@@ -643,6 +643,24 @@ else
     log "  Skipping SSH keepalive config (source or sshd_config.d not present)"
 fi
 
+# -----------------------------------------------------------------------------
+# 3c. Persistent journald storage.
+# Default is volatile, so a robot that reboots after a crash loses the journal
+# explaining the crash — exactly the log worth having.
+# -----------------------------------------------------------------------------
+log "Configuring persistent journald logging..."
+JOURNALD_CONF="/etc/systemd/journald.conf"
+if [ -f "$JOURNALD_CONF" ]; then
+    sed -i \
+        -e 's/^#\?Storage=.*/Storage=persistent/' \
+        -e 's/^#\?SystemMaxUse=.*/SystemMaxUse=10G/' \
+        "$JOURNALD_CONF"
+    systemctl restart systemd-journald
+    log "  Persistent journal enabled (max 10G)"
+else
+    log "  WARNING: $JOURNALD_CONF not found, skipping"
+fi
+
 # 4. Configure passwordless shutdown for ROS app
 log "Configuring passwordless shutdown..."
 ACTUAL_USER=${SUDO_USER:-$USER}
