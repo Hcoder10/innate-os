@@ -7,7 +7,8 @@ Four modes, one file:
 
   --seed        serial-derived defaults for a robot nobody has provisioned yet, so
                 ros-app has a single creation path for robot_info.json. Run from
-                launch_ros_in_tmux.sh right before the runtime env is evaluated.
+                innate-seed.service, ordered before both readers of the env file —
+                ros-app and the BLE provisioner, which advertises the seeded name.
   --write       the real identity, one JSON object on stdin: {env, password}. `env` is
                 /etc/innate.env verbatim as the laptop composed it — this script never
                 derives, resolves or looks anything up. Accepted only while the robot

@@ -546,35 +546,55 @@ class TestIdentify:
 
 
 class TestGetIdentity:
-    """Identity has its own command precisely so replies stay small — and it never
-    carries the service key."""
+    """The env file goes back for the client to parse — every key in it but the one
+    that is a secret."""
 
-    @patch.object(simple_bt_service, "short_id_tool", return_value="a1b2")
     @patch.object(simple_bt_service, "system_env", return_value={})
-    def test_unprovisioned_robot(self, mock_env, mock_tool):
+    def test_unprovisioned_robot(self, mock_env):
         server = _make_server()
 
         resp = _send_command(server, {"command": "get_identity"})
 
         assert resp["status"] == "success"
         assert resp["provisioned"] is False
-        assert resp["short_id"] == "a1b2"
-        assert resp["robot_id"] is None
+        assert resp["env"] == {}
 
-    @patch.object(simple_bt_service, "short_id_tool", return_value="a1b2")
     @patch.object(
         simple_bt_service,
         "system_env",
         return_value={"INNATE_SERVICE_KEY": SERVICE_KEY, "ROBOT_ID": "R7-41", "MODULE_SERIAL": "1424523016164"},
     )
-    def test_provisioned_robot_never_echoes_the_key(self, mock_env, mock_tool):
+    def test_provisioned_robot_never_echoes_the_key(self, mock_env):
         server = _make_server()
 
         resp = _send_command(server, {"command": "get_identity"})
 
         assert resp["provisioned"] is True
-        assert resp["robot_id"] == "R7-41"
+        assert resp["env"] == {"ROBOT_ID": "R7-41", "MODULE_SERIAL": "1424523016164"}
         assert SERVICE_KEY not in json.dumps(resp)
+
+    @patch.object(
+        simple_bt_service,
+        "system_env",
+        return_value={"COLOR_VARIANT": "blue", "SOME_KEY_ADDED_LATER": "1"},
+    )
+    def test_echoes_keys_it_has_never_heard_of(self, mock_env):
+        """A denylist of one: a key added to the env file reaches the client without a
+        robot-side change, which is the whole point of returning the env."""
+        server = _make_server()
+
+        resp = _send_command(server, {"command": "get_identity"})
+
+        assert resp["env"] == {"COLOR_VARIANT": "blue", "SOME_KEY_ADDED_LATER": "1"}
+
+    @patch.object(simple_bt_service, "system_env", return_value={})
+    @patch.object(simple_bt_service.socket, "gethostname", return_value="mars-a1b2")
+    def test_hostname_is_the_mdns_name(self, mock_hostname, mock_env):
+        server = _make_server()
+
+        resp = _send_command(server, {"command": "get_identity"})
+
+        assert resp["hostname"] == "mars-a1b2.local"
 
 
 # ---------------------------------------------------------------------------
@@ -707,19 +727,10 @@ class TestLoadRobotName:
         ):
             assert simple_bt_service.load_robot_name() == "MARS the 41st"
 
-    def test_falls_back_to_the_module_serial(self, tmp_path):
-        with (
-            patch.object(simple_bt_service, "INNATE_OS_ROOT", str(tmp_path)),
-            patch.object(simple_bt_service, "SYSTEM_ENV_PATH", str(tmp_path / "missing.env")),
-            patch.object(simple_bt_service, "short_id_tool", return_value="a1b2"),
-        ):
-            assert simple_bt_service.load_robot_name() == "MARS-A1B2"
-
     def test_survives_an_unreadable_everything(self, tmp_path):
         with (
             patch.object(simple_bt_service, "INNATE_OS_ROOT", str(tmp_path)),
             patch.object(simple_bt_service, "SYSTEM_ENV_PATH", str(tmp_path / "missing.env")),
-            patch.object(simple_bt_service, "short_id_tool", return_value=None),
         ):
             assert simple_bt_service.load_robot_name() == "MARS"
 

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import subprocess
 import sys
 from pathlib import Path
 
@@ -30,26 +29,15 @@ def module_serial() -> str | None:
     return serial or None
 
 
-def _mac_fallback() -> str:
-    """The BT adapter MAC, for a board whose device tree has no serial."""
-    try:
-        out = subprocess.run(["hciconfig", "hci0"], capture_output=True, text=True, timeout=5).stdout
-    except (OSError, subprocess.SubprocessError):
-        out = ""
-    mac = next((token for token in out.split() if token.count(":") == 5), None)
-    if mac is None:
-        raise SystemExit("no device-tree serial and no Bluetooth adapter to fall back on")
-    print("warning: no device-tree serial; falling back to the BT adapter MAC", file=sys.stderr)
-    return mac
-
-
 def short_id(serial: str | None = None) -> str:
     """Four lowercase hex characters identifying this robot.
 
-    The serial names the compute module, so it survives an M.2 Wi-Fi/BT card swap —
-    which is why the adapter MAC is only a fallback.
+    The serial names the compute module, so the id survives an M.2 Wi-Fi/BT card swap.
     """
-    return hashlib.sha256((serial or module_serial() or _mac_fallback()).encode()).hexdigest()[:4]
+    serial = serial or module_serial()
+    if serial is None:
+        raise SystemExit("no device-tree serial")
+    return hashlib.sha256(serial.encode()).hexdigest()[:4]
 
 
 def main() -> int:

@@ -890,7 +890,7 @@ cat > "$SUDOERS_FILE" << EOF
 # Restart robot networking (called by BLE provisioner)
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/local/bin/restart_robot_networking.sh
 
-# Identity applier: --seed from the launch script, --write from the BLE provisioner.
+# Identity applier: --write from the BLE provisioner (--seed runs as root, from its unit).
 $ACTUAL_USER ALL=(ALL) NOPASSWD: $REPO_DIR/scripts/identity/innate-identity
 
 # Reboot after BLE provisioning writes an identity (the reply goes out first).

@@ -47,7 +47,6 @@ SYSTEM_ENV_PATH = "/etc/innate.env"
 
 INNATE_OS_ROOT = os.environ.get("INNATE_OS_ROOT", os.path.join(os.path.expanduser("~"), "innate-os"))
 IDENTITY_TOOL_PATH = os.path.join(INNATE_OS_ROOT, "scripts", "identity", "innate-identity")
-SHORT_ID_TOOL_PATH = os.path.join(INNATE_OS_ROOT, "scripts", "identity", "robot-short-id")
 IDENTIFY_SOUND = os.path.join(INNATE_OS_ROOT, "config", "sounds", "turnon.mp3")
 
 # The identity blob is validated here and again by the root helper. No size check: a
@@ -74,26 +73,14 @@ def is_provisioned():
     return bool((system_env().get("INNATE_SERVICE_KEY") or "").strip())
 
 
-def short_id_tool(raw_serial=False):
-    """Ask robot-short-id for the four hex chars, or for the raw module serial. None
-    when it cannot answer. Shelling out rather than deriving keeps one implementation,
-    which is what stops the advertised name and the seeded env from disagreeing."""
-    try:
-        flags = ["--module-serial"] if raw_serial else []
-        result = subprocess.run([SHORT_ID_TOOL_PATH, *flags], capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip() or None
-
-
 def load_robot_name():
     """The advertised name, provisioned or not — and it must never raise.
 
     robot_info.json is created by the ROS app, so on a never-booted robot it does not
     exist yet; with Restart=on-failure that used to crash-loop this service on exactly
-    the robot that needs BLE most.
+    the robot that needs BLE most. Behind it, innate-seed.service is ordered before this
+    one, so the env file holds a name by the time we read it — bare "MARS" is only what
+    is left when the seed refused for want of a device-tree serial.
     """
     try:
         with open(os.path.join(INNATE_OS_ROOT, "data", "robot_info.json")) as f:
@@ -103,12 +90,7 @@ def load_robot_name():
     except (OSError, ValueError):
         pass
 
-    name = (system_env().get("ROBOT_NAME") or "").strip()
-    if name:
-        return name
-
-    suffix = short_id_tool()
-    return f"MARS-{suffix.upper()}" if suffix else "MARS"
+    return (system_env().get("ROBOT_NAME") or "").strip() or "MARS"
 
 
 ROBOT_NAME = load_robot_name()
@@ -398,7 +380,8 @@ class BleProvisionerServer:
         self._send_notification_threadsafe({"command": command, "status": "success", "message": "Played identify tune"})
 
     def handle_get_identity(self, data):
-        """Handle get_identity command. Never echoes the service key."""
+        """Handle get_identity command. /etc/innate.env goes back as-is for the client to
+        parse, minus the one value in it that is a secret."""
         command = data.get("command")
         logger.info(f"Handling {command} command")
         env = system_env()
@@ -406,12 +389,9 @@ class BleProvisionerServer:
         return {
             "command": command,
             "status": "success",
-            "short_id": short_id_tool(),
-            # A robot whose ros-app has never launched has no seeded env file yet.
-            "module_serial": env.get("MODULE_SERIAL") or short_id_tool(raw_serial=True),
-            "robot_id": env.get("ROBOT_ID"),
-            "robot_name": ROBOT_NAME,
-            "hostname": socket.gethostname(),
+            "env": {key: value for key, value in env.items() if key != "INNATE_SERVICE_KEY"},
+            # The mDNS name, not the system one: every other robot URL is <robot>.local.
+            "hostname": f"{socket.gethostname()}.local",
             "provisioned": is_provisioned(),
         }
 

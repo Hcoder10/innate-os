@@ -4,11 +4,6 @@
 SESSION_NAME="ros_nodes"
 ROS_WS_PATH="$INNATE_OS_ROOT/ros2_ws"
 DDS_SETUP_SCRIPT="$INNATE_OS_ROOT/config/dds/setup_dds.zsh"
-# Give an unprovisioned robot its serial-derived defaults before the runtime env is
-# read, so ros-app has one creation path for robot_info.json either way. Never
-# blocking: a repo updated ahead of post_update.sh has no sudoers grant yet, and a
-# password prompt here would hang the launch.
-sudo -n "$INNATE_OS_ROOT/scripts/identity/innate-identity" --seed >/dev/null 2>&1 || true
 
 RUNTIME_ENV_EXPORTS=$(python3 "$INNATE_OS_ROOT/scripts/print_runtime_env.py" --shell 2>/dev/null || true)
 WEBAPP_URI_SCRIPT="$INNATE_OS_ROOT/scripts/webapp_uri.zsh"
