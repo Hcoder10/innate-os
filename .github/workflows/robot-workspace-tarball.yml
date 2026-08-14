@@ -118,10 +118,15 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          grep -E '^Summary:|packages failed|not processed' colcon.log || true
+          grep -E '^Summary:|package[s]? failed|not processed|^Failed   <<<' colcon.log || true
           # The tarball is uploaded either way, so a partial build stays
           # inspectable -- but it must not pass as a green build.
-          if grep -q 'packages failed' colcon.log; then
-            echo "::error::some packages failed to build; see the summary above"
+          #
+          # Keyed on colcon's per-package failure lines, not on its summary:
+          # the summary says "1 package failed" in the singular, so matching
+          # "packages failed" let a single casualty through as green -- which is
+          # exactly the case this job exists to catch.
+          if grep -q '^Failed   <<<' colcon.log; then
+            echo "::error::some packages failed to build; see the list above"
             exit 1
           fi
