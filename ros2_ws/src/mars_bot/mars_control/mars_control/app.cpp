@@ -621,7 +621,9 @@ class AppControl : public rclcpp::Node {
         // Ensure all default keys exist in the JSON, save if any were missing
         bool updated = false;
         for (auto& [key, default_value] : default_robot_info.items()) {
-            if (!robot_info.contains(key)) {
+            // An explicit null reads as present to contains(), so a robot_info.json written
+            // before ROBOT_ID reached the environment would never pick the value up.
+            if (!robot_info.contains(key) || (robot_info[key].is_null() && !default_value.is_null())) {
                 robot_info[key] = default_value;
                 updated = true;
             }
