@@ -2,6 +2,54 @@
   ros__parameters:
     motor_sound:
       enabled: true
+
+      # Which costume the acceleration wears. "motor" is the electric whine
+      # modelled in motor_synth; the rest live in accel_voices and are pure
+      # character. Switchable live, no rebuild:
+      #   ros2 param set /motor_sound motor_sound.voice purr
+      #
+      # lip_trill is the default: a mouth going brrrrrr. It is the one voice
+      # nobody can hear as a *wrong* motor, because it never claimed to be one,
+      # and it needs no shipped asset -- so it cannot be silenced by a missing
+      # file. Everything from base_hz down tunes "motor" only.
+      #
+      #   motor        the electric whine (below tunes only this one)
+      #   lip_trill    a mouth going brrrrrr
+      #   mars_voice   the robot's own voice, flapped into that trill
+      #   mars_song    the same clip sung up a scale
+      #   kazoo        a hum with a membrane rattling on it
+      #   whistle      someone whistling as they zoom past
+      #   choir        a tiny choir going "ah"
+      #   jetski       Swiss Army Man propulsion
+      #   acappella    Swiss Army Man's all-mouth score
+      #   music_box    pentatonic plinks, climbing and quickening
+      #   harp         glissando runs that reset and climb
+      #   disco        four on the floor, BPM tied to road speed
+      #   chiptune     8-bit racer
+      #   bagpipe      fixed drone, climbing chanter
+      #   gamelan      shimmering bronze, struck in beating pairs
+      #   purr         a large cat, pleased about the speed
+      #   steam_train  chuffs that quicken, whistle at the top
+      #   theremin     wavering swoop, sliding into every pitch
+      #   hyperdrive   detuned saws opening up
+      #   throat       one drone, a whistling overtone climbing its harmonics
+      #   shepard      a tone that rises forever and never gets higher
+      #   risset       a beat that speeds up forever and never arrives
+      #   doppler      it flies past you, over and over
+      #   tape         a tape transport settling as it comes up to speed
+      #   spoke_card   a playing card in the wheel, flapping into a buzz
+      #   geiger       randomly spaced clicks, denser with speed
+      #   panting      the robot is out of breath, and getting worse
+      #   heartbeat    its pulse is your speedometer
+      #   gallop       hoofbeats, fired faster rather than higher
+      #   quack        a duck, increasingly concerned about the speed
+      #   boing        a cartoon spring
+      #   didgeridoo   a circular-breathing drone, revved
+      #   whale        a humpback, pitched up until the speaker carries it
+      #   f1           a real race engine
+      #   crowd        a stadium cheering, louder with speed
+      voice: "lip_trill"
+
       volume: 0.50                # 0..1, before the ALSA softvol Master level
       idle_when_stopped: true     # keep the motor rumbling while parked (in Mad mode)
       # The engine only runs in Mad mode: the node watches /robot/info's
@@ -10,14 +58,16 @@
       only_in_mad_mode: true
 
       # Pitch. Within each gear the whine sweeps base_hz to top_hz; the ratio
-      # between them is the size of the sweep per gear (5.3x, ~29 semitones).
+      # between them is the size of the sweep per gear (2.5x, ~16 semitones).
+      # Kept in the low register: at 450 the partial stack tops out near
+      # 3.3 kHz, where 950 pushed it to ~7 kHz and read as shriek.
       base_hz: 180.0
-      top_hz: 950.0
+      top_hz: 450.0
 
-      # Gearbox: fraction of max_speed where each gear tops out. The whine
-      # snaps back at each shift and sweeps again; the brief cut
-      # (shift_seconds) is the strongest "it is accelerating" cue there is.
-      gear_tops: [0.50, 1.00]
+      # Gearbox: fraction of max_speed where each gear tops out. A single
+      # gear means one slow sweep across the whole speed range with no
+      # snap-backs; shift_seconds only matters with two or more entries.
+      gear_tops: [1.00]
       shift_seconds: 0.12
 
       # Drive model. Mad mode doubles the motion_control cap (0.4 * 2.0), so
@@ -47,13 +97,20 @@
       growl_depth: 0.50
       growl_noise_level: 0.20
 
+      # High-rev snarl: past snarl_start (fraction of the speed range) the
+      # stack brightens, a sub-octave undertone and the growl throb fade in,
+      # and the saturator is driven into grit -- redline roars with low-end
+      # power instead of sitting sterile at its final pitch. depth 0 disables.
+      snarl_start: 0.55
+      snarl_depth: 1.0
+
       rolling_level: 0.14         # bearing and wheel noise, scaled by speed
 
       # Tire screech on hard turns. Swells in once commanded yaw passes
       # screech_min_turn (a fraction of max_yaw_rate) and peaks at
       # max_yaw_rate; screech_level 0 removes it entirely.
-      screech_level: 0.55
-      screech_hz: 1100.0          # squeal fundamental; real squeal sits around 0.7-1.3 kHz
+      screech_level: 0.40
+      screech_hz: 800.0           # squeal fundamental, low end of the real 0.7-1.3 kHz range
       max_yaw_rate: 2.0           # rad/s counting as cornering flat out (Mad's turn cap)
       screech_min_turn: 0.40
 

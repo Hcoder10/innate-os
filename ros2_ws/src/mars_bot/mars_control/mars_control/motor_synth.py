@@ -19,7 +19,8 @@ The character on top of the bare stack:
 * A virtual gearbox. Pitch sweeps up, snaps back at a shift, and sweeps
   again -- the shift gap is the strongest 'it is accelerating' cue there is,
   and it survived from the engine versions because it was the one part of
-  them that always worked.
+  them that always worked. The default is now a single gear: one slow sweep
+  across the whole speed range, tuned for the low register.
 * Brush flutter. A brushed motor's commutator chops the current, which reads
   as amplitude tremolo at a fraction of the whine frequency. That flutter is
   most of the difference between a sterile oscillator and something that
@@ -28,6 +29,10 @@ The character on top of the bare stack:
   low-mid strain noise, both scaled by load -- so flooring it rumbles and
   cruising is smooth. Real rumble is below the speaker's floor, so it is
   delivered as amplitude modulation, the same trick as the V8's lope.
+* High-rev snarl. Past ``snarl_start`` the stack brightens, a sub-octave
+  undertone and the growl throb fade in, and the saturator is driven
+  harder -- so the top of the range roars with low-end power instead of
+  sitting sterile at its final pitch.
 * Vibrato: a shallow pitch wobble so a held speed still breathes.
 * The motor's speed follows the robot's through a lightly underdamped spring,
   so pulling away overshoots and coming to rest glides down.
@@ -76,16 +81,19 @@ class MotorConfig:
 
     base_hz: float = 180.0
     """Whine frequency at the bottom of a gear."""
-    top_hz: float = 950.0
+    top_hz: float = 450.0
     """Whine frequency at the top of a gear. The ratio to base_hz is the size
-    of each gear's sweep -- the main 'shows speed' control."""
+    of each gear's sweep -- the main 'shows speed' control. Kept low on
+    purpose: the 7.3x partial puts the stack's ceiling near 3.3 kHz here,
+    where sweeping to 950 Hz pushed it to ~7 kHz and read as shriek."""
     max_speed: float = 0.4
     """Road speed in m/s at the top of top gear. Matches
     ``motion_control.yaml``'s ``max_speed``."""
 
-    gear_tops: tuple[float, ...] = (0.5, 1.0)
+    gear_tops: tuple[float, ...] = (1.0,)
     """Fraction of ``max_speed`` at which each gear tops out. Within a gear
-    the whine sweeps base_hz to top_hz, then drops back at the shift."""
+    the whine sweeps base_hz to top_hz, then drops back at the shift; a
+    single entry means one gradual sweep over the full speed range."""
     shift_seconds: float = 0.12
     """Cut duration on a gear change. The gap is what reads as a shift."""
 
@@ -119,14 +127,23 @@ class MotorConfig:
     """Low-mid strain noise under load, the motor equivalent of an engine
     roaring on the throttle. Banded above the speaker floor."""
 
+    snarl_start: float = 0.55
+    """Fraction of the speed range where the high-rev snarl begins fading in."""
+    snarl_depth: float = 1.0
+    """How hard the top of the range snarls: brightens the stack, blends in a
+    sub-octave undertone and the growl throb, and drives the saturator into
+    grit. 0 disables; the snarl adds body below the whine, never above it,
+    so redline gets mightier without getting shriller."""
+
     rolling_level: float = 0.14
     """Broadband rolling and bearing noise, scaled by speed."""
     rolling_band_hz: tuple[float, float] = (300.0, 3000.0)
 
-    screech_level: float = 0.55
+    screech_level: float = 0.40
     """Tire screech loudness when cornering flat out. Zero removes it."""
-    screech_hz: float = 1100.0
-    """Squeal fundamental. Real squeal sits around 0.7-1.3 kHz."""
+    screech_hz: float = 800.0
+    """Squeal fundamental. Real squeal sits around 0.7-1.3 kHz; the low end
+    of that range keeps it from being the piercing part of the mix."""
     max_yaw_rate: float = 2.0
     """Commanded yaw in rad/s that counts as cornering flat out. Matches Mad
     mode's turn cap (motion_control's 1.0 rad/s at Mad's 2x scale)."""
@@ -163,7 +180,17 @@ def is_mad_scale(info: dict) -> bool:
     return False
 
 
-def _bandpass_kernel(sample_rate: int, low_hz: float, high_hz: float, taps: int = NOISE_TAPS) -> np.ndarray:
+def clamp01(value: float) -> float:
+    return min(max(value, 0.0), 1.0)
+
+
+def _smoothstep(x: float) -> float:
+    """0..1 with eased ends, so the snarl fades in rather than switching."""
+    x = clamp01(x)
+    return x * x * (3.0 - 2.0 * x)
+
+
+def bandpass_kernel(sample_rate: int, low_hz: float, high_hz: float, taps: int = NOISE_TAPS) -> np.ndarray:
     """Windowed-sinc bandpass, normalised so white noise through it comes out
     at unit RMS. Built once; numpy has no IIR filter and a per-sample Python
     loop would be far too slow for the audio thread."""
@@ -177,8 +204,22 @@ def _bandpass_kernel(sample_rate: int, low_hz: float, high_hz: float, taps: int 
     return kernel / max(math.sqrt(float((kernel**2).sum())), 1e-9)
 
 
+class Stream:
+    """A FIR filter that carries its tail across block boundaries, so filtered
+    noise is continuous rather than restarting on every callback."""
+
+    def __init__(self, kernel: np.ndarray) -> None:
+        self._kernel = kernel
+        self._tail = np.zeros(len(kernel) - 1)
+
+    def __call__(self, block: np.ndarray) -> np.ndarray:
+        padded = np.concatenate([self._tail, block])
+        self._tail = padded[-(len(self._kernel) - 1) :]
+        return np.convolve(padded, self._kernel, mode="valid")
+
+
 @dataclass
-class _Rotor:
+class Rotor:
     """The motor's own speed, chasing the robot's through a damped spring.
 
     A first-order filter would just lag. This overshoots slightly on the way up
@@ -186,13 +227,14 @@ class _Rotor:
     'a robot moving' and something that sounds pleased to be going.
     """
 
-    cfg: MotorConfig
+    spring_hz: float
+    damping: float
     speed: float = 0.0
     velocity: float = field(default=0.0)
 
     def update(self, target_speed: float, dt: float) -> float:
-        omega = 2.0 * math.pi * self.cfg.spring_hz
-        acceleration = omega * omega * (target_speed - self.speed) - 2.0 * self.cfg.damping * omega * self.velocity
+        omega = 2.0 * math.pi * self.spring_hz
+        acceleration = omega * omega * (target_speed - self.speed) - 2.0 * self.damping * omega * self.velocity
         self.velocity += acceleration * dt
         self.speed += self.velocity * dt
         # Never let the overshoot swing negative: the whine has no direction,
@@ -254,25 +296,23 @@ class MotorSynth:
         self._throttle = 0.0
         self._turn = 0.0
 
-        self._rotor = _Rotor(self.cfg)
+        self._rotor = Rotor(self.cfg.spring_hz, self.cfg.damping)
         self._gearbox = _Gearbox(self.cfg)
         self._rng = np.random.default_rng(seed)
-        self._noise_kernel = _bandpass_kernel(sample_rate, *self.cfg.rolling_band_hz)
-        self._noise_tail = np.zeros(NOISE_TAPS - 1)
+        self._rolling = Stream(bandpass_kernel(sample_rate, *self.cfg.rolling_band_hz))
         # Strain noise sits lower than the rolling noise -- that is what makes
         # it read as effort. The long kernel is what holds the low edge: a
         # 63-tap filter at 48 kHz has a ~760 Hz transition band and leaks well
         # below the speaker's ~160 Hz floor, wasting amp headroom there.
-        self._growl_kernel = _bandpass_kernel(sample_rate, 240.0, 700.0, taps=255)
-        self._growl_tail = np.zeros(len(self._growl_kernel) - 1)
+        self._growl = Stream(bandpass_kernel(sample_rate, 240.0, 700.0, taps=255))
         # Slip noise, banded around the squeal so tone and noise read as one
         # sound rather than two layers.
-        self._screech_kernel = _bandpass_kernel(sample_rate, self.cfg.screech_hz * 0.7, self.cfg.screech_hz * 1.7)
-        self._screech_tail = np.zeros(NOISE_TAPS - 1)
+        self._slip = Stream(bandpass_kernel(sample_rate, self.cfg.screech_hz * 0.7, self.cfg.screech_hz * 1.7))
 
         # One phase per partial: the gear-whine ratio is not a whole number, so
         # a single shared phase could not be wrapped without a discontinuity.
         self._phases = np.zeros(len(PARTIALS))
+        self._sub_phase = 0.0
         self._wobble_phase = 0.0
         self._tremolo_phase = 0.0
         self._growl_phase_a = 0.0
@@ -321,6 +361,7 @@ class MotorSynth:
         load = min(max(self._throttle, 0.0), 1.0)
 
         speed_frac = min(speed / cfg.max_speed, 1.0) if cfg.max_speed > 0 else 0.0
+        snarl = cfg.snarl_depth * _smoothstep((speed_frac - cfg.snarl_start) / max(1.0 - cfg.snarl_start, 1e-6))
         through, shifting = self._gearbox.update(speed_frac, dt)
         frequency = cfg.base_hz + through * (cfg.top_hz - cfg.base_hz)
 
@@ -376,7 +417,7 @@ class MotorSynth:
         sweep = sweep * (1.0 + cfg.wobble_depth * np.sin(wobble_phase))
 
         nyquist = 0.45 * self.sample_rate
-        brightness = 0.35 * load  # more upper partials under load
+        brightness = 0.35 * load + 0.4 * snarl  # more upper partials under load and at redline
         signal = np.zeros(frames)
         weight_sum = 0.0
         for index, (ratio, amplitude) in enumerate(PARTIALS):
@@ -389,6 +430,14 @@ class MotorSynth:
             weight_sum += weight
         signal /= max(weight_sum, 1e-6)
 
+        # Snarl undertone: a sub-octave beneath the fundamental (225 Hz at a
+        # 450 Hz top), fading in at redline -- power is added below the whine,
+        # never above it.
+        if snarl > 1e-3:
+            sub_phase = self._sub_phase + 2.0 * np.pi * np.cumsum(0.5 * sweep) / self.sample_rate
+            self._sub_phase = float(sub_phase[-1] % (2.0 * np.pi))
+            signal += 0.35 * snarl * np.sin(sub_phase)
+
         # Brush flutter: amplitude tremolo at a fraction of the whine
         # frequency, phase-continuous across blocks like everything else.
         tremolo_phase = self._tremolo_phase + 2.0 * np.pi * np.cumsum(sweep / TREMOLO_RATIO) / self.sample_rate
@@ -399,7 +448,10 @@ class MotorSynth:
         # detuned modulators beat against each other so the throb rolls
         # rather than ticking.
         self._load_smooth += (load - self._load_smooth) * min(dt / 0.08, 1.0)
-        strain = cfg.growl_depth * self._load_smooth
+        # At redline the throb runs even off-throttle: a motor at the top of
+        # its range is never coasting.
+        effort = max(self._load_smooth, 0.6 * snarl)
+        strain = cfg.growl_depth * effort
         phase_a = self._growl_phase_a + 2.0 * np.pi * cfg.growl_hz * steps
         phase_b = self._growl_phase_b + 2.0 * np.pi * (cfg.growl_hz * 1.61) * steps
         self._growl_phase_a = float(phase_a[-1] % (2.0 * np.pi))
@@ -413,12 +465,14 @@ class MotorSynth:
         signal += self._rolling_noise(frames, speed_frac) * (0.4 + 0.6 * flutter)
         # Strain noise: the low-mid roar of working hard, throbbing with the
         # growl and gone at cruise.
-        signal += self._growl_noise(frames) * self._load_smooth * throb
+        signal += self._growl_noise(frames) * effort * throb
 
         gain = np.linspace(self._gain, target_gain, frames)
         self._gain = target_gain
         mix = signal * gain + self._screech(frames, steps, screech_target)
-        return (np.tanh(mix * 1.6) * 0.85).astype(np.float32)
+        # Driving the saturator harder at redline adds grit and perceived
+        # loudness without raising the peak level.
+        return (np.tanh(mix * (1.6 + 0.8 * snarl)) * 0.85).astype(np.float32)
 
     def _screech(self, frames: int, steps: np.ndarray, target: float):
         """Tire squeal: a harmonic stack whose pitch wanders as grip changes,
@@ -446,9 +500,7 @@ class MotorSynth:
             weight_sum += amplitude
         tone /= weight_sum
 
-        padded = np.concatenate([self._screech_tail, self._rng.standard_normal(frames)])
-        self._screech_tail = padded[-(NOISE_TAPS - 1) :]
-        slip = np.convolve(padded, self._screech_kernel, mode="valid")
+        slip = self._slip(self._rng.standard_normal(frames))
 
         # Grab-and-release stutter, two detuned modulators beating so it rolls
         # rather than ticking. Shallower the harder the corner: at the edge of
@@ -464,17 +516,10 @@ class MotorSynth:
 
     def _growl_noise(self, frames: int) -> np.ndarray:
         """Band-limited strain noise, phase-continuous across blocks."""
-        history = len(self._growl_kernel) - 1
-        padded = np.concatenate([self._growl_tail, self._rng.standard_normal(frames)])
-        self._growl_tail = padded[-history:]
-        return np.convolve(padded, self._growl_kernel, mode="valid") * self.cfg.growl_noise_level
+        return self._growl(self._rng.standard_normal(frames)) * self.cfg.growl_noise_level
 
     def _rolling_noise(self, frames: int, speed_frac: float) -> np.ndarray:
         """Bearings and wheels on the floor. Keeps the whine from sounding like
         a bare oscillator."""
-        # Carry the kernel's worth of history across the block boundary so the
-        # filtered noise is continuous rather than restarting each callback.
-        padded = np.concatenate([self._noise_tail, self._rng.standard_normal(frames)])
-        self._noise_tail = padded[-(NOISE_TAPS - 1) :]
-        band_limited = np.convolve(padded, self._noise_kernel, mode="valid")
+        band_limited = self._rolling(self._rng.standard_normal(frames))
         return band_limited * self.cfg.rolling_level * (0.25 + 0.75 * speed_frac)

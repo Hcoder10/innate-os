@@ -136,3 +136,7 @@ MUJOCO_LOG.TXT
 sim/viewer/public/
 sim/viewer/assets/
 sim/.sim-assets.tmp*
+
+# boot sounds: WAV assets fetched by post_update.sh from GCS (too heavy for git)
+config/sounds/*.wav
+config/sounds/motor_voices/*.wav

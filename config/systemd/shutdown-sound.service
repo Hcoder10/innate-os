@@ -15,7 +15,7 @@ Environment="XDG_RUNTIME_DIR=/run/user/1000"
 # ~85 ms buffer (audible pops, same fix as the startup sound). The rtprio limit
 # must be granted here: systemd services don't get PAM limits (99-innate-rtprio.conf).
 LimitRTPRIO=50
-ExecStart=/usr/bin/chrt -f 30 /usr/bin/gst-play-1.0 /home/jetson1/innate-os/config/sounds/turnoff.mp3
+ExecStart=/usr/bin/chrt -f 30 /usr/bin/gst-play-1.0 /home/jetson1/innate-os/config/sounds/turnoff.wav
 TimeoutStartSec=10
 RemainAfterExit=yes
 
