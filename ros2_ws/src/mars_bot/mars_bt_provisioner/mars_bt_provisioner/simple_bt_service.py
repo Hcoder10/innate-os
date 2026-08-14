@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import signal
 import socket
 import subprocess
@@ -361,7 +362,7 @@ class BleProvisionerServer:
                 capture_output=True,
                 text=True,
                 timeout=60,
-                env=dict(os.environ, XDG_RUNTIME_DIR="/run/user/1000"),
+                env=dict(os.environ, XDG_RUNTIME_DIR=f"/run/user/{os.getuid()}"),
             )
         except (OSError, subprocess.SubprocessError) as e:
             self._send_notification_threadsafe(
@@ -442,18 +443,24 @@ class BleProvisionerServer:
                 return f"value of {key} contains control characters"
         return None
 
-    def _run_identity_tool(self, mode):
-        """Run a side-effect-only helper mode; a failure is logged, never fatal."""
-        try:
-            result = subprocess.run(["sudo", IDENTITY_TOOL_PATH, mode], capture_output=True, text=True, timeout=60)
-        except (OSError, subprocess.SubprocessError) as e:
-            logger.error(f"Identity helper {mode} failed: {e}")
-            return
-        if result.returncode != 0:
-            logger.error(f"Identity helper {mode} exited {result.returncode}: {(result.stderr or '').strip()[-200:]}")
+    def _teardown_and_reboot(self, wipe_data):
+        """Stop ros-app, clean up after the new identity, then reboot — one detached
+        child, so the reply is already on the wire.
+
+        The stop has to come first. A running ros-app recreates robot_info.json from its
+        launch-time environment within a second, so a --reset-info ahead of it is undone
+        before the reboot and the robot comes back under its old name.
+        """
+        tool = shlex.quote(IDENTITY_TOOL_PATH)
+        steps = ["/usr/bin/systemctl stop ros-app.service", f"{tool} --reset-info"]
+        if wipe_data:
+            steps.append(f"{tool} --wipe-data")
+        steps.append("reboot")
+        script = "; ".join(f"sudo {step}" for step in steps)
+        subprocess.Popen(["setsid", "sh", "-c", f"sleep 2; {script}"], start_new_session=True)
 
     def _apply_identity(self, command, payload):
-        """Run the root helper, reply, then reboot from a detached child.
+        """Run the root helper, reply, then hand the rest to a detached child.
 
         The reply has to be on the wire before the reboot: rebooting inline would race
         systemd's teardown of this unit against GLib.idle_add and silently drop it.
@@ -482,13 +489,6 @@ class BleProvisionerServer:
             self._send_notification_threadsafe({"command": command, "status": "error", "message": message})
             return
 
-        # Housekeeping, after the identity is committed and never able to fail it:
-        # robot_info.json must go or ros-app keeps serving the old name, and the bench
-        # data goes only if this run asked for it.
-        self._run_identity_tool("--reset-info")
-        if payload.get("wipe_data"):
-            self._run_identity_tool("--wipe-data")
-
         applied = {}
         stdout_lines = (result.stdout or "").strip().splitlines()
         if stdout_lines:
@@ -506,7 +506,7 @@ class BleProvisionerServer:
                 "message": "Identity applied, rebooting",
             }
         )
-        subprocess.Popen(["setsid", "sh", "-c", "sleep 2; sudo reboot"], start_new_session=True)
+        self._teardown_and_reboot(bool(payload.get("wipe_data")))
 
     # --- BLE Callbacks ---
     def write_callback(self, value, options=None):

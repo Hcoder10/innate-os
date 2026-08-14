@@ -524,7 +524,7 @@ class TestIdentify:
         assert server._send_notification_threadsafe.call_args[0][0]["status"] == "success"
         play = [c for c in mock_run.call_args_list if "gst-play-1.0" in c.args[0]][0]
         # The unit does not preserve it, and without it there is no audio session.
-        assert play.kwargs["env"]["XDG_RUNTIME_DIR"] == "/run/user/1000"
+        assert play.kwargs["env"]["XDG_RUNTIME_DIR"] == f"/run/user/{os.getuid()}"
 
     @patch.object(simple_bt_service.subprocess, "run")
     def test_player_failure_is_distinguishable(self, mock_run):
@@ -641,13 +641,13 @@ class TestSetIdentity:
         # The reply has to be on the wire first: a reboot racing systemd's teardown of
         # this unit against GLib.idle_add drops it silently.
         assert order == ["reply", "reboot"]
-        assert "reboot" in " ".join(mock_popen.call_args[0][0])
 
-        # robot_info.json must go or ros-app keeps serving the old name; the bench data
-        # only when this run asked for it.
-        modes = [c.args[0][-1] for c in mock_run.call_args_list]
-        assert "--reset-info" in modes
-        assert "--wipe-data" not in modes
+        # ros-app recreates robot_info.json from its launch-time env within a second, so
+        # resetting it before the stop would be undone before the reboot lands.
+        teardown = " ".join(mock_popen.call_args[0][0])
+        assert teardown.index("systemctl stop ros-app") < teardown.index("--reset-info")
+        assert teardown.index("--reset-info") < teardown.index("reboot")
+        assert "--wipe-data" not in teardown
 
     @patch.object(simple_bt_service, "is_provisioned", return_value=False)
     @patch.object(simple_bt_service.subprocess, "run")
@@ -659,7 +659,7 @@ class TestSetIdentity:
             _send_command(server, {"command": "set_identity", "data": {**VALID_PAYLOAD, "wipe_data": True}})
             assert _wait_for(lambda: mock_popen.called)
 
-        assert "--wipe-data" in [c.args[0][-1] for c in mock_run.call_args_list]
+        assert "--wipe-data" in " ".join(mock_popen.call_args[0][0])
 
     @patch.object(simple_bt_service, "is_provisioned", return_value=True)
     def test_refused_once_provisioned(self, mock_provisioned):
