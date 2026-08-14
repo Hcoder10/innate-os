@@ -3,7 +3,7 @@
 # Copyright (c) 2026 Innate Inc
 """Apply the robot's identity to /etc/innate.env, as root.
 
-Four modes, one file:
+Five modes, one file:
 
   --seed        serial-derived defaults for a robot nobody has provisioned yet, so
                 ros-app has a single creation path for robot_info.json. Run from
@@ -16,9 +16,12 @@ Four modes, one file:
   --reset-info  drop robot_info.json, so ros-app re-derives it from the environment.
   --wipe-data   clear the maps, nav state and custom skills/agents a robot picks up on
                 the bench.
+  --migrate-info  record facts that live only in robot_info.json into
+                /etc/innate_migrated.env, a layer below /etc/innate.env — inferred, so
+                any provisioned value shadows it and --write cannot destroy it.
 
-The last two are their own modes rather than steps of --write: both are useful on
-their own, and neither should be able to fail a provisioning run.
+--reset-info and --wipe-data are their own modes rather than steps of --write: both are
+useful on their own, and neither should be able to fail a provisioning run.
 
 The payload holds the service key and the login password, so it arrives on stdin
 (argv is world-readable through `ps`) and is never logged. stdout is the contract:
@@ -45,6 +48,7 @@ from pathlib import Path
 
 SYSTEM_ENV_PATH = Path("/etc/innate.env")
 BACKUP_ENV_PATH = Path("/etc/innate.env.bak")
+MIGRATED_ENV_PATH = Path("/etc/innate_migrated.env")
 LOCK_PATH = Path("/run/lock/innate-identity.lock")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -54,6 +58,9 @@ IDENTITY_TOOL = Path(__file__).resolve()
 MAX_ENV_BYTES = 4096
 MAX_PASSWORD_BYTES = 256
 ENV_LINE_RE = re.compile(r"^[A-Z][A-Z0-9_]*=")
+REVISION_RE = re.compile(r"R[0-9]+")
+# app.cpp's default_hardware_revision: a stored R6 cannot be told from a re-derived one.
+APP_DEFAULT_HW_REV = "R6"
 # /etc/innate.env is injected into the environment of every ROS process, so a blob is
 # env injection by construction; the unprovisioned-only rule is the real gate.
 FORBIDDEN_PREFIXES = ("LD_", "DYLD_")
@@ -100,9 +107,10 @@ def read_system_env() -> dict[str, str]:
 
 
 def read_effective_env(system: dict[str, str] | None = None) -> dict[str, str]:
-    """What the ROS processes actually see: print_runtime_env.py layers the repo .env
-    on top of /etc/innate.env. An R7.0 robot's key lives only there."""
-    env = read_system_env() if system is None else dict(system)
+    """What the ROS processes actually see: print_runtime_env.py layers the repo .env on
+    top of /etc/innate.env, over migrated facts. An R7.0 robot's key lives only there."""
+    env = read_env_file(MIGRATED_ENV_PATH)
+    env.update(read_system_env() if system is None else system)
     env.update(read_env_file(REPO_ROOT / ".env"))
     return env
 
@@ -274,6 +282,52 @@ def unshadow_repo_key(new_key: str) -> None:
         log(f"commented out a stale INNATE_SERVICE_KEY in {repo_env}")
 
 
+def run_migrate_info() -> int:
+    """Record the hardware revision, which is attested nowhere: it lives only in
+    robot_info.json, a file --reset-info drops on every provisioning cycle, after which
+    app.cpp re-derives its default and the robot misreports itself to the fleet forever.
+    """
+    if "HARDWARE_REVISION" in read_effective_env():
+        return 0
+
+    try:
+        revision = json.loads((REPO_ROOT / "data" / "robot_info.json").read_text())["hardware_revision"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        return 0
+    if not isinstance(revision, str) or not REVISION_RE.fullmatch(revision):
+        return 0
+    # Migrating the default would launder it into an attested-looking fact while adding
+    # nothing: with the key absent, env_or re-derives the same value anyway.
+    if revision == APP_DEFAULT_HW_REV:
+        log(f"robot_info.json says {revision}, indistinguishable from the re-derived default — not migrating")
+        return 0
+
+    write_root_file(
+        MIGRATED_ENV_PATH,
+        f"# inferred from data/robot_info.json; any provisioned value overrides\nHARDWARE_REVISION={revision}",
+        login_user(),
+    )
+    log(f"migrated HARDWARE_REVISION={revision}")
+    return 0
+
+
+def supersede_migrated(provisioned: dict[str, str]) -> None:
+    """An attested value retires the inference it replaces — a disagreement is the one
+    signal that a migration cemented the wrong thing, so it must not pass silently."""
+    migrated = read_env_file(MIGRATED_ENV_PATH)
+    retired = [key for key in migrated if key in provisioned]
+    if not retired:
+        return
+
+    for key in retired:
+        tag = "" if provisioned[key] == migrated[key] else "WARNING: "
+        log(f"{tag}provisioned {key}={provisioned[key]} supersedes migrated {migrated.pop(key)}")
+    if not migrated:
+        MIGRATED_ENV_PATH.unlink(missing_ok=True)
+        return
+    write_root_file(MIGRATED_ENV_PATH, "".join(f"{key}={value}\n" for key, value in migrated.items()), login_user())
+
+
 def ros_app_running() -> bool:
     try:
         return subprocess.run(["systemctl", "is-active", "--quiet", "ros-app.service"], timeout=10).returncode == 0
@@ -360,6 +414,7 @@ def run_write(payload: dict[str, object]) -> int:
         set_password(user, password)
     write_root_file(SYSTEM_ENV_PATH, env_text, user)
     log(f"wrote {SYSTEM_ENV_PATH} and {BACKUP_ENV_PATH}")
+    supersede_migrated(env)
 
     print(json.dumps({"robot_id": env["ROBOT_ID"], "robot_name": env.get("ROBOT_NAME", "")}))
     return 0
@@ -377,6 +432,7 @@ def main() -> int:
     mode.add_argument("--write", action="store_true", help="Apply an identity blob read from stdin")
     mode.add_argument("--reset-info", action="store_true", help="Drop robot_info.json so ros-app re-derives it")
     mode.add_argument("--wipe-data", action="store_true", help="Clear maps, nav state and custom skills/agents")
+    mode.add_argument("--migrate-info", action="store_true", help="Record facts that live only in robot_info.json")
     args = parser.parse_args()
 
     if os.geteuid() != 0:
@@ -393,6 +449,8 @@ def main() -> int:
             return run_reset_info()
         if args.wipe_data:
             return run_wipe_data()
+        if args.migrate_info:
+            return run_migrate_info()
 
         try:
             payload = json.loads(sys.stdin.read())

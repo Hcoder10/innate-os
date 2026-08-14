@@ -139,36 +139,46 @@ R5_MAX_VERSION="0.1.1"
 check_hardware_revision() {
     local robot_info_file="$REPO_DIR/data/robot_info.json"
     
-    if [ -f "$robot_info_file" ]; then
+    # The env outlives --reset-info; robot_info.json does not, and re-derives to R6.
+    local hw_rev=$(python3 "$REPO_DIR/scripts/print_runtime_env.py" 2>/dev/null | sed -n 's/^HARDWARE_REVISION=//p')
+
+    if [ -z "$hw_rev" ] && [ -f "$robot_info_file" ]; then
         # Extract hardware_revision using grep and sed (no jq dependency)
-        local hw_rev=$(grep -o '"hardware_revision"[[:space:]]*:[[:space:]]*"[^"]*"' "$robot_info_file" | sed 's/.*: *"\([^"]*\)".*/\1/')
-        
-        if [ "$hw_rev" = "R5" ]; then
-            log "WARNING: Hardware revision R5 detected"
-            log "R5 robots are limited to version $R5_MAX_VERSION"
-            log "Reverting to $R5_MAX_VERSION..."
-            
-            # Checkout the max supported version for R5
-            if git -C "$REPO_DIR" checkout "$R5_MAX_VERSION" 2>/dev/null; then
-                log "Successfully reverted to $R5_MAX_VERSION"
-            else
-                log "ERROR: Failed to checkout $R5_MAX_VERSION"
-            fi
-            
-            echo ""
-            echo "╔════════════════════════════════════════════════════════════╗"
-            echo "║  HARDWARE REVISION R5 - UPDATE NOT SUPPORTED               ║"
-            echo "╠════════════════════════════════════════════════════════════╣"
-            echo "║  This robot (R5) cannot receive updates beyond v$R5_MAX_VERSION.   ║"
-            echo "║  The system has been kept at the last compatible version.  ║"
-            echo "║  Please contact support for hardware upgrade options.      ║"
-            echo "╚════════════════════════════════════════════════════════════╝"
-            echo ""
-            
-            exit 0
-        fi
+        hw_rev=$(grep -o '"hardware_revision"[[:space:]]*:[[:space:]]*"[^"]*"' "$robot_info_file" | sed 's/.*: *"\([^"]*\)".*/\1/')
     fi
+
+    if [ "$hw_rev" != "R5" ]; then
+        return
+    fi
+
+    log "WARNING: Hardware revision R5 detected"
+    log "R5 robots are limited to version $R5_MAX_VERSION"
+    log "Reverting to $R5_MAX_VERSION..."
+
+    # Checkout the max supported version for R5
+    if git -C "$REPO_DIR" checkout "$R5_MAX_VERSION" 2>/dev/null; then
+        log "Successfully reverted to $R5_MAX_VERSION"
+    else
+        log "ERROR: Failed to checkout $R5_MAX_VERSION"
+    fi
+
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════╗"
+    echo "║  HARDWARE REVISION R5 - UPDATE NOT SUPPORTED               ║"
+    echo "╠════════════════════════════════════════════════════════════╣"
+    echo "║  This robot (R5) cannot receive updates beyond v$R5_MAX_VERSION.   ║"
+    echo "║  The system has been kept at the last compatible version.  ║"
+    echo "║  Please contact support for hardware upgrade options.      ║"
+    echo "╚════════════════════════════════════════════════════════════╝"
+    echo ""
+
+    exit 0
 }
+
+# Before the revision check reads it, and before any later --reset-info can drop the
+# only file the revision lives in.
+log "Migrating facts that live only in robot_info.json..."
+"$REPO_DIR/scripts/identity/innate-identity" --migrate-info || log "  migration skipped"
 
 check_hardware_revision
 

@@ -11,6 +11,9 @@ from pathlib import Path
 # Service-key fallback (written by post_update.sh) so INNATE_SERVICE_KEY survives a
 # repo reset. The repo .env is merged on top and wins.
 SYSTEM_ENV_PATH = Path("/etc/innate.env")
+# Facts recovered from derived state rather than attested by provisioning. Lowest layer,
+# and a separate file so a verbatim blob write can neither destroy nor be confused with it.
+MIGRATED_ENV_PATH = Path("/etc/innate_migrated.env")
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -36,8 +39,9 @@ def parse_env_file(path: Path) -> dict[str, str]:
 
 
 def build_runtime_env(repo_root: Path) -> dict[str, str]:
-    # /etc/innate.env is the fallback; the repo .env layers on top and wins.
-    env = parse_env_file(SYSTEM_ENV_PATH)
+    # Lowest to highest: inferred facts, /etc/innate.env, then the repo .env.
+    env = parse_env_file(MIGRATED_ENV_PATH)
+    env.update(parse_env_file(SYSTEM_ENV_PATH))
     env.update(parse_env_file(repo_root / ".env"))
     return env
 
