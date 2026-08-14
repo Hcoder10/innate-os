@@ -37,13 +37,41 @@ fi
 
 # Parse arguments
 SKIP_ROS_CLEAN=false
+IMAGE_BUILD=false
 for arg in "$@"; do
     case $arg in
         --skip-ros-clean)
             SKIP_ROS_CLEAN=true
             ;;
+        --image-build)
+            IMAGE_BUILD=true
+            ;;
     esac
 done
+
+# --image-build runs this script against an offline rootfs in a qemu chroot, so an image
+# is built by the code the robot actually runs rather than a second implementation that
+# drifts from it. The axis is offline-rootfs vs running-system, not first-boot vs later —
+# first boot is real hardware and wants everything.
+#
+# Shadowing three commands beats guarding thirty call sites. enable/disable/set-default
+# must still take effect, and do, via --root; queries answer "no" so callers take their
+# not-running branch.
+if [ "$IMAGE_BUILD" = true ]; then
+    systemctl() {
+        local verb="$1"; shift
+        case "$verb" in
+            enable|disable|set-default|mask|unmask|preset)
+                local args=() a
+                for a in "$@"; do [ "$a" = "--now" ] || args+=("$a"); done  # --now cannot apply offline
+                command systemctl --root=/ "$verb" "${args[@]}" 2>/dev/null || true ;;
+            is-active|is-enabled|list-unit-files) return 1 ;;
+            *) return 0 ;;
+        esac
+    }
+    tmux() { return 1; }
+    udevadm() { return 0; }
+fi
 
 # Check for root privileges
 if [ "$(id -u)" -ne 0 ]; then
@@ -373,7 +401,11 @@ setup_swap() {
 }
 
 log "Configuring swap..."
-if setup_swap; then
+if [ "$IMAGE_BUILD" = true ]; then
+    # A swapfile in the image would grow system.img by its full 8 GB, and the robot
+    # creates it on first boot anyway.
+    log "  Skipping swap (--image-build)"
+elif setup_swap; then
     log "  Swap configuration complete"
 else
     log "  WARNING: swap configuration failed (continuing without disk swap)"
