@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import re
-import shlex
 import signal
 import socket
 import subprocess
@@ -13,8 +12,7 @@ import sys
 import threading
 import time
 
-import dbus.service
-from bluezero import adapter, advertisement, peripheral
+from bluezero import adapter, peripheral
 from dotenv import dotenv_values
 from gi.repository import GLib
 from nmcli_utils import (
@@ -42,33 +40,6 @@ logger = logging.getLogger("BLE_Server")
 # BLE UUIDs
 SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 CHARACTERISTIC_UUID = "abcdef01-1234-5678-1234-56789abcdef0"
-
-# BlueZ's default leaves ~1.28s between packets. A phone's default scan samples ~10% of
-# the time, so the two rarely coincide and the robot reads as absent.
-ADV_INTERVAL_MS = 100
-
-
-class IntervalAdvertisement(advertisement.Advertisement):
-    """An advertisement that also tells BlueZ how often to send it.
-
-    bluezero's GetAll hardcodes the property list it hands BlueZ, so the interval is
-    unreachable through it. Setting interval_ms to None falls back to BlueZ's default,
-    which is what a controller that rejects MGMT_ADV_PARAM_INTERVAL needs.
-    """
-
-    def __init__(self, advert_id, ad_type):
-        super().__init__(advert_id, ad_type)
-        self.interval_ms = ADV_INTERVAL_MS
-
-    # Spelled out rather than taken from bluezero.constants: the decorator runs at import,
-    # and the command-layer tests import this module with bluezero mocked out.
-    @dbus.service.method("org.freedesktop.DBus.Properties", in_signature="s", out_signature="a{sv}")
-    def GetAll(self, interface_name):
-        props = super().GetAll(interface_name)
-        if self.interval_ms is not None:
-            props["MinInterval"] = dbus.UInt32(self.interval_ms)
-            props["MaxInterval"] = dbus.UInt32(self.interval_ms)
-        return props
 
 # Path to the helper script for restarting services (adjust if moved)
 RESTART_SCRIPT_PATH = "/usr/local/bin/restart_robot_networking.sh"
@@ -487,27 +458,11 @@ class BleProvisionerServer:
                 return f"value of {key} contains control characters"
         return None
 
-    def _teardown_and_reboot(self, wipe_data):
-        """Stop ros-app, clean up after the new identity, then reboot — one detached
-        child, so the reply is already on the wire.
-
-        The stop has to come first. A running ros-app recreates robot_info.json from its
-        launch-time environment within a second, so a --reset-info ahead of it is undone
-        before the reboot and the robot comes back under its old name.
-        """
-        tool = shlex.quote(IDENTITY_TOOL_PATH)
-        steps = ["/usr/bin/systemctl stop ros-app.service", f"{tool} --reset-info"]
-        if wipe_data:
-            steps.append(f"{tool} --wipe-data")
-        steps.append("reboot")
-        script = "; ".join(f"sudo {step}" for step in steps)
-        subprocess.Popen(["setsid", "sh", "-c", f"sleep 2; {script}"], start_new_session=True)
-
     def _apply_identity(self, command, payload):
-        """Run the root helper, reply, then hand the rest to a detached child.
-
-        The reply has to be on the wire before the reboot: rebooting inline would race
-        systemd's teardown of this unit against GLib.idle_add and silently drop it.
+        """Run the root helper and reply. The helper owns the whole provisioning —
+        identity, teardown, wipe, reboot — and schedules that reboot seconds out precisely
+        so this reply gets on the wire first; an inline one would race systemd's teardown
+        of this unit against GLib.idle_add and be dropped silently.
         """
         try:
             result = subprocess.run(
@@ -515,7 +470,9 @@ class BleProvisionerServer:
                 input=json.dumps(payload),
                 text=True,
                 capture_output=True,
-                timeout=60,
+                # It stops ros-app before it returns, so this outlives systemd's stop
+                # timeout: a timeout here would report failure for an applied identity.
+                timeout=300,
             )
         except (OSError, subprocess.SubprocessError) as e:
             self._send_notification_threadsafe(
@@ -549,7 +506,6 @@ class BleProvisionerServer:
                 "message": "Identity applied, rebooting",
             }
         )
-        self._teardown_and_reboot(bool(payload.get("wipe_data")))
 
     # --- BLE Callbacks ---
     def write_callback(self, value, options=None):
@@ -683,13 +639,9 @@ class BleProvisionerServer:
         try:
             # Create Peripheral - AdvertisingManager will set discoverable=True internally
             logger.info(f"Creating BLE peripheral with local_name='{ROBOT_NAME}'...")
-            # Peripheral reads this module attribute at construction, so swapping it here
-            # is the only seam for giving the advertisement an interval.
-            advertisement.Advertisement = IntervalAdvertisement
             self.peripheral = peripheral.Peripheral(
                 adapter_address, local_name=ROBOT_NAME, appearance=192
             )  # 192: Generic Computer
-            logger.info(f"Advertising interval set to {ADV_INTERVAL_MS}ms.")
             logger.info("Peripheral created successfully.")
 
             # Set connection callbacks

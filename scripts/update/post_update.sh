@@ -568,6 +568,14 @@ if [ -d "$REPO_DIR/scripts" ]; then
         sudo -u "$ACTUAL_USER" "$REPO_DIR/scripts/innate" completions > "$REPO_DIR/scripts/build/completions/_innate"
     fi
 
+    # Symlink the identity helper, so provisioning is `ssh robot sudo innate-identity
+    # --write` with no path to know and no password to type (see sudoers below).
+    if [ -f "$REPO_DIR/scripts/identity/innate-identity" ]; then
+        log "  Symlinking innate-identity"
+        rm -f /usr/local/bin/innate-identity
+        ln -s "$REPO_DIR/scripts/identity/innate-identity" /usr/local/bin/innate-identity
+    fi
+
     # Symlink restart script if it exists
     if [ -f "$REPO_DIR/scripts/restart_robot_networking.sh" ]; then
         log "  Symlinking restart_robot_networking.sh"
@@ -983,10 +991,14 @@ cat > "$SUDOERS_FILE" << EOF
 # Restart robot networking (called by BLE provisioner)
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/local/bin/restart_robot_networking.sh
 
-# Identity applier: --write from the BLE provisioner (--seed runs as root, from its unit).
+# Identity applier: --write from the BLE provisioner and from the laptop over ssh
+# (--seed runs as root, from its unit). sudo matches the command as typed, so both the
+# repo path and the /usr/local/bin symlink are listed. It owns the whole provisioning —
+# stopping ros-app, the data wipe, the reboot — so a caller needs no other rule.
 $ACTUAL_USER ALL=(ALL) NOPASSWD: $REPO_DIR/scripts/identity/innate-identity
+$ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/local/bin/innate-identity
 
-# Reboot after BLE provisioning writes an identity (the reply goes out first).
+# Reboot, for callers older than that (the identity helper reboots as root itself).
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /usr/sbin/reboot
 $ACTUAL_USER ALL=(ALL) NOPASSWD: /sbin/reboot
 

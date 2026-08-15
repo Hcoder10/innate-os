@@ -32,6 +32,74 @@ Run `innate` with no arguments to print the current system status (version, mode
 | `innate volume` | Get or set speaker volume |
 | `innate --help` | Show all commands |
 
+## Robot Identity
+
+A robot's identity — its service key, id, name and hardware facts — is **not baked into
+the image**. A freshly flashed robot has no `/etc/innate.env` at all: `innate-seed.service`
+gives it serial-derived defaults on first boot, and provisioning over BLE writes the real
+one. That is what lets one generic image serve every robot.
+
+### Where identity lives
+
+Four places, lowest precedence first. [scripts/print_runtime_env.py](scripts/print_runtime_env.py)
+merges the first three into the environment every ROS process sees:
+
+| Layer | Holds | Written by |
+|---|---|---|
+| `/etc/innate_migrated.env` | facts *inferred* from derived state, never attested | `--migrate-info` |
+| `/etc/innate.env` | the service key, `ROBOT_ID`, `ROBOT_NAME`, `MODULE_SERIAL` | `--seed`, `--write` |
+| repo `.env` | developer overrides — **outranks the system file** | by hand |
+| `data/robot_info.json` | what the running robot answers for name/id/revision | `app.cpp` |
+
+Two of these catch people out, and both have caused real bugs:
+
+- **The repo `.env` beats `/etc/innate.env`.** An R7.0 robot's key lives *only* there, so
+  seeding must never fire on one. A stale `INNATE_SERVICE_KEY` left in it silently shadows
+  a freshly provisioned key — which is why `--write` comments the old line out.
+- **`robot_info.json` is sticky.** `app.cpp` fills a key only where it is missing or null,
+  so a stored value outranks the environment from then on. The BLE layer reads it *before*
+  the env too, so a de-provisioned robot keeps advertising its old name until it is dropped.
+
+An unprovisioned robot names itself `MARS-<short-id>-unprovisioned`, with the short id four
+hex chars `innate-identity` derives from the module serial — stable, so the same board
+always comes back as the same name. `ROBOT_NAME` also drives the system
+hostname through `sanitize_hostname`, so that robot answers at
+`mars-<short-id>-unprovisioned.local`.
+
+### `innate-identity`
+
+Runs as root. The `--write` payload arrives on stdin, never argv — it carries the service
+key and the login password, and argv is world-readable through `ps`.
+
+| Mode | Does |
+|---|---|
+| `--seed` | serial-derived defaults if unprovisioned; run from `innate-seed.service` |
+| `--write` | provision from a blob `{env, password, wipe_data?}`; refuses if already keyed |
+| `--reset-info` | drop `robot_info.json` so `app.cpp` re-derives it |
+| `--wipe-data` | clear maps, nav state, custom skills and agents, and `robot_info.json` |
+| `--migrate-info` | record a fact that exists only in `robot_info.json` |
+| `--unprovision` | **destructive**: delete the identity, reset the login password to factory |
+
+`--write` and `--unprovision` are whole operations, not steps: each takes `ros-app` down,
+re-derives or clears what the old identity left behind, and reboots. Every mode does its own
+service juggling, so there is never a follow-up command to remember — and every mode is
+`NOPASSWD` in `/etc/sudoers.d/innate-os` under both its repo path and
+`/usr/local/bin/innate-identity`, so provisioning a robot is one line:
+
+```bash
+provision --emit | ssh robot 'sudo -n innate-identity --write'
+```
+
+The reboot it ends on is scheduled seconds out and detached, so the caller's answer — a BLE
+notification, ssh's exit status and the `{robot_id, robot_name}` on stdout — is on the wire
+before the link drops. Nothing else may reboot inline for the same reason.
+
+`innate-seed.service` is pulled in by both `ros-app.service` and `ble-provisioner.service`
+with `Wants=` + `After=` — never `Requires=`, because the seed exits 1 on anything with no
+device-tree serial and must not fail a dev machine's boot.
+
+A robot that has lost its service key cannot be re-keyed from the robot side. Ask for help.
+
 ## Writing Skills
 
 Skills live in `workspace/` (see [workspace/README.md](workspace/README.md)). A skill is a

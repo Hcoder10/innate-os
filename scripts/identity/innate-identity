@@ -9,28 +9,34 @@ Six modes, one file:
                 ros-app has a single creation path for robot_info.json. Run from
                 innate-seed.service, ordered before both readers of the env file —
                 ros-app and the BLE provisioner, which advertises the seeded name.
-  --write       the real identity, one JSON object on stdin: {env, password}. `env` is
-                /etc/innate.env verbatim as the laptop composed it — this script never
-                derives, resolves or looks anything up. Accepted only while the robot
+  --write       the real identity, one JSON object on stdin: {env, password, wipe_data?}.
+                `env` is /etc/innate.env verbatim as the laptop composed it — this script
+                never derives, resolves or looks anything up. Accepted only while the robot
                 is unprovisioned; the caller's word for that is not trusted, the file is.
-  --reset-info  drop robot_info.json, so ros-app re-derives it from the environment.
+                It provisions the robot outright: the identity, then ros-app down,
+                robot_info.json dropped, bench data wiped if asked, then a reboot. One
+                command is the whole of it, so a hand-run pipe over ssh leaves exactly the
+                robot the BLE flow does.
+  --reset-info  drop robot_info.json, so ros-app re-derives it from the environment,
+                stopping and restarting ros-app around the delete so it sticks.
   --wipe-data   clear the maps, nav state and custom skills/agents a robot picks up on
                 the bench.
   --migrate-info  record facts that live only in robot_info.json into
                 /etc/innate_migrated.env, a layer below /etc/innate.env — inferred, so
                 any provisioned value shadows it and --write cannot destroy it.
-  --unprovision DESTRUCTIVE. Delete the identity and reset the login password to the
-                factory default, so the robot can be re-keyed or handed on.
+  --unprovision DESTRUCTIVE. Delete the identity, reset the login password to the factory
+                default and reboot, so the robot comes back the way a flashed one does.
 
---reset-info and --wipe-data are their own modes rather than steps of --write: both are
-useful on their own, and neither should be able to fail a provisioning run.
+--reset-info and --wipe-data stay their own modes as well as steps of --write: both are
+useful on their own, and neither may fail a provisioning run.
 
 The payload holds the service key and the login password, so it arrives on stdin
 (argv is world-readable through `ps`) and is never logged. stdout is the contract:
 one JSON object, `{robot_id, robot_name}` as applied. Logs go to stderr.
 
-Rebooting is deliberately not done here — the BLE layer must get its reply onto the
-wire first.
+The reboot is scheduled a few seconds out and detached, never inline: the caller's
+answer — a BLE notification, ssh's exit status — has to reach the laptop before the
+link dies.
 """
 
 from __future__ import annotations
@@ -38,6 +44,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import grp
+import hashlib
 import json
 import os
 import pwd
@@ -54,8 +61,13 @@ MIGRATED_ENV_PATH = Path("/etc/innate_migrated.env")
 LOCK_PATH = Path("/run/lock/innate-identity.lock")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-SHORT_ID_TOOL = Path(__file__).resolve().parent / "robot-short-id"
-IDENTITY_TOOL = Path(__file__).resolve()
+# /proc/device-tree is a symlink to this same file; the value carries a trailing NUL.
+SERIAL_PATH = Path("/sys/firmware/devicetree/base/serial-number")
+
+ROS_APP = "ros-app.service"
+BLE_PROVISIONER = "ble-provisioner.service"
+# Long enough for a BLE notification or ssh's exit status to land before the link dies.
+REBOOT_GRACE_SECONDS = 10
 
 MAX_ENV_BYTES = 4096
 MAX_PASSWORD_BYTES = 256
@@ -165,24 +177,23 @@ def write_root_file(path: Path, text: str, group: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def short_id_tool(*, serial: str | None = None, raw_serial: bool = False) -> str | None:
-    """Ask robot-short-id for the four hex chars, or for the raw module serial, deriving
-    from `serial` when given and the device tree otherwise. None when it cannot answer.
-
-    Shelling out rather than importing keeps one implementation of the derivation, which
-    is what stops the advertised name and the seeded env from ever disagreeing.
-    """
-    flags = ["--module-serial"] if raw_serial else []
-    if serial is not None:
-        flags += ["--from-serial", serial]
-    result = subprocess.run([sys.executable, str(SHORT_ID_TOOL), *flags], capture_output=True, text=True, timeout=10)
-    if result.returncode != 0:
+def module_serial() -> str | None:
+    """The compute module serial, or None where the device tree has none (dev boxes)."""
+    try:
+        raw = SERIAL_PATH.read_bytes()
+    except OSError:
         return None
-    return result.stdout.strip() or None
+    return raw.decode("utf-8", "replace").strip("\x00").strip() or None
+
+
+def short_id(serial: str) -> str:
+    """Four lowercase hex chars identifying this robot. The serial names the compute
+    module, so the id survives an M.2 Wi-Fi/BT card swap."""
+    return hashlib.sha256(serial.encode()).hexdigest()[:4]
 
 
 def seed_defaults(serial: str) -> dict[str, str]:
-    suffix = short_id_tool(serial=serial)
+    suffix = short_id(serial)
     return {
         "ROBOT_NAME": f"MARS-{suffix.upper()}-{UNPROVISIONED}",
         "ROBOT_ID": f"{UNPROVISIONED}-{suffix}",
@@ -201,13 +212,11 @@ def needs_seed(env: dict[str, str]) -> bool:
 
 
 def run_seed() -> int:
-    # The cheap check first: this runs at every boot, and a provisioned robot must not
-    # pay two interpreter spawns for a serial it is about to discard.
     env = read_system_env()
     if not needs_seed(read_effective_env(env)):
         return 0
 
-    serial = short_id_tool(raw_serial=True)
+    serial = module_serial()
     if serial is None:
         log("no device-tree serial — not a robot, refusing to seed")
         return 1
@@ -337,38 +346,80 @@ def supersede_migrated(provisioned: dict[str, str]) -> None:
     write_root_file(MIGRATED_ENV_PATH, "".join(f"{key}={value}\n" for key, value in migrated.items()), login_user())
 
 
-def ros_app_running() -> bool:
+def systemctl(*args: str) -> bool:
+    """False on anything that goes wrong: every caller is finishing an identity change
+    that already committed, and none of them may fail it."""
     try:
-        return subprocess.run(["systemctl", "is-active", "--quiet", "ros-app.service"], timeout=10).returncode == 0
+        return subprocess.run(["systemctl", *args], timeout=180).returncode == 0
     except (OSError, subprocess.SubprocessError):
-        return False  # an advisory check must never fail the reset it is advising on
+        return False
 
 
-def run_reset_info() -> int:
-    """Drop robot_info.json so ros-app re-creates it from the current environment.
+def ros_app_running() -> bool:
+    return systemctl("is-active", "--quiet", ROS_APP)
 
-    Its own mode rather than part of --write: it is derived state, and re-deriving it
-    is equally useful after a rename, a hand-edited env file, or a de-provision.
-    """
+
+def stop_ros_app() -> bool:
+    """Stop ros-app, and say whether it was up. Ordering, not tidiness: a live ros-app
+    re-creates robot_info.json from its launch-time environment within a second, so a
+    reset that does not stop it first is undone before anyone can read it."""
+    if not ros_app_running():
+        return False
+    if not systemctl("stop", ROS_APP):
+        log(f"WARNING: could not stop {ROS_APP} — it may re-create robot_info.json before the reset lands")
+    return True
+
+
+def drop_robot_info() -> None:
     (REPO_ROOT / "data" / "robot_info.json").unlink(missing_ok=True)
     log("removed robot_info.json; ros-app will re-create it from the environment")
 
-    # A running ros-app re-creates the file from its launch-time environment within a
-    # second, so a hand-run reset silently does nothing — say so while it is still fixable.
-    if ros_app_running():
-        log("ros-app is running and re-creates it within a second — this reset will not stick")
-        log("to reset it for real:")
-        for step in (
-            "sudo systemctl stop ros-app",
-            f"sudo {IDENTITY_TOOL} --reset-info",
-            "sudo systemctl start ros-app        # wait ~45s",
-            "sudo systemctl restart ble-provisioner",
-        ):
-            log(f"  {step}")
+
+def start_identity_readers() -> None:
+    """ros-app, then the BLE provisioner — which reads robot_info.json before the
+    environment, so it restarts too or it keeps advertising the old name."""
+    systemctl("start", ROS_APP)
+    systemctl("restart", BLE_PROVISIONER)
+
+
+def schedule_reboot() -> None:
+    """Detached and a few seconds out, never inline: the caller's answer — a BLE
+    notification, ssh's exit status — has to reach the laptop first, and an inline reboot
+    races systemd's teardown of the calling unit against it."""
+    log(f"rebooting in {REBOOT_GRACE_SECONDS}s")
+    try:
+        subprocess.Popen(["setsid", "sh", "-c", f"sleep {REBOOT_GRACE_SECONDS}; reboot"], start_new_session=True)
+    except (OSError, subprocess.SubprocessError) as e:
+        log(f"WARNING: could not schedule the reboot ({e}) — reboot this robot by hand")
+
+
+def clear_derived_state(wipe_data: bool, resume: bool) -> None:
+    """Drop what the robot derived from the identity it is leaving behind — robot_info.json
+    always, the bench's maps and custom skills/agents when asked — with ros-app down around
+    it. `resume` is False for a caller that reboots instead.
+
+    Nothing in here may raise: by the time --write calls it /etc/innate.env is written and
+    this helper refuses to run twice, so a failure would leave a robot no retry can repair.
+    """
+    stopped = stop_ros_app()
+    try:
+        if wipe_data:
+            wipe_bench_data()
+        drop_robot_info()
+    except OSError as e:
+        log(f"WARNING: could not clear derived state ({e})")
+    if stopped and resume:
+        start_identity_readers()
+
+
+def run_reset_info() -> int:
+    """Its own mode as well as a step of --write and --wipe-data: re-deriving robot_info.json
+    is equally useful after a rename, a hand-edited env file, or a de-provision."""
+    clear_derived_state(wipe_data=False, resume=True)
     return 0
 
 
-def run_wipe_data() -> int:
+def wipe_bench_data() -> None:
     """Clear what a robot accumulates on the bench. The locations are the ones
     migrate_user_data.sh enumerates; innate_skills/ and inputs/ are left alone because
     shipped tracked files and downloaded assets live intermixed there and nothing
@@ -388,6 +439,12 @@ def run_wipe_data() -> int:
             else:
                 child.unlink(missing_ok=True)
         log(f"wiped {directory}")
+
+
+def run_wipe_data() -> int:
+    """robot_info.json goes too: a wipe that left the derived identity behind would hand
+    back a robot still answering as the one whose data was just cleared."""
+    clear_derived_state(wipe_data=True, resume=True)
     return 0
 
 
@@ -395,7 +452,7 @@ def run_write(payload: dict[str, object]) -> int:
     env_text = payload.get("env")
     password = payload.get("password") or ""
     if not isinstance(env_text, str) or not isinstance(password, str):
-        raise PayloadError("expected {env: str, password: str}")
+        raise PayloadError("expected {env: str, password: str, wipe_data?: bool}")
     env = validate(env_text, password)
 
     # Read by root under the lock rather than trusted from the caller, so two operators
@@ -413,7 +470,7 @@ def run_write(payload: dict[str, object]) -> int:
     # undoing a later hand-edit is a cp away.
     user = login_user()
 
-    serial = short_id_tool(raw_serial=True)
+    serial = module_serial()
     if serial and "MODULE_SERIAL" not in env:
         env_text = env_text.rstrip("\n") + f"\nMODULE_SERIAL={serial}\n"
 
@@ -424,8 +481,11 @@ def run_write(payload: dict[str, object]) -> int:
     write_root_file(SYSTEM_ENV_PATH, env_text, user)
     log(f"wrote {SYSTEM_ENV_PATH} and {BACKUP_ENV_PATH}")
     supersede_migrated(env)
+    clear_derived_state(wipe_data=bool(payload.get("wipe_data")), resume=False)
 
     print(json.dumps({"robot_id": env["ROBOT_ID"], "robot_name": env.get("ROBOT_NAME", "")}))
+    sys.stdout.flush()
+    schedule_reboot()
     return 0
 
 
@@ -461,7 +521,9 @@ def strip_repo_identity() -> None:
 
 def run_unprovision() -> int:
     """Return this robot to the state a factory image ships in: no key, no identity, the
-    default login password, and seeded defaults so it advertises itself as unprovisioned.
+    default login password, seeded defaults so it advertises itself as unprovisioned — and
+    a reboot, so what comes back is a robot in that state rather than one still running the
+    identity it just lost.
 
     Not an undo of --write — the key is deleted rather than stashed, because an identity
     still recoverable from the robot's own disk was never really removed. Migrated facts
@@ -479,7 +541,7 @@ def run_unprovision() -> int:
     strip_repo_identity()
     log(f"removed {SYSTEM_ENV_PATH} and {BACKUP_ENV_PATH}")
 
-    run_reset_info()
+    clear_derived_state(wipe_data=False, resume=False)
     reseeded = run_seed() == 0
     if not reseeded:
         shout(
@@ -493,9 +555,11 @@ def run_unprovision() -> int:
     # Last on purpose: a failure before this point leaves an unprovisioned robot the
     # operator can still log into, not a keyed one open on a published default.
     user = login_user()
+    reset_password = True
     try:
         set_password(user, FACTORY_PASSWORD)
     except (OSError, RuntimeError, subprocess.SubprocessError) as e:
+        reset_password = False
         shout(
             "PASSWORD RESET FAILED — DE-PROVISIONED, BUT NOT BACK TO FACTORY DEFAULT",
             "",
@@ -503,17 +567,18 @@ def run_unprovision() -> int:
             f"'{user}' still holds the password provisioning gave it. Reset it by hand:",
             f"    sudo passwd {user}",
         )
-        return 1
 
-    shout(
-        f"THE LOGIN PASSWORD FOR '{user}' IS NOW '{FACTORY_PASSWORD}'",
-        "",
-        "That is the published factory default. Anyone who can reach this robot",
-        "on the network can log in over SSH and sudo.",
-        "",
-        "Keep it off shared networks until it has been re-provisioned.",
-    )
-    return 0 if reseeded else 1
+    if reset_password:
+        shout(
+            f"THE LOGIN PASSWORD FOR '{user}' IS NOW '{FACTORY_PASSWORD}'",
+            "",
+            "That is the published factory default. Anyone who can reach this robot",
+            "on the network can log in over SSH and sudo.",
+            "",
+            "Keep it off shared networks until it has been re-provisioned.",
+        )
+    schedule_reboot()
+    return 0 if reseeded and reset_password else 1
 
 
 # ---------------------------------------------------------------------------
@@ -525,12 +590,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Apply this robot's identity to /etc/innate.env.")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--seed", action="store_true", help="Write serial-derived defaults if unprovisioned")
-    mode.add_argument("--write", action="store_true", help="Apply an identity blob read from stdin")
+    mode.add_argument("--write", action="store_true", help="Provision from a blob on stdin, then reboot")
     mode.add_argument("--reset-info", action="store_true", help="Drop robot_info.json so ros-app re-derives it")
-    mode.add_argument("--wipe-data", action="store_true", help="Clear maps, nav state and custom skills/agents")
+    mode.add_argument(
+        "--wipe-data", action="store_true", help="Clear maps, nav state, custom skills/agents and robot_info.json"
+    )
     mode.add_argument("--migrate-info", action="store_true", help="Record facts that live only in robot_info.json")
     mode.add_argument(
-        "--unprovision", action="store_true", help="DESTRUCTIVE: delete the identity, reset the login password"
+        "--unprovision", action="store_true", help="DESTRUCTIVE: delete the identity, reset the password, reboot"
     )
     args = parser.parse_args()
 

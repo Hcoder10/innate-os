@@ -617,14 +617,10 @@ class TestSetIdentity:
             returncode=0, stdout='{"robot_id": "R7-41", "robot_name": "MARS the 41st"}\n', stderr=""
         )
         server = self._server_unprovisioned()
-        order = []
-        server._send_notification_threadsafe = MagicMock(side_effect=lambda r: order.append("reply"))
-        with patch.object(simple_bt_service.subprocess, "Popen") as mock_popen:
-            mock_popen.side_effect = lambda *a, **kw: order.append("reboot") or MagicMock()
-            resp = _send_command(server, {"command": "set_identity", "data": VALID_PAYLOAD})
+        resp = _send_command(server, {"command": "set_identity", "data": VALID_PAYLOAD})
 
-            assert resp["status"] == "in_progress"
-            assert _wait_for(lambda: mock_popen.called)
+        assert resp["status"] == "in_progress"
+        assert _wait_for(lambda: server._send_notification_threadsafe.called)
 
         write_call = [c for c in mock_run.call_args_list if "--write" in c.args[0]][0]
         assert write_call.args[0][:2] == ["sudo", simple_bt_service.IDENTITY_TOOL_PATH]
@@ -637,28 +633,22 @@ class TestSetIdentity:
         assert SERVICE_KEY not in json.dumps(final)
         assert "goodbot41" not in json.dumps(final)
 
-        # The reply has to be on the wire first: a reboot racing systemd's teardown of
-        # this unit against GLib.idle_add drops it silently.
-        assert order == ["reply", "reboot"]
-
-        # ros-app recreates robot_info.json from its launch-time env within a second, so
-        # resetting it before the stop would be undone before the reboot lands.
-        teardown = " ".join(mock_popen.call_args[0][0])
-        assert teardown.index("systemctl stop ros-app") < teardown.index("--reset-info")
-        assert teardown.index("--reset-info") < teardown.index("reboot")
-        assert "--wipe-data" not in teardown
-
     @patch.object(simple_bt_service, "is_provisioned", return_value=False)
     @patch.object(simple_bt_service.subprocess, "run")
-    def test_wipe_data_rides_along_as_its_own_call(self, mock_run, mock_provisioned):
+    def test_teardown_and_reboot_are_the_helpers_job(self, mock_run, mock_provisioned):
+        """This layer runs one command and answers. Stopping ros-app, resetting
+        robot_info.json, wiping data and rebooting all ride inside --write, which delays
+        the reboot precisely so this reply gets on the wire first."""
         mock_run.return_value = MagicMock(returncode=0, stdout='{"robot_id": "R7-41"}\n', stderr="")
         server = self._server_unprovisioned()
 
-        with patch.object(simple_bt_service.subprocess, "Popen") as mock_popen:
-            _send_command(server, {"command": "set_identity", "data": {**VALID_PAYLOAD, "wipe_data": True}})
-            assert _wait_for(lambda: mock_popen.called)
+        payload = {**VALID_PAYLOAD, "wipe_data": True}
+        _send_command(server, {"command": "set_identity", "data": payload})
+        assert _wait_for(lambda: server._send_notification_threadsafe.called)
 
-        assert "--wipe-data" in " ".join(mock_popen.call_args[0][0])
+        assert [c for c in mock_run.call_args_list if "--write" in c.args[0]]
+        assert len(mock_run.call_args_list) == 1
+        assert json.loads(mock_run.call_args.kwargs["input"])["wipe_data"] is True
 
     @patch.object(simple_bt_service, "is_provisioned", return_value=True)
     def test_refused_once_provisioned(self, mock_provisioned):
