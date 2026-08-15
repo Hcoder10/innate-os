@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import shutil
 import threading
 import time
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import cv2
@@ -557,6 +559,61 @@ def test_restart_lands_a_promotion_cut_down_mid_swap(data_dir):
     assert path is not None and path.read_bytes() == b"jpg-tour"
     assert not (root / ".mapping.promote").exists()
     assert not (root / ".mapping.displaced").exists()
+
+
+def test_a_failed_swap_puts_the_displaced_memories_back(data_dir, monkeypatch):
+    # The landing os.replace fails while the process lives on: the map must
+    # get its displaced memories back, and the stage must still hold the tour
+    # so a re-save can retry the whole promotion.
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(9.0, 9.0, 0.0, 900.0, b"jpg-old")
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-new")
+
+    real_replace = os.replace
+
+    def failing_landing(src, dst):
+        if Path(src).name == ".mapping.promote" and Path(dst).name == "A":
+            raise OSError("disk went away")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", failing_landing)
+    with pytest.raises(OSError):
+        store.promote_mapping_session("A.yaml")
+    monkeypatch.undo()
+
+    store.switch_map("A.yaml")
+    (memory,) = store.snapshot().memories
+    assert memory.x == 9.0  # the displaced memories are back
+    assert store.promote_mapping_session("A.yaml") == 1  # the retry lands the tour
+    store.switch_map("A.yaml")
+    (memory,) = store.snapshot().memories
+    assert memory.x == 1.0
+
+
+def test_session_entry_lands_a_stranded_promotion(data_dir):
+    # A failed swap whose in-line restore also failed leaves the stamped tour
+    # in scratch and the map's directory gone; the next session's entry must
+    # land it, not sweep it.
+    store = MemoryStore(data_dir)
+    store.use_mapping_session(1234.5)
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-tour")
+    (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-map-content")
+    assert store.promote_mapping_session("tour.yaml") == 1
+
+    root = data_dir / "spatial_memory"
+    (root / "tour").rename(root / ".mapping.promote")
+    (root / ".mapping.displaced").mkdir()
+
+    store.use_mapping_session(5678.0)  # the next tour begins
+    assert not (root / ".mapping.promote").exists()
+    assert not (root / ".mapping.displaced").exists()
+    store.switch_map("tour.yaml")
+    (memory,) = store.snapshot().memories
+    assert memory.id == 1
+    path = store.image_path(1)
+    assert path is not None and path.read_bytes() == b"jpg-tour"
 
 
 def test_restart_leaves_an_unstamped_promotion_copy_alone(data_dir):

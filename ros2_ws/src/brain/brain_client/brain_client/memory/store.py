@@ -36,7 +36,8 @@ from threading import Lock
 _INDEX_VERSION = 1
 MAPPING_SESSION = ".mapping"
 # Promotion scratch dirs — dot-prefixed like the stage, so no saved map name
-# can collide; leftovers from a crash are cleaned on the next session's entry.
+# can collide; leftovers from an interrupted promotion are landed or swept at
+# startup and again on the next session's entry.
 _PROMOTE_TMP = f"{MAPPING_SESSION}.promote"
 _DISPLACED_TMP = f"{MAPPING_SESSION}.displaced"
 
@@ -150,8 +151,9 @@ class MemoryStore:
             if session_started is None or not self._adopt_stage_locked(session_started):
                 self._fingerprint = os.urandom(16).hex()
                 self._wipe_locked()
+            self._finish_interrupted_promotion()  # a stamped leftover is a map's only memories — land it
             for scratch in (_PROMOTE_TMP, _DISPLACED_TMP):
-                shutil.rmtree(self._root / scratch, ignore_errors=True)  # crash leftovers from a promotion
+                shutil.rmtree(self._root / scratch, ignore_errors=True)
             self._revision += 1
             self.last_change_monotonic = time.monotonic()
 
@@ -202,7 +204,15 @@ class MemoryStore:
                 shutil.rmtree(displaced)
             if target.is_dir():
                 os.replace(target, displaced)
-            os.replace(tmp, target)
+            try:
+                os.replace(tmp, target)
+            except OSError:
+                # A failed landing must not leave the map memoryless while the
+                # process lives on: put the displaced memories back. The stage
+                # still holds the tour, so a re-save retries the promotion.
+                if displaced.is_dir() and not target.is_dir():
+                    os.replace(displaced, target)
+                raise
             shutil.rmtree(displaced, ignore_errors=True)
             if self._map_name == map_name:
                 # The switch won the race and loaded an empty store; adopt the
@@ -214,11 +224,13 @@ class MemoryStore:
             return count
 
     def _finish_interrupted_promotion(self) -> None:
-        """Land a promotion a crash cut short. Between promote's two
-        os.replace calls the map's directory is gone — a crash there would
-        wake the map memoryless, with both sets in scratch dirs the next
-        session wipes. The stamped copy names its map, so finish the swap.
-        An unstamped copy names ``.mapping``, whose dir exists: a no-op.
+        """Land a promotion an interruption cut short. Between promote's two
+        os.replace calls the map's directory is gone — a crash there (or a
+        failed swap whose in-line restore also failed) leaves the map
+        memoryless, with both sets in scratch dirs. The stamped copy names
+        its map, so finish the swap. An unstamped copy names ``.mapping``,
+        whose dir exists: a no-op. Runs at startup and on session entry,
+        before the entry's sweep destroys what it could have landed.
         """
         tmp = self._root / _PROMOTE_TMP
         try:
