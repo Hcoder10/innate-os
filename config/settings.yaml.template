@@ -210,19 +210,34 @@
 #     idle_turn_interval: 3.0       # seconds between looks when no skill is running
 #     supervision_turn_interval: 5.0  # seconds between looks while a skill runs
 
-# ── Voice & speech (realtime voice loop) ──────────────────────────────
-# input_manager_node runs the realtime voice / transcription loop; its model settings
-# live here. The TTS voice is shared globally — set it once under /** above (it
+# ── Voice & speech (voice loop) ───────────────────────────────────────
+# input_manager_node runs the voice / transcription loop; its model settings live
+# here. The TTS voice is shared globally — set it once under /** above (it
 # reaches both nodes; .env CARTESIA_VOICE_ID is the default).
-# stt_backend picks the transcription service: "elevenlabs" (Scribe realtime) or
-# "openai" (Realtime transcription sessions). The vad knobs apply to both; the
-# model knob of the *other* backend is simply unused.
+# stt_backend picks the transcription service. Batch backends cut utterances on
+# the robot and send each one whole: "elevenlabs_batch" (Scribe) or "gemini".
+# Realtime backends stream audio and let the vendor endpoint it: "elevenlabs"
+# (Scribe realtime) or "openai". The batch pair detects speech locally;
+# stt_vad_engine picks "silero" (neural, ignores fan/motor noise) or "energy"
+# (bare RMS threshold, the pre-Silero behavior and the fallback if the model
+# can't load). The batch and realtime VAD knobs are separate scales — silero's
+# speech probability and the vendors' sensitivity are unrelated numbers, so
+# stt_vad_threshold / stt_vad_silence_secs tune only the local (batch)
+# endpointing and the stt_realtime_* pair tunes only the realtime backends;
+# stt_energy_threshold only applies to the energy engine.
+# The model knobs of the backends you aren't using are simply unused.
 # input_manager_node:
 #   ros__parameters:
-#     stt_backend: "elevenlabs"
+#     stt_backend: "elevenlabs_batch"
+#     stt_vad_engine: "silero"
 #     stt_language: "en"
-#     stt_vad_threshold: 0.3        # lower = more sensitive to speech
-#     stt_vad_silence_secs: 0.7     # silence that closes an utterance
+#     stt_energy_threshold: 0.01    # energy engine: RMS (0-1) that counts as speech
+#     stt_vad_threshold: 0.2        # batch/silero: lower = more sensitive to speech
+#     stt_vad_silence_secs: 0.5     # batch: silence that closes an utterance
+#     stt_realtime_vad_threshold: 0.3       # realtime pair: vendor VAD sensitivity
+#     stt_realtime_vad_silence_secs: 0.7    # realtime pair: vendor silence that ends a turn
+#     elevenlabs_batch_stt_model: "scribe_v2"
+#     gemini_stt_model: "gemini-3.6-flash"
 #     elevenlabs_stt_model: "scribe_v2_realtime"
 #     openai_realtime_model: "gpt-4o-realtime-preview"
 #     openai_transcribe_model: "gpt-4o-mini-transcribe"

@@ -26,11 +26,12 @@ MIC_DEVICE_NAME = "micro"
 
 
 class InputDeviceManager:
-    def __init__(self, node, proxy, *, chat_in_pub, custom_pub):
+    def __init__(self, node, proxy, *, chat_in_pub, custom_pub, telemetry_pub):
         self._node = node
         self._logger = UniversalLogger(enabled=True, wrapped_logger=node.get_logger())
         self._chat_in_pub = chat_in_pub
         self._custom_pub = custom_pub
+        self._telemetry_pub = telemetry_pub
         self.input_devices: dict[str, InputDevice] = {}
         self._mic_enabled = True
         self._requested_inputs: set[str] = set()
@@ -67,7 +68,7 @@ class InputDeviceManager:
 
     # --- device -> brain data routing ---
     def _handle_device_data(self, device_name: str, data: Any, data_type: str) -> None:
-        """Publish data an input device wants to send to the agent."""
+        """Publish data an input device emits: to the agent (chat_in, custom) or past it (telemetry)."""
         try:
             text = data if isinstance(data, str) else data.get("text", "")
             if data_type == "chat_in":
@@ -83,9 +84,15 @@ class InputDeviceManager:
             elif data_type == "custom":
                 self._custom_pub.publish(msg)
                 self._logger.debug(f"📤 Published custom data from '{device_name}'")
+            elif data_type == "telemetry":
+                # UI-only status (e.g. the webapp's VAD meter) — the brain subscribes
+                # to /input_manager/custom, so telemetry must not ride that topic or
+                # it lands in every model turn's input.
+                self._telemetry_pub.publish(msg)
             else:
                 self._logger.warning(
-                    f"Unknown data type '{data_type}' from device '{device_name}'. Use 'chat_in' or 'custom'."
+                    f"Unknown data type '{data_type}' from device '{device_name}'. "
+                    "Use 'chat_in', 'custom' or 'telemetry'."
                 )
         except Exception as e:
             self._logger.error(f"Error handling data from device '{device_name}': {e}")

@@ -22,8 +22,8 @@ def generate_launch_description():
     # These are service configs that can be overridden at launch
     stt_backend_arg = DeclareLaunchArgument(
         "stt_backend",
-        default_value="elevenlabs",
-        description="Realtime STT backend: elevenlabs | openai",
+        default_value="elevenlabs_batch",
+        description="STT backend: elevenlabs_batch | gemini (batch) | elevenlabs | openai (realtime)",
     )
     stt_language_arg = DeclareLaunchArgument(
         "stt_language",
@@ -32,13 +32,43 @@ def generate_launch_description():
     )
     stt_vad_threshold_arg = DeclareLaunchArgument(
         "stt_vad_threshold",
-        default_value="0.3",
-        description="VAD speech-detection threshold (lower = more sensitive)",
+        default_value="0.2",
+        description="Batch backends: silero speech probability that counts as speech (lower = more sensitive)",
     )
     stt_vad_silence_secs_arg = DeclareLaunchArgument(
         "stt_vad_silence_secs",
+        default_value="0.5",
+        description="Batch backends: silence needed to close an utterance, in seconds",
+    )
+    stt_realtime_vad_threshold_arg = DeclareLaunchArgument(
+        "stt_realtime_vad_threshold",
+        default_value="0.3",
+        description="Realtime backends: vendor VAD sensitivity (lower = more sensitive)",
+    )
+    stt_realtime_vad_silence_secs_arg = DeclareLaunchArgument(
+        "stt_realtime_vad_silence_secs",
         default_value="0.7",
-        description="Silence needed to close an utterance, in seconds",
+        description="Realtime backends: vendor-side silence that closes a turn, in seconds",
+    )
+    stt_energy_threshold_arg = DeclareLaunchArgument(
+        "stt_energy_threshold",
+        default_value="0.01",
+        description="Batch backends: normalized RMS (0-1) above which a mic chunk counts as speech (energy engine)",
+    )
+    stt_vad_engine_arg = DeclareLaunchArgument(
+        "stt_vad_engine",
+        default_value="silero",
+        description="Batch backends' local voice detector: silero (neural) | energy (RMS threshold)",
+    )
+    elevenlabs_batch_stt_model_arg = DeclareLaunchArgument(
+        "elevenlabs_batch_stt_model",
+        default_value="scribe_v2",
+        description="ElevenLabs Scribe model for batch utterance transcription",
+    )
+    gemini_stt_model_arg = DeclareLaunchArgument(
+        "gemini_stt_model",
+        default_value="gemini-3.6-flash",
+        description="Gemini model for batch utterance transcription",
     )
     elevenlabs_stt_model_arg = DeclareLaunchArgument(
         "elevenlabs_stt_model",
@@ -74,6 +104,12 @@ def generate_launch_description():
             stt_language_arg,
             stt_vad_threshold_arg,
             stt_vad_silence_secs_arg,
+            stt_realtime_vad_threshold_arg,
+            stt_realtime_vad_silence_secs_arg,
+            stt_energy_threshold_arg,
+            stt_vad_engine_arg,
+            elevenlabs_batch_stt_model_arg,
+            gemini_stt_model_arg,
             elevenlabs_stt_model_arg,
             openai_realtime_model_arg,
             openai_realtime_url_arg,
@@ -94,6 +130,18 @@ def generate_launch_description():
                         "stt_vad_silence_secs": ParameterValue(
                             LaunchConfiguration("stt_vad_silence_secs"), value_type=float
                         ),
+                        "stt_realtime_vad_threshold": ParameterValue(
+                            LaunchConfiguration("stt_realtime_vad_threshold"), value_type=float
+                        ),
+                        "stt_realtime_vad_silence_secs": ParameterValue(
+                            LaunchConfiguration("stt_realtime_vad_silence_secs"), value_type=float
+                        ),
+                        "stt_energy_threshold": ParameterValue(
+                            LaunchConfiguration("stt_energy_threshold"), value_type=float
+                        ),
+                        "stt_vad_engine": LaunchConfiguration("stt_vad_engine"),
+                        "elevenlabs_batch_stt_model": LaunchConfiguration("elevenlabs_batch_stt_model"),
+                        "gemini_stt_model": LaunchConfiguration("gemini_stt_model"),
                         "elevenlabs_stt_model": LaunchConfiguration("elevenlabs_stt_model"),
                         "openai_realtime_model": LaunchConfiguration("openai_realtime_model"),
                         "openai_realtime_url": LaunchConfiguration("openai_realtime_url"),

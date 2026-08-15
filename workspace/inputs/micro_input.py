@@ -4,17 +4,21 @@
 """
 Microphone Input Device
 
-Connects to microphone hardware and a realtime speech-to-text backend to get
-voice transcripts. This is a pure Python class with NO ROS dependencies.
+Connects to microphone hardware and a speech-to-text backend to get voice
+transcripts. This is a pure Python class with NO ROS dependencies.
 
-Two backends, selected by the ``stt_backend`` setting:
+Four backends, selected by the ``stt_backend`` setting:
 
-- ``elevenlabs`` — ElevenLabs Scribe realtime (default)
-- ``openai``     — OpenAI Realtime transcription sessions
+- ``elevenlabs_batch`` — ElevenLabs Scribe batch, one POST per utterance (default)
+- ``gemini``           — Gemini generateContent, one call per utterance
+- ``elevenlabs``       — ElevenLabs Scribe realtime WebSocket
+- ``openai``           — OpenAI Realtime transcription sessions
 
-They differ in how a session is configured (query string vs. a session.update
-frame), in the audio frame shape, and in the transcript event names; the
-microphone, ducking, and reconnect machinery is shared.
+The realtime backends stream audio over a WebSocket and let the vendor do the
+voice-activity detection; the batch backends detect utterances locally — Silero
+VAD by default, an RMS energy threshold as fallback (``stt_vad_engine``) — and
+ship each one whole (see ``brain_client.inputs.batch_stt``). The microphone,
+ducking, and reconnect machinery is shared.
 
 Uses proxy services via self.proxy (injected by InputManager).
 """
@@ -27,8 +31,18 @@ import subprocess
 import threading
 import time
 
+from brain_client.brain.transport import pick_rest
 from brain_client.common.logging import UniversalLogger
+from brain_client.inputs.batch_stt import (
+    BatchSttSession,
+    EnergyDetector,
+    Transcriber,
+    VoicedDetector,
+    elevenlabs_proxy_transcriber,
+    gemini_transcriber,
+)
 from brain_client.inputs.types import InputDevice
+from brain_client.inputs.vad import silero_detector
 
 DEFAULT_SAMPLE_RATE = 24_000
 DEFAULT_CHANNELS = 1
@@ -38,7 +52,17 @@ CHUNK_DURATION_SEC = 0.02
 # transcript comes out time-warped.
 ELEVENLABS_AUDIO_FORMAT = f"pcm_{DEFAULT_SAMPLE_RATE}"
 
-STT_BACKENDS = frozenset({"elevenlabs", "openai"})
+STT_BACKENDS = frozenset({"elevenlabs_batch", "gemini", "elevenlabs", "openai"})
+BATCH_BACKENDS = frozenset({"elevenlabs_batch", "gemini"})
+DEFAULT_STT_BACKEND = "elevenlabs_batch"
+
+VAD_ENGINES = frozenset({"silero", "energy"})
+DEFAULT_VAD_ENGINE = "silero"
+# Reported to the webapp when the vendor endpoints server-side (realtime backends).
+VENDOR_VAD_ENGINE = "vendor"
+
+# One vad_status frame per this many mic chunks (20 ms each) — 5 Hz on the wire.
+VAD_STATUS_EVERY_CHUNKS = 10
 
 ELEVENLABS_ERROR_TYPES = frozenset(
     {
@@ -73,7 +97,10 @@ class MicroInput(InputDevice):
         super().__init__()
         self.mic = None
         self.client = None
-        self._backend = "elevenlabs"
+        self._backend = DEFAULT_STT_BACKEND
+        self._vad_engine = DEFAULT_VAD_ENGINE
+        self._vad_detector = None
+        self._last_transcript = ""
         self._stop_evt = threading.Event()
         self._audio_thread = None
         self._is_robot_talking = False  # For ducking (mic-specific)
@@ -212,8 +239,8 @@ class MicroInput(InputDevice):
         cfg = self.proxy.config
         transcribe_model = cfg.get("openai_transcribe_model", "gpt-4o-mini-transcribe")
         language = self._stt_language()
-        vad_threshold = float(cfg.get("stt_vad_threshold", 0.3))
-        silence_secs = float(cfg.get("stt_vad_silence_secs", 0.7))
+        vad_threshold = float(cfg.get("stt_realtime_vad_threshold", 0.3))
+        silence_secs = float(cfg.get("stt_realtime_vad_silence_secs", 0.7))
 
         self.logger.info("📤 WebSocket opened, sending session.update...")
         session_update = {
@@ -258,15 +285,19 @@ class MicroInput(InputDevice):
 
     def _connect_via_proxy(self):
         """Connect to the configured STT backend via proxy."""
-        backend = str(self.proxy.config.get("stt_backend") or "elevenlabs").strip().lower()
+        backend = str(self.proxy.config.get("stt_backend") or DEFAULT_STT_BACKEND).strip().lower()
         if backend not in STT_BACKENDS:
             self.logger.error(
-                f"❌ Unknown stt_backend {backend!r} — using 'elevenlabs' (options: {sorted(STT_BACKENDS)})"
+                f"❌ Unknown stt_backend {backend!r} — using {DEFAULT_STT_BACKEND!r} (options: {sorted(STT_BACKENDS)})"
             )
-            backend = "elevenlabs"
+            backend = DEFAULT_STT_BACKEND
         self._backend = backend
 
-        if self._backend == "openai":
+        if self._backend == "elevenlabs_batch":
+            model = self._connect_elevenlabs_batch()
+        elif self._backend == "gemini":
+            model = self._connect_gemini()
+        elif self._backend == "openai":
             model = self._connect_openai()
         else:
             model = self._connect_elevenlabs()
@@ -279,6 +310,89 @@ class MicroInput(InputDevice):
         self._is_connected = True
         self._reconnect_delay = 1  # Reset delay on successful connection
         self.logger.info(f"✅ Connected to {self._backend} STT (model: {model})")
+        self._send_vad_status()  # so the panel names the backend before any audio arrives
+
+    def _connect_elevenlabs_batch(self) -> str:
+        """Start a batch-transcription session on ElevenLabs Scribe. Returns the model id."""
+        model = self.proxy.config.get("elevenlabs_batch_stt_model", "scribe_v2")
+        transcriber = elevenlabs_proxy_transcriber(self.proxy, model, self._stt_language())
+        self._start_batch_session(transcriber, model)
+        return model
+
+    def _connect_gemini(self) -> str:
+        """Start a batch-transcription session on Gemini. Returns the model id."""
+        model = self.proxy.config.get("gemini_stt_model", "gemini-3.6-flash")
+
+        rest = pick_rest(self.proxy)
+        if rest is None:
+            raise RuntimeError("no Gemini access: proxy unavailable and GEMINI_API_KEY unset")
+
+        self._start_batch_session(gemini_transcriber(rest, model, self._stt_language()), model)
+        return model
+
+    def _start_batch_session(self, transcriber: Transcriber, model: str) -> None:
+        cfg = self.proxy.config
+        silence_secs = float(cfg.get("stt_vad_silence_secs", 0.5))
+        is_voiced, engine = self._make_vad(cfg)
+        self.logger.info(f"📤 Batch STT config: model={model}, vad={engine}, silence={silence_secs}s")
+        self.client = BatchSttSession(
+            transcriber=transcriber,
+            sample_rate=DEFAULT_SAMPLE_RATE,
+            is_voiced=is_voiced,
+            silence_secs=silence_secs,
+            on_transcript=self._on_transcript_if_active,
+            logger=self.logger,
+        )
+
+    def _make_vad(self, cfg: dict) -> tuple[VoicedDetector, str]:
+        """Build the voiced detector for the batch endpointer: (detector, engine name)."""
+        engine = str(cfg.get("stt_vad_engine") or DEFAULT_VAD_ENGINE).strip().lower()
+        if engine not in VAD_ENGINES:
+            self.logger.error(
+                f"❌ Unknown stt_vad_engine {engine!r} — using {DEFAULT_VAD_ENGINE!r} (options: {sorted(VAD_ENGINES)})"
+            )
+            engine = DEFAULT_VAD_ENGINE
+        detector: VoicedDetector | None = None
+        if engine == "silero":
+            threshold = float(cfg.get("stt_vad_threshold", 0.2))
+            detector = silero_detector(threshold, DEFAULT_SAMPLE_RATE, self.logger)
+            if detector is None:
+                engine = "energy"  # silero_detector logged why
+        if detector is None:
+            detector = EnergyDetector(float(cfg.get("stt_energy_threshold", 0.01)))
+        self._vad_detector, self._vad_engine = detector, engine
+        return detector, engine
+
+    def _send_vad_status(self) -> None:
+        """One vad_status frame for the webapp's voice panel.
+
+        Realtime backends have no local detector — they still send a frame so
+        the panel can say the vendor owns endpointing instead of sitting on
+        "waiting for VAD telemetry" forever.
+        """
+        client, detector = self.client, self._vad_detector
+        if client is None:
+            return
+        frame = {
+            "kind": "vad_status",
+            "backend": self._backend,
+            "engine": self._vad_engine,
+            "last_transcript": self._last_transcript,
+        }
+        if self._backend not in BATCH_BACKENDS or detector is None:
+            self.send_data({**frame, "engine": VENDOR_VAD_ENGINE}, data_type="telemetry")
+            return
+        self.send_data(
+            {
+                **frame,
+                "threshold": detector.threshold,
+                "level": round(detector.level, 4),
+                "voiced": detector.voiced,
+                "ducking": self._is_robot_talking,
+                **client.status(),
+            },
+            data_type="telemetry",
+        )
 
     def _connect_elevenlabs(self) -> str:
         """Open a Scribe realtime session. Returns the model id."""
@@ -286,8 +400,8 @@ class MicroInput(InputDevice):
 
         cfg = self.proxy.config
         model = cfg.get("elevenlabs_stt_model", "scribe_v2_realtime")
-        vad_threshold = float(cfg.get("stt_vad_threshold", 0.3))
-        silence_secs = float(cfg.get("stt_vad_silence_secs", 0.7))
+        vad_threshold = float(cfg.get("stt_realtime_vad_threshold", 0.3))
+        silence_secs = float(cfg.get("stt_realtime_vad_silence_secs", 0.7))
 
         self.logger.info(
             f"📤 Scribe config: model={model}, audio_format={ELEVENLABS_AUDIO_FORMAT}, "
@@ -365,12 +479,21 @@ class MicroInput(InputDevice):
         self._reconnect_thread = threading.Thread(target=reconnect_loop, daemon=True)
         self._reconnect_thread.start()
 
-    def _audio_frame(self, chunk: bytes) -> dict:
-        """Wrap a raw PCM chunk in the backend's audio-append frame."""
+    def _on_transcript_if_active(self, text: str):
+        if self.is_active():
+            self._on_transcript(text)
+
+    def _send_chunk(self, chunk: bytes):
+        """Hand one PCM chunk to the backend: fed locally (batch) or framed onto the wire."""
+        if self._backend in BATCH_BACKENDS:
+            self.client.feed(chunk)
+            return
         audio = base64.b64encode(chunk).decode("ascii")
         if self._backend == "openai":
-            return {"type": "input_audio_buffer.append", "audio": audio}
-        return {"message_type": "input_audio_chunk", "audio_base_64": audio}
+            frame = {"type": "input_audio_buffer.append", "audio": audio}
+        else:
+            frame = {"message_type": "input_audio_chunk", "audio_base_64": audio}
+        self.client.send_json(frame)
 
     def _start_audio_thread(self):
         """Start the audio streaming thread."""
@@ -384,6 +507,7 @@ class MicroInput(InputDevice):
             self.logger.info("🎧 Audio streaming thread started")
 
             chunks_sent = 0
+            chunks_seen = 0
             empty_count = 0
             ducking_logged = False
             while not self._stop_evt.is_set():
@@ -401,6 +525,13 @@ class MicroInput(InputDevice):
                     if not self._is_connected:
                         continue
 
+                    # Status rides the chunk cadence for every backend — the webapp
+                    # marks the voice panel stale after 2.5 s of silence — and keeps
+                    # flowing while ducking, so the DUCKING chip stays live too.
+                    chunks_seen += 1
+                    if chunks_seen % VAD_STATUS_EVERY_CHUNKS == 0:
+                        self._send_vad_status()
+
                     # Skip sending while ducking (robot is speaking)
                     if self._is_robot_talking:
                         if not ducking_logged:
@@ -409,7 +540,7 @@ class MicroInput(InputDevice):
                         continue
                     ducking_logged = False
 
-                    self.client.send_json(self._audio_frame(chunk))
+                    self._send_chunk(chunk)
                     chunks_sent += 1
 
                     # Log periodically (much less frequently)
@@ -514,12 +645,14 @@ class MicroInput(InputDevice):
 
         return preferred_device["id"] if preferred_device else None
 
-    def _on_transcript(self, text: str):
+    def _on_transcript(self, text: str) -> None:
         """Called when transcript is ready."""
         if text:
             self.logger.info(f"🎤 Transcript: {text}")
 
             self.send_data(text, data_type="chat_in")
+            self._last_transcript = text
+            self._send_vad_status()
 
 
 # ========== Audio Streaming Helpers ==========
@@ -568,8 +701,12 @@ class ArecordStreamer:
                 frame_bytes = int(self.sample_rate * CHUNK_DURATION_SEC * self.channels * bytes_per_sample)
                 self.logger.info(f"🎙️ Reader thread started, reading {frame_bytes} bytes per chunk")
                 chunks_read = 0
+                # bufsize=0 makes stdout a raw FileIO: read(n) returns *at most* n
+                # bytes, at any offset. Consumers parse chunks as int16 frames, so
+                # a chunk of odd length raises — accumulate and emit whole frames.
+                pending = bytearray()
                 while not self._stop.is_set():
-                    buf = self._proc.stdout.read(frame_bytes)
+                    buf = self._proc.stdout.read(frame_bytes - len(pending))
                     if not buf:
                         # Check if process died
                         if self._proc.poll() is not None:
@@ -578,11 +715,15 @@ class ArecordStreamer:
                             break
                         time.sleep(0.01)
                         continue
+                    pending.extend(buf)
+                    if len(pending) < frame_bytes:
+                        continue
+                    chunk, pending = bytes(pending), bytearray()
                     chunks_read += 1
                     if chunks_read == 1:
-                        self.logger.info(f"🎙️ First audio chunk received ({len(buf)} bytes)")
+                        self.logger.info(f"🎙️ First audio chunk received ({len(chunk)} bytes)")
                     try:
-                        self.queue.put_nowait(buf)
+                        self.queue.put_nowait(chunk)
                     except queue.Full:
                         pass
             except Exception as e:

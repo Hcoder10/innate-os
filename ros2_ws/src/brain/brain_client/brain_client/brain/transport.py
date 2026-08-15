@@ -15,7 +15,7 @@ import json
 import os
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import httpx
 
@@ -47,11 +47,20 @@ class GeminiHttpError(RuntimeError):
         self.status = status
 
 
+class RestPost(Protocol):
+    """(api path, body) -> parsed response; raises GeminiHttpError on non-200.
+
+    `timeout` overrides the transport's default deadline for one call.
+    """
+
+    def __call__(self, path: str, body: dict, timeout: float | None = None) -> dict: ...
+
+
 @dataclass(frozen=True)
 class GeminiRest:
     """Blocking JSON + media calls against the same backend the stream uses."""
 
-    post: Callable[[str, dict], dict]  # (api path, body) -> parsed response; raises GeminiHttpError on non-200
+    post: RestPost
     delete: Callable[[str], dict]  # api path -> parsed response (usually empty)
     upload: Callable[[str, bytes, str], dict]  # (api path, raw bytes, mime type) -> parsed response
 
@@ -123,8 +132,10 @@ def pick_rest(proxy: ProxyClient | None) -> GeminiRest | None:
 def proxy_rest(proxy: ProxyClient) -> GeminiRest:
     """Non-streaming Gemini calls through the proxy (same service passthrough as the stream)."""
 
-    def request(method: str, path: str, body: dict | None = None, data: bytes | None = None) -> dict:
-        with proxy.request_stream(PROXY_SERVICE, path, method=method, json=body, data=data) as resp:
+    def request(
+        method: str, path: str, body: dict | None = None, data: bytes | None = None, timeout: float | None = None
+    ) -> dict:
+        with proxy.request_stream(PROXY_SERVICE, path, method=method, json=body, data=data, timeout=timeout) as resp:
             payload = resp.read()
             if resp.status_code != 200:
                 raise GeminiHttpError(resp.status_code, payload[:200].decode(errors="replace"))
@@ -134,7 +145,7 @@ def proxy_rest(proxy: ProxyClient) -> GeminiRest:
     # passthrough that requires them answers non-200 and the caller latches
     # the files tier off (frames ride inline — today's behavior).
     return GeminiRest(
-        post=lambda path, body: request("POST", path, body),
+        post=lambda path, body, timeout=None: request("POST", path, body, timeout=timeout),
         delete=lambda path: request("DELETE", path),
         upload=lambda path, data, mime: request("POST", path, data=data),
     )
@@ -146,8 +157,11 @@ def direct_rest(api_key: str) -> GeminiRest:
     # longer timeout than the per-chunk streaming client.
     client = httpx.Client(headers={"x-goog-api-key": api_key}, timeout=120.0)
 
-    def request(method: str, path: str, body: dict | None = None) -> dict:
-        resp = client.request(method, DIRECT_BASE_URL + path, json=body)
+    def request(method: str, path: str, body: dict | None = None, timeout: float | None = None) -> dict:
+        # timeout=None means "no deadline" to httpx, not the client default.
+        resp = client.request(
+            method, DIRECT_BASE_URL + path, json=body, timeout=httpx.USE_CLIENT_DEFAULT if timeout is None else timeout
+        )
         if resp.status_code != 200:
             raise GeminiHttpError(resp.status_code, resp.text[:200])
         return resp.json() if resp.content else {}
@@ -163,7 +177,7 @@ def direct_rest(api_key: str) -> GeminiRest:
         return resp.json() if resp.content else {}
 
     return GeminiRest(
-        post=lambda path, body: request("POST", path, body),
+        post=lambda path, body, timeout=None: request("POST", path, body, timeout=timeout),
         delete=lambda path: request("DELETE", path),
         upload=upload,
     )

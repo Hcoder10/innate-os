@@ -131,7 +131,9 @@ class InputDevice(ABC):
             data: Dictionary containing the processed data
             data_type: Type of data - one of:
                       - "chat_in": Text input from user (voice, keyboard, etc.)
-                      - "custom": Any other data type
+                      - "custom": Any other data the agent should see
+                      - "telemetry": UI-only status the agent must NOT see
+                        (published on /input_manager/telemetry for the webapp)
 
         Example:
             self.send_data({
