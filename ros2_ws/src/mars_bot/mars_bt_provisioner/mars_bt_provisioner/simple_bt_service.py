@@ -695,15 +695,6 @@ class BleProvisionerServer:
             _adv.register_ad_cb = lambda: logger.info("BLE advertisement registered successfully.")
 
             def _on_ad_error(error):
-                # BlueZ fails the whole registration when the controller cannot take an
-                # interval, so give up the interval before giving up on LE advertising.
-                advert = self.peripheral.advert
-                if getattr(advert, "interval_ms", None) is not None:
-                    logger.warning(f"Advertisement rejected with an interval set ({error}); retrying at the default.")
-                    advert.interval_ms = None
-                    self.peripheral.ad_manager.register_advertisement(advert, {})
-                    return
-
                 logger.error(f"BLE advertisement registration FAILED: {error}")
                 # Fallback: re-enable legacy discoverable so the device name
                 # is still visible even if LE advertising failed
