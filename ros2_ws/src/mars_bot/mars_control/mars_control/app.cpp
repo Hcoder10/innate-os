@@ -9,7 +9,6 @@
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
 
 #include "drive_smoother.hpp"
-#include "hostname_utils.hpp"
 #include <geometry_msgs/msg/vector3.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -246,6 +245,45 @@ std::string get_robot_version(const std::string& mars_root) {
 std::string nmcli_get_active_wifi_ssid() {
     std::string result = exec_command("nmcli -t -f active,ssid dev wifi 2>/dev/null | grep '^yes:' | cut -d: -f2");
     return result;
+}
+
+/**
+ * Sanitize hostname to follow DNS rules:
+ * - Only letters (a-z), numbers (0-9), and hyphens (-)
+ * - Cannot start or end with hyphens
+ * - Max 63 characters
+ */
+std::string sanitize_hostname(const std::string& hostname) {
+    if (hostname.empty())
+        return "mars";
+
+    std::string result;
+    result.reserve(hostname.length());
+
+    // Convert to lowercase and replace invalid chars with hyphens
+    for (char c : hostname) {
+        if (std::isalnum(c)) {
+            result += std::tolower(c);
+        } else {
+            result += '-';
+        }
+    }
+
+    // Remove consecutive hyphens
+    result.erase(std::unique(result.begin(), result.end(), [](char a, char b) { return a == '-' && b == '-'; }),
+                 result.end());
+
+    // Trim leading/trailing hyphens
+    size_t start = result.find_first_not_of('-');
+    size_t end = result.find_last_not_of('-');
+    if (start == std::string::npos)
+        return "mars";
+
+    result = result.substr(start, std::min(end - start + 1, size_t(63)));
+    if (result.back() == '-')
+        result.pop_back();
+
+    return result.empty() ? "mars" : result;
 }
 
 /**
