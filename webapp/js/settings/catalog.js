@@ -42,6 +42,12 @@
  * @property {number} [step] Slider step (defaults to 1).
  * @property {{value: string, label: string}[]} [options]  For a string knob: render a
  *   <select> of these choices instead of a free-text field.
+ * @property {{node: string, param: string}} [optionsFrom]  Read the option list off a
+ *   read-only string-array parameter at mount and fill the <select> with it. For a list
+ *   the catalog cannot state without going stale — start `options` empty, and until the
+ *   read lands (or if rosbridge is down) the picker offers only "Custom…". Labels are
+ *   derived from the values, so the robot decides what exists and nothing here drifts.
+ * @property {string} [customPlaceholder]  Placeholder for the "Custom…" free-text field.
  * @property {string} [live]  Node to push this knob to with set_parameters after saving,
  *   so it applies without a restart. Set ONLY where the running node re-reads the
  *   parameter (mars_app reads its drive knobs every tick). Nodes that copy a parameter
@@ -100,10 +106,17 @@ export const SETTINGS_PAGES = [
   {
     hasSpeakerVolume: true,
     icon: "volume.svg",
-    title: "Voice",
-    summary: "Speaker volume and robot voice",
-    note: "Adjust how loud the robot speaks and choose its voice.",
+    title: "Sound",
+    summary: "Speaker volume, robot voice, and the sound it makes driving",
+    note: "Adjust how loud the robot speaks, choose its voice, and pick what it sounds like on the move.",
     sections: [
+      {
+        title: "Driving sound",
+        note: "The costume the acceleration wears. Swapping is live and gain-ramped so it cannot click, but nothing is audible until the robot moves.",
+        knobs: [
+          { path: ["motor_sound", P, "motor_sound", "voice"], label: "Motor sound", default: "lip_trill", type: "string", doc: "What the robot sounds like as it drives. The list is read off the robot, so it holds whatever this build can actually play; a name it does not have falls back to the motor whine.", options: [], optionsFrom: { node: "/motor_sound", param: "motor_sound.voice_options" }, customPlaceholder: "Type a voice name", live: "/motor_sound" },
+        ],
+      },
       {
         title: "Robot voice",
         note: "The TTS voice drives both chat-TTS and realtime voice.",

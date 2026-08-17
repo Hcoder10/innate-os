@@ -31,7 +31,7 @@ import time
 import numpy as np
 import rclpy
 from geometry_msgs.msg import Twist
-from rcl_interfaces.msg import SetParametersResult
+from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from std_msgs.msg import String
@@ -108,6 +108,13 @@ class MotorSoundNode(Node):
             parameters=[
                 ("motor_sound.enabled", True),
                 ("motor_sound.voice", "lip_trill"),
+                # Read-only: what `voice` accepts, so a picker can offer the voices this
+                # build actually has rather than a copy of the list that goes stale.
+                (
+                    "motor_sound.voice_options",
+                    ["motor", *VOICES],
+                    ParameterDescriptor(read_only=True, description="Accepted values for motor_sound.voice"),
+                ),
                 ("motor_sound.volume", 0.5),
                 ("motor_sound.idle_when_stopped", True),
                 ("motor_sound.only_in_mad_mode", True),

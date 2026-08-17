@@ -41,6 +41,9 @@ const SHUTDOWN_QUICK_RECONNECT_MS = 15_000;
  * @property {boolean} savedOverridden  Last-saved (on-disk) state.
  * @property {*} savedValue
  * @property {() => void} render  Push value + overridden state into the DOM control.
+ * @property {(list: {value: string, label: string}[]) => void} [setOptions]
+ *   Replace a <select>'s choices with the list read off the robot. Only on knobs the
+ *   catalog gave an optionsFrom.
  * @property {HTMLElement} row
  * @property {HTMLElement} [validationEl]
  */
@@ -834,19 +837,32 @@ function buildKnobControl(/** @type {HTMLElement} */ controlContainer, /** @type
     const CUSTOM_OPTION_VALUE = "__custom__";
     const select = document.createElement("select");
     select.className = "set-text";
-    for (const option of options) {
-      select.add(new Option(option.label, option.value));
-    }
-    // A permanent "Custom…" choice that reveals a free-text field for any off-list value
-    // (e.g. a voice id pasted from Cartesia's library, or one set over SSH).
-    select.add(new Option("Custom…", CUSTOM_OPTION_VALUE));
+    const fillSelect = () => {
+      select.replaceChildren();
+      for (const option of options) {
+        select.add(new Option(option.label, option.value));
+      }
+      // A permanent "Custom…" choice that reveals a free-text field for any off-list value
+      // (e.g. a voice id pasted from Cartesia's library, or one set over SSH).
+      select.add(new Option("Custom…", CUSTOM_OPTION_VALUE));
+    };
+    fillSelect();
     controlRow.appendChild(select);
 
     const customInput = inputEl("text", "set-text");
-    customInput.placeholder = "Paste a voice ID";
+    customInput.placeholder = knob.customPlaceholder || "Paste a voice ID";
     customInput.style.display = "none";
 
     const isStockOption = () => options.some((option) => option.value === entry.value);
+    // Options that arrived from the robot rather than the catalog. Mutating the captured
+    // array in place is what keeps isStockOption honest, and the re-render is what moves a
+    // saved value out of the Custom field once the list naming it lands.
+    entry.setOptions = (list) => {
+      options.length = 0;
+      options.push(...list);
+      fillSelect();
+      entry.render();
+    };
     entry.render = () => {
       const usesStockOption = isStockOption();
       select.value = usesStockOption ? String(entry.value) : CUSTOM_OPTION_VALUE;
@@ -935,6 +951,47 @@ async function loadSettings() {
   }
   recompute();
   setStatus("");
+}
+
+/** "spoke_card" -> "Spoke Card". The robot ships values, not display names. */
+function labelFor(/** @type {string} */ value) {
+  return value.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * Fill the knobs whose choices the robot owns rather than the catalog, by reading the
+ * read-only parameter each one names. A failure is survivable: the picker keeps its
+ * "Custom…" entry, so the value is still typeable — better than a stale list baked in
+ * here. Deferred until rosbridge connects, because on a cold load the socket is usually
+ * still opening when the page builds.
+ */
+function loadRobotOptions() {
+  const wanted = entries.filter((e) => e.knob.optionsFrom);
+  if (!wanted.length) return;
+
+  const read = async () => {
+    for (const e of wanted) {
+      const { node, param } = /** @type {{node: string, param: string}} */ (e.knob.optionsFrom);
+      try {
+        const res = await ros.callService(`${node}/get_parameters`, { names: [param] });
+        const values = res?.values?.[0]?.string_array_value || [];
+        if (values.length) e.setOptions?.(values.map((value) => ({ value, label: labelFor(value) })));
+      } catch (err) {
+        console.warn(`Couldn't read ${param} from ${node} — leaving the picker free-text:`, err);
+      }
+    }
+  };
+
+  if (ros.state === "connected") {
+    read();
+    return;
+  }
+  const unlisten = ros.onStateChange((/** @type {string} */ state) => {
+    if (state !== "connected") return;
+    unlisten();
+    read();
+  });
+  cleanups.push(unlisten);
 }
 
 async function savePost(/** @type {any} */ payload) {
@@ -1159,6 +1216,7 @@ export function mount(stageEl) {
   searchInput = null;
   buildSettingsPage();
   loadSettings();
+  loadRobotOptions();
   return {
     destroy() {
       for (const fn of cleanups.splice(0)) fn();
