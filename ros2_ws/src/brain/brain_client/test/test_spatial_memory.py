@@ -1949,3 +1949,38 @@ def test_a_later_promotion_spares_another_maps_stranded_memories(data_dir):
     recovered = MemoryStore(data_dir)
     recovered.switch_map("A.yaml")
     assert [m.x for m in recovered.snapshot().memories] == [9.0]
+
+
+def test_a_failed_promotion_never_restores_another_maps_set(data_dir, monkeypatch):
+    # Greptile P1 (store.py:216): B's memories are stranded in
+    # .mapping.displaced. A promotion for A then fails to land, and the restore
+    # must not hand B's set to A -- a foreign coordinate frame in A, and B
+    # stripped of its only copy.
+    store = MemoryStore(data_dir)
+    store.switch_map("B.yaml")
+    store.add(9.0, 9.0, 0.0, 900.0, b"jpg-b")
+
+    root = data_dir / "spatial_memory"
+    (root / "B").rename(root / ".mapping.displaced")  # B stranded by an earlier failure
+
+    store.use_mapping_session(session_started=222.0)
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-tour-a")
+
+    real_replace = os.replace
+
+    def landing_into_a_fails(src, dst):
+        # Only the tour's landing fails; a restore into A would be free to run,
+        # which is exactly what must not happen with B's set sitting there.
+        if Path(src).name == ".mapping.promote" and Path(dst).name == "A":
+            raise OSError("disk went away")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", landing_into_a_fails)
+    with pytest.raises(OSError):
+        store.promote_mapping_session("A.yaml", mapping_started=222.0)
+    monkeypatch.undo()
+
+    assert not (root / "A").is_dir(), "A was given another map's memories"
+    stranded = json.loads((root / ".mapping.displaced" / "index.json").read_text())
+    assert stranded["map"] == "B.yaml", "B's set was moved out from under it"
+    assert [m["x"] for m in stranded["memories"]] == [9.0]

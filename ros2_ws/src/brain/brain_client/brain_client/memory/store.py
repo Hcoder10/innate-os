@@ -211,9 +211,7 @@ class MemoryStore:
                 # A failed landing must not leave the map memoryless while the
                 # process lives on: put the displaced memories back. The stage
                 # still holds the tour, so a re-save retries the promotion.
-                # Best effort — a restore that fails too leaves both sets in
-                # scratch for recovery, and raising here would bury the cause.
-                _land(displaced, target)
+                self._restore_displaced(target)
                 raise
             self._drop_scratch(displaced)  # this map's old set is spent; another map's is not
             if self._map_name == map_name:
@@ -236,11 +234,22 @@ class MemoryStore:
         entry's sweep destroys what it could have landed.
         """
         tmp = self._root / _PROMOTE_TMP
-        displaced = self._root / _DISPLACED_TMP
         target = _scratch_map_dir(self._root, tmp)
         if target is not None and not target.is_dir() and not _land(tmp, target):
+            self._restore_displaced(target)
+        self._drop_scratch(self._root / _DISPLACED_TMP)
+
+    def _restore_displaced(self, target: Path) -> None:
+        """Give a map back the set displaced from it. Best effort, and only
+        when the scratch dir is that map's: an earlier failed promotion can
+        have stranded another map's memories there, and those are a foreign
+        coordinate frame here — landing them would plant lies in this map and
+        strip the map they belong to. A restore that cannot run leaves both
+        sets in scratch for recovery; raising would bury the original error.
+        """
+        displaced = self._root / _DISPLACED_TMP
+        if _scratch_map_dir(self._root, displaced) == target:
             _land(displaced, target)
-        self._drop_scratch(displaced)
 
     def _drop_scratch(self, *scratch: Path) -> None:
         """Remove promotion scratch no map is waiting on. One still owed to a
