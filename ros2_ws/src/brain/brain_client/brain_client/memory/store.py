@@ -152,8 +152,7 @@ class MemoryStore:
                 self._fingerprint = os.urandom(16).hex()
                 self._wipe_locked()
             self._finish_interrupted_promotion()  # a stamped leftover is a map's only memories — land it
-            for scratch in (_PROMOTE_TMP, _DISPLACED_TMP):
-                shutil.rmtree(self._root / scratch, ignore_errors=True)
+            self._drop_scratch(self._root / _PROMOTE_TMP, self._root / _DISPLACED_TMP)
             self._revision += 1
             self.last_change_monotonic = time.monotonic()
 
@@ -200,8 +199,10 @@ class MemoryStore:
             # memoryless if a crash lands between the two.
             target = self._root / Path(map_name).stem
             displaced = self._root / _DISPLACED_TMP
-            if displaced.is_dir():
-                shutil.rmtree(displaced)
+            # Not a bare rmtree: a set still owed to an absent map survives, and
+            # the displace below then fails on the non-empty dir — a promotion
+            # that refuses to run beats one that eats another map's memories.
+            self._drop_scratch(displaced)
             if target.is_dir():
                 os.replace(target, displaced)
             try:
@@ -210,8 +211,9 @@ class MemoryStore:
                 # A failed landing must not leave the map memoryless while the
                 # process lives on: put the displaced memories back. The stage
                 # still holds the tour, so a re-save retries the promotion.
-                if displaced.is_dir() and not target.is_dir():
-                    os.replace(displaced, target)
+                # Best effort — a restore that fails too leaves both sets in
+                # scratch for recovery, and raising here would bury the cause.
+                _land(displaced, target)
                 raise
             shutil.rmtree(displaced, ignore_errors=True)
             if self._map_name == map_name:
@@ -227,20 +229,29 @@ class MemoryStore:
         """Land a promotion an interruption cut short. Between promote's two
         os.replace calls the map's directory is gone — a crash there (or a
         failed swap whose in-line restore also failed) leaves the map
-        memoryless, with both sets in scratch dirs. The stamped copy names
-        its map, so finish the swap. An unstamped copy names ``.mapping``,
-        whose dir exists: a no-op. Runs at startup and on session entry,
-        before the entry's sweep destroys what it could have landed.
+        memoryless, with both sets in scratch dirs. The stamped copy names its
+        map, so finish the swap; when it will not land, give the map back the
+        set it had instead. An unstamped copy names ``.mapping``, whose dir
+        exists: a no-op. Runs at startup and on session entry, before the
+        entry's sweep destroys what it could have landed.
         """
         tmp = self._root / _PROMOTE_TMP
-        try:
-            map_name = str(json.loads((tmp / "index.json").read_text())["map"])
-            target = self._root / Path(map_name).stem
-            if not target.is_dir():
-                os.replace(tmp, target)
-        except (OSError, json.JSONDecodeError, TypeError, KeyError):
-            pass  # nothing stamped to land; session entry sweeps the scratch
-        shutil.rmtree(self._root / _DISPLACED_TMP, ignore_errors=True)
+        displaced = self._root / _DISPLACED_TMP
+        target = _scratch_map_dir(self._root, tmp)
+        if target is not None and not target.is_dir() and not _land(tmp, target):
+            _land(displaced, target)
+        self._drop_scratch(displaced)
+
+    def _drop_scratch(self, *scratch: Path) -> None:
+        """Remove promotion scratch no map is waiting on. One still owed to a
+        map whose directory is absent stays put: it holds that map's only
+        memories, and the next recovery gets another chance to land it —
+        deleting it there is the one way to lose the map's memories for good.
+        """
+        for path in scratch:
+            owed = _scratch_map_dir(self._root, path)
+            if owed is None or owed.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
 
     def snapshot(self) -> MemorySnapshot:
         with self._lock:
@@ -388,6 +399,30 @@ class MemoryStore:
         os.replace(tmp, self._dir / "index.json")
         self._revision += 1
         self.last_change_monotonic = time.monotonic()
+
+
+def _scratch_map_dir(root: Path, scratch: Path) -> Path | None:
+    """The saved-map directory whose memories a promotion scratch dir is
+    holding, or None when it holds none a map could be waiting on — an
+    unreadable index, or a copy of the stage, which the stage itself still has."""
+    try:
+        map_name = str(json.loads((scratch / "index.json").read_text())["map"])
+    except (OSError, json.JSONDecodeError, ValueError, TypeError, KeyError):
+        return None
+    return None if map_name == MAPPING_SESSION else root / Path(map_name).stem
+
+
+def _land(scratch: Path, target: Path) -> bool:
+    """Move a scratch copy into place, reporting whether it got there. False
+    leaves it where it stands for the next recovery to retry — never for a
+    caller to treat as spent."""
+    if not scratch.is_dir():
+        return False
+    try:
+        os.replace(scratch, target)
+    except OSError:
+        return False
+    return True
 
 
 def _staged_index(stage: Path) -> dict | None:

@@ -1886,3 +1886,39 @@ def test_a_same_name_remap_disqualifies_the_cache(data_dir):
     remap_in_place(data_dir, store)
     search.search("the kitchen")
     assert "cachedContent" not in fake.generates[-1]  # old-map frames must not vouch for reused ids
+
+
+def test_a_fault_outliving_the_promotion_keeps_both_sets_recoverable(data_dir, monkeypatch):
+    # The landing fails, the in-line restore fails, and the fault persists into
+    # recovery. Neither scratch dir may be deleted while the map is absent --
+    # they hold the map's only memories -- and once the fault clears, recovery
+    # must put the map back.
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(9.0, 9.0, 0.0, 900.0, b"jpg-old")
+    store.use_mapping_session(session_started=111.0)
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-new")
+
+    root = data_dir / "spatial_memory"
+    real_replace = os.replace
+
+    def landing_always_fails(src, dst):
+        if Path(dst).name == "A":
+            raise OSError("disk went away")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", landing_always_fails)
+    with pytest.raises(OSError):
+        store.promote_mapping_session("A.yaml", mapping_started=111.0)
+
+    assert not (root / "A").is_dir()  # the window: map gone, both sets in scratch
+
+    # A new mapping session runs while the fault persists: its sweep must spare
+    # what the map is still owed.
+    store.use_mapping_session(session_started=222.0)
+    assert (root / ".mapping.displaced").is_dir(), "deleted the map's only surviving memories"
+
+    monkeypatch.undo()  # the disk comes back
+    recovered = MemoryStore(data_dir)
+    recovered.switch_map("A.yaml")
+    assert recovered.snapshot().memories, "recovery never gave the map its memories back"
