@@ -1922,3 +1922,30 @@ def test_a_fault_outliving_the_promotion_keeps_both_sets_recoverable(data_dir, m
     recovered = MemoryStore(data_dir)
     recovered.switch_map("A.yaml")
     assert recovered.snapshot().memories, "recovery never gave the map its memories back"
+
+
+def test_a_later_promotion_spares_another_maps_stranded_memories(data_dir):
+    # Greptile P1 (store.py:218): a failed promotion for A leaves A's only
+    # memories stranded in .mapping.displaced with A's directory gone. A later
+    # promotion for B -- whose own directory does not exist, so nothing of B's
+    # is displaced -- must not sweep A's set away on its successful way out.
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(9.0, 9.0, 0.0, 900.0, b"jpg-a")
+
+    root = data_dir / "spatial_memory"
+    (root / "A").rename(root / ".mapping.displaced")  # the state a failed swap leaves
+
+    store.use_mapping_session(session_started=222.0)
+    assert (root / ".mapping.displaced").is_dir(), "session entry swept A's stranded memories"
+    store.add(3.0, 4.0, 0.0, 2000.0, b"jpg-tour-b")
+
+    assert not (root / "B").is_dir()  # nothing of B's to displace
+    assert store.promote_mapping_session("B.yaml", mapping_started=222.0) == 1
+    assert (root / ".mapping.displaced").is_dir(), "B's promotion swept A's only memories"
+
+    # And A is still recoverable from it.
+    (root / ".mapping.displaced").rename(root / "A")
+    recovered = MemoryStore(data_dir)
+    recovered.switch_map("A.yaml")
+    assert [m.x for m in recovered.snapshot().memories] == [9.0]

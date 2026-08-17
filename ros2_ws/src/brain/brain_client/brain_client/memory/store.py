@@ -215,7 +215,7 @@ class MemoryStore:
                 # scratch for recovery, and raising here would bury the cause.
                 _land(displaced, target)
                 raise
-            shutil.rmtree(displaced, ignore_errors=True)
+            self._drop_scratch(displaced)  # this map's old set is spent; another map's is not
             if self._map_name == map_name:
                 # The switch won the race and loaded an empty store; adopt the
                 # promoted memories now — no later tick would reload them.
