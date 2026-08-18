@@ -269,6 +269,7 @@ class WebRTCStreamer : public rclcpp::Node {
     guint playout_max_delay_ms_ = 40;
     bool video_nack_ = true;
     guint video_fec_percentage_ = 25;
+    bool video_duplicate_packets_ = false;
     bool enable_local_stun_ = true;
     int local_stun_port_ = 3478;
     std::atomic<bool> stun_running_{false};

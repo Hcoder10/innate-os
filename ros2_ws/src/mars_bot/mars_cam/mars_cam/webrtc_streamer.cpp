@@ -91,6 +91,7 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     // roughly one RTT for the resend, so remote viewers should raise that param too.
     this->declare_parameter("video_nack", true);
     this->declare_parameter("video_fec_percentage", 25);
+    this->declare_parameter("video_duplicate_packets", false);
     this->declare_parameter("enable_local_stun", true);
     this->declare_parameter("local_stun_port", 3478);
     // RTCP-inactivity release only fires on a peer webrtcbin still reports CONNECTED — it's a backstop for
@@ -108,6 +109,7 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     video_nack_ = this->get_parameter("video_nack").as_bool();
     video_fec_percentage_ =
         static_cast<guint>(std::clamp(this->get_parameter("video_fec_percentage").as_int(), int64_t{0}, int64_t{100}));
+    video_duplicate_packets_ = this->get_parameter("video_duplicate_packets").as_bool();
     enable_local_stun_ = this->get_parameter("enable_local_stun").as_bool();
     local_stun_port_ = static_cast<int>(this->get_parameter("local_stun_port").as_int());
     rtcp_inactivity_timeout_s_ = this->get_parameter("rtcp_inactivity_timeout_s").as_double();
