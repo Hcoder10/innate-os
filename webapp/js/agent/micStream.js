@@ -13,19 +13,20 @@ import { isTtsPlaying } from "../micAudioState.js";
 const WORKLET_URL = "/js/agent/micWorklet.js";
 // The rate MicroInput's VAD and the vendor wire formats are built around.
 const SAMPLE_RATE = 24000;
+const WAVEFORM_POINT_COUNT = 7;
 
 /**
- * @typedef {{ on: boolean, busy: boolean, level: number, error: string | null }} MicState
+ * @typedef {{ on: boolean, busy: boolean, level: number, waveform: number[], error: string | null }} MicState
  */
 
 /**
  * @param {import("../rosClient.js").RosClient} rosClient
  * @param {(state: MicState) => void} onState
- * @returns {{ toggle: () => Promise<void>, stop: () => void, destroy: () => void }}
+ * @returns {{ start: () => Promise<void>, stop: () => void, destroy: () => void }}
  */
 export function createMicStream(rosClient, onState) {
   /** @type {MicState} */
-  let state = { on: false, busy: false, level: 0, error: null };
+  let state = { on: false, busy: false, level: 0, waveform: emptyWaveform(), error: null };
   /** @type {MediaStream | null} */
   let media = null;
   /** @type {AudioContext | null} */
@@ -33,6 +34,7 @@ export function createMicStream(rosClient, onState) {
   /** @type {(() => void) | null} */
   let unadvertise = null;
   let destroyed = false;
+  let startId = 0;
 
   /** @param {Partial<MicState>} patch */
   function patch(patch) {
@@ -41,6 +43,8 @@ export function createMicStream(rosClient, onState) {
   }
 
   async function start() {
+    if (state.on || state.busy) return;
+    const id = ++startId;
     if (!navigator.mediaDevices?.getUserMedia) {
       // getUserMedia exists only in a secure context — over plain http from
       // another machine the API is simply absent.
@@ -49,18 +53,22 @@ export function createMicStream(rosClient, onState) {
     }
     patch({ busy: true, error: null });
     try {
-      media = await navigator.mediaDevices.getUserMedia({
+      const nextMedia = await navigator.mediaDevices.getUserMedia({
         // Keeps the robot's own speech out of its ears; the gate in publish()
         // covers what leaks past it.
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
+      if (destroyed || id !== startId) {
+        for (const track of nextMedia.getTracks()) track.stop();
+        return;
+      }
+      media = nextMedia;
       // The mic device subscribes only once the agent runs, so the bridge has
       // nothing to infer the type from yet.
       unadvertise = rosClient.advertise(MIC_AUDIO_TOPIC, "std_msgs/msg/String");
-      if (destroyed) return teardown(); // unmounted mid-await: a stream captured now is never stopped
       ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
       await ctx.audioWorklet.addModule(WORKLET_URL);
-      if (destroyed) return teardown();
+      if (destroyed || id !== startId) return teardown();
       const chunker = new AudioWorkletNode(ctx, "mic-chunker");
       chunker.port.onmessage = (e) => publish(e.data);
       ctx.createMediaStreamSource(media).connect(chunker);
@@ -71,8 +79,9 @@ export function createMicStream(rosClient, onState) {
       chunker.connect(mute).connect(ctx.destination);
       patch({ on: true, busy: false });
     } catch (err) {
+      if (destroyed || id !== startId) return;
       teardown();
-      patch({ on: false, busy: false, level: 0, error: describe(err) });
+      patch({ on: false, busy: false, level: 0, waveform: emptyWaveform(), error: describe(err) });
     }
   }
 
@@ -80,7 +89,7 @@ export function createMicStream(rosClient, onState) {
   function publish(buf) {
     if (destroyed) return;
     const pcm = new Int16Array(buf);
-    patch({ level: rms(pcm) });
+    patch({ level: rms(pcm), waveform: waveformAmplitudes(pcm) });
     if (isTtsPlaying()) return;
     rosClient.publish(MIC_AUDIO_TOPIC, { data: toBase64(new Uint8Array(buf)) });
   }
@@ -95,20 +104,19 @@ export function createMicStream(rosClient, onState) {
   }
 
   function stop() {
-    if (!state.on) return;
+    const wasActive = state.on || state.busy;
+    startId++;
+    if (!wasActive) return;
     teardown();
-    patch({ on: false, level: 0 });
+    patch({ on: false, busy: false, level: 0, waveform: emptyWaveform() });
   }
 
   return {
-    async toggle() {
-      if (state.busy) return;
-      if (state.on) stop();
-      else await start();
-    },
+    start,
     stop,
     destroy() {
       destroyed = true;
+      startId++;
       teardown();
     },
   };
@@ -119,6 +127,22 @@ function rms(pcm) {
   let sum = 0;
   for (const s of pcm) sum += s * s;
   return Math.sqrt(sum / pcm.length) / 32768;
+}
+
+/** @returns {number[]} */
+function emptyWaveform() {
+  return Array(WAVEFORM_POINT_COUNT).fill(0);
+}
+
+/** @param {Int16Array} pcm @returns {number[]} */
+function waveformAmplitudes(pcm) {
+  return Array.from({ length: WAVEFORM_POINT_COUNT }, (_, point) => {
+    const start = Math.floor((point * pcm.length) / WAVEFORM_POINT_COUNT);
+    const end = Math.floor(((point + 1) * pcm.length) / WAVEFORM_POINT_COUNT);
+    let sum = 0;
+    for (let i = start; i < end; i++) sum += pcm[i] * pcm[i];
+    return Math.sqrt(sum / Math.max(1, end - start)) / 32768;
+  });
 }
 
 /** @param {Uint8Array} bytes @returns {string} */

@@ -13,8 +13,8 @@
 //
 // Connect/disconnect lifecycle and optimistic mount mirror teleop (see
 // pageMount.js): the view builds immediately and panels fill in once the socket
-// is up. No mic control mounts here; robot speech still comes back through the
-// shell's ttsAudio.
+// is up. The centered hold-to-talk control is the sim's voice input; robot
+// speech comes back through the shell's ttsAudio.
 
 import { ros } from "../rosClient.js";
 import { mountPage } from "../pageMount.js";
@@ -26,6 +26,7 @@ import { createCameraSwitch } from "../teleop/cameraSwitch.js";
 import { createAgentState } from "../teleop/agentState.js";
 import { createAgentPanel } from "./agentPanel.js";
 import { createChallengePanel } from "./challengePanel.js";
+import { createAgentMicControl } from "./agentMicControl.js";
 
 // Runtime feature flags (config.json, served static), same as teleop. simControls
 // marks a sim deployment — used here to drop the (absent) battery readout. Fetched
@@ -106,10 +107,28 @@ function buildAgentView(root) {
     monitor?.setVisible(next === "brain");
     brainLayer.hidden = next !== "brain";
     root.classList.toggle("brain-open", next === "brain");
+    micControl?.setEnabled(next === "live");
     panel.setView(next);
   }
 
-  const panel = createAgentPanel(root, ros, agentState, { onView: setView });
+  /** @type {ReturnType<typeof createAgentMicControl> | null} */
+  let micControl = null;
+  const panel = createAgentPanel(root, ros, agentState, {
+    onView: setView,
+    enableMic: Boolean(config.simControls),
+    onMicState: (state) => {
+      micControl?.setAudioFeedback({
+        level: state.on ? state.level : 0,
+        waveform: state.waveform,
+      });
+    },
+  });
+  if (config.simControls) {
+    micControl = createAgentMicControl(root, {
+      startListening: panel.startMic,
+      stopListening: panel.stopMic,
+    });
+  }
 
   const parts = [
     videoStage,
@@ -117,6 +136,7 @@ function buildAgentView(root) {
     createTelemetry(telemetryOverlay, ros, { showBattery: !config.simControls }),
     // Square, always-live camera tiles (own prefs key so teleop's defaults stay put).
     cameraSwitch,
+    ...(micControl ? [micControl] : []),
     panel,
     createActiveChip(root, agentState, () => setView("brain")),
     { destroy: () => agentState.destroy() },

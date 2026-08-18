@@ -20,7 +20,7 @@ const WAVEFORM_FLOOR = 0.12;
  * @returns {{
  *   destroy: () => void,
  *   setEnabled: (enabled: boolean) => void,
- *   setAudioFeedback: (feedback: { level: number, bands: number[] }) => void
+ *   setAudioFeedback: (feedback: { level: number, waveform: number[] }) => void
  * }}
  */
 export function createAgentMicControl(root, callbacks) {
@@ -172,11 +172,11 @@ export function createAgentMicControl(root, callbacks) {
       button.disabled = disabled;
       if (disabled) releaseAllHolds();
     },
-    /** @param {{ level: number, bands: number[] }} feedback */
-    setAudioFeedback({ level, bands }) {
+    /** @param {{ level: number, waveform: number[] }} feedback */
+    setAudioFeedback({ level, waveform }) {
       control.style.setProperty("--agent-mic-level", String(clamp(level * LEVEL_GAIN)));
       waveformBars.forEach((bar, index) => {
-        const amplitude = clamp((bands[index] ?? 0) * WAVEFORM_GAIN, WAVEFORM_FLOOR);
+        const amplitude = clamp((waveform[index] ?? 0) * WAVEFORM_GAIN, WAVEFORM_FLOOR);
         bar.style.setProperty("--agent-wave", String(amplitude));
       });
     },

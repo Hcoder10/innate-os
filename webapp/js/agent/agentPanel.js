@@ -14,6 +14,7 @@
 // (it originated in the old teleop chat pane, since removed).
 
 import { copyText } from "../clipboard.js";
+import { createMicStream } from "./micStream.js";
 import {
   AGENT_STATUS_TOPIC,
   CHAT_IN_TOPIC,
@@ -29,12 +30,26 @@ import {
  * @param {HTMLElement} root cockpit root — the panel mounts as a right-edge overlay.
  * @param {import("../rosClient.js").RosClient} rosClient
  * @param {ReturnType<typeof import("../teleop/agentState.js").createAgentState>} agentState
- * @param {{ onView: (view: "live" | "brain") => void }} opts stage-view switch,
- *   owned by the page; setView reflects a flip the page made itself (chip, Esc).
- * @returns {{ destroy: () => void, setView: (view: "live" | "brain") => void }}
+ * @param {{
+ *   onView: (view: "live" | "brain") => void,
+ *   enableMic?: boolean,
+ *   onMicState?: (state: {on: boolean, busy: boolean, level: number, waveform: number[], error: string | null}) => void
+ * }} opts
+ *   onView is the stage-view switch, owned by the page; setView reflects a flip
+ *   the page made itself (chip, Esc). enableMic connects the browser microphone
+ *   in sim, where the robot has no physical microphone (see micStream.js).
+ * @returns {{
+ *   destroy: () => void,
+ *   setView: (view: "live" | "brain") => void,
+ *   startMic: () => Promise<void>,
+ *   stopMic: () => void
+ * }}
  */
 export function createAgentPanel(root, rosClient, agentState, opts) {
   const selfOrigin = crypto.randomUUID?.() ?? `web-${Date.now()}-${Math.random()}`;
+  const mic = opts.enableMic
+    ? createMicStream(rosClient, (state) => opts.onMicState?.(state))
+    : null;
 
   const panel = document.createElement("section");
   panel.className = "overlay agent-panel";
@@ -430,6 +445,15 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     if (id) await withApplying(() => agentState.setDirective(id));
   }
 
+  async function startMic() {
+    await startIfIdle();
+    await mic?.start();
+  }
+
+  function stopMic() {
+    mic?.stop();
+  }
+
   async function submit() {
     const text = input.value.trim();
     if (!text) return;
@@ -582,7 +606,10 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
 
   return {
     setView,
+    startMic,
+    stopMic,
     destroy() {
+      mic?.destroy();
       if (flashTimer) clearTimeout(flashTimer);
       unsubAgents();
       unsubConn();
