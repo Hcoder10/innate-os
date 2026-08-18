@@ -5757,10 +5757,22 @@ select.skill-input {
 }
 
 .chat-skill-name {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   font-size: 12px;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The run's inputs, trailing the name — which emotion, which position. Takes
+   the slack so the status stays pinned right whether or not there are any. */
+.chat-skill-args {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

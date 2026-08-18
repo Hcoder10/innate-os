@@ -360,11 +360,12 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     snapIfAtBottom(wasAtBottom);
   }
 
-  /** @type {Map<string, { wrap: HTMLElement, head: HTMLElement, status: HTMLElement, hasDetail: boolean }>} */
+  /** @type {Map<string, { wrap: HTMLElement, head: HTMLElement, args: HTMLElement, status: HTMLElement, hasDetail: boolean }>} */
   const skillRuns = new Map();
 
-  /** @param {string} key @param {string} name @param {string} status @param {number} ts @param {string} [reason] */
-  function addSkillRun(key, name, status, ts, reason) {
+  /** @param {string} key @param {string} name @param {string} status @param {number} ts @param {string} [reason]
+   *  @param {any} [args] */
+  function addSkillRun(key, name, status, ts, reason, args) {
     const wasAtBottom = atBottom();
     const cls = ["running", "completed", "failed", "interrupted"].includes(status) ? status : "running";
     // Reflect the running primitive in the Active Skill readout.
@@ -389,17 +390,26 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       const nameEl = document.createElement("span");
       nameEl.className = "chat-skill-name";
       nameEl.textContent = name.replace(/_/g, " ");
+      const argsEl = document.createElement("span");
+      argsEl.className = "chat-skill-args mono";
       const statusEl = document.createElement("span");
       statusEl.className = "chat-skill-status mono";
       statusEl.title = SKILL_STATUS_UPDATE_TOPIC;
-      head.append(tag, nameEl, statusEl);
+      head.append(tag, nameEl, argsEl, statusEl);
       wrap.append(head);
       stream.appendChild(wrap);
-      run = { wrap, head, status: statusEl, hasDetail: false };
+      run = { wrap, head, args: argsEl, status: statusEl, hasDetail: false };
       skillRuns.set(key, run);
     }
     run.wrap.className = `chat-skill ${cls}`;
     if (run.hasDetail) run.wrap.classList.add("has-detail");
+    // Terminal updates repeat the inputs; keep the last non-empty rendering so
+    // a publisher that omits them can't blank args the run already showed.
+    const argsText = formatSkillArgs(args);
+    if (argsText) {
+      run.args.textContent = argsText;
+      run.args.title = argsText;
+    }
     run.status.textContent = cls;
 
     // A failed run carries the failure reason / error — show it expanded
@@ -543,7 +553,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       const status = String(e?.taskStatus ?? "");
       if (!name || !status) return;
       const key = String(e?.primitiveId ?? e?.skillId ?? name);
-      addSkillRun(key, name, status, ts, typeof e?.failureReason === "string" ? e.failureReason : "");
+      addSkillRun(key, name, status, ts, typeof e?.failureReason === "string" ? e.failureReason : "", e?.args);
       return;
     }
     const text = String(e?.text ?? "");
@@ -615,7 +625,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     if (!name || !status) return;
     const key = String(payload?.primitive_id ?? payload?.skill_id ?? name);
     const reason = typeof payload?.reason === "string" ? payload.reason : "";
-    addSkillRun(key, name, status, Number(payload?.timestamp) || Date.now() / 1000, reason);
+    addSkillRun(key, name, status, Number(payload?.timestamp) || Date.now() / 1000, reason, payload?.args);
   }, undefined, "std_msgs/msg/String");
 
   return {
@@ -645,6 +655,26 @@ function viewButton(label, title) {
   btn.textContent = label;
   btn.title = title;
   return btn;
+}
+
+/**
+ * A skill's inputs on one line, for the run's header row. A lone input reads
+ * better as its bare value ("head emotion  happy") — the skill name already
+ * says what it is; several need their keys to stay legible.
+ * @param {any} args
+ */
+function formatSkillArgs(args) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return "";
+  const entries = Object.entries(args).filter(([, v]) => v !== null && v !== undefined && v !== "");
+  if (entries.length === 0) return "";
+  const show = (/** @type {any} */ v) => clip(roundNums(typeof v === "object" ? JSON.stringify(v) : String(v)), 40);
+  if (entries.length === 1) return show(entries[0][1]);
+  return entries.map(([k, v]) => `${k.replace(/_/g, " ")}: ${show(v)}`).join(" · ");
+}
+
+/** @param {string} text @param {number} max */
+function clip(text, max) {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
 /**
