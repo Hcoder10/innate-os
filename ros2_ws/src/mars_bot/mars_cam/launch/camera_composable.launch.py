@@ -18,6 +18,8 @@ Usage:
     ros2 launch mars_cam camera_composable.launch.py
 """
 
+import os
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
@@ -143,11 +145,29 @@ def generate_launch_description():
 
     # ── Container ─────────────────────────────────────────────────────────────
 
+    # Opt-in newer GStreamer: a robot with a parallel build staged at /opt/gst (see
+    # docs/WEBRTC_FEC_GST_UPGRADE.md) runs the camera container against it — 1.20's
+    # webrtcbin negotiates ULPFEC but never sends it; >=1.22 does. GStreamer's ABI
+    # guarantee lets the 1.20-built binaries run unmodified; NVIDIA's hardware plugins
+    # stay on the system path (verified loading under the 1.24 core). Robots without
+    # /opt/gst are untouched.
+    gst_opt = "/opt/gst/lib/aarch64-linux-gnu"
+    gst_env = (
+        {
+            "LD_LIBRARY_PATH": gst_opt + ":" + os.environ.get("LD_LIBRARY_PATH", ""),
+            "GST_PLUGIN_PATH": gst_opt + "/gstreamer-1.0:/usr/lib/aarch64-linux-gnu/gstreamer-1.0",
+            "GST_REGISTRY": "/tmp/gst-opt-camera.registry",
+        }
+        if os.path.isdir(gst_opt)
+        else {}
+    )
+
     camera_container = ComposableNodeContainer(
         name="camera_container",
         namespace="",
         package="rclcpp_components",
         executable="component_container_mt",
+        additional_env=gst_env,
         composable_node_descriptions=[
             main_camera_node,
             arm_camera_node,
