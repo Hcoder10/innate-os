@@ -147,7 +147,7 @@ class MicroInput(InputDevice):
             raise RuntimeError("no STT configuration (the proxy client was never created)")
 
         try:
-            self.mic = self._open_source()
+            self.mic = self._start_audio_source()
             self.logger.info(f"🎙️ Microphone started (rate: {DEFAULT_SAMPLE_RATE}, channels: {DEFAULT_CHANNELS})")
             self._connect_via_proxy()
         except Exception as e:
@@ -155,13 +155,11 @@ class MicroInput(InputDevice):
             self.on_close()  # release the device/socket so the retry starts clean
             raise
 
-    def _open_source(self):
-        """The started audio source: ALSA, or ROS where there is no capture stack.
-
-        Keyed on arecord being absent, not on it listing no cards — a robot whose
-        microphone did not enumerate still has a working `default` to reach for.
-        """
+    def _start_audio_source(self):
         device = self._detect_audio_device()
+
+        # No arecord at all, rather than arecord listing no cards: a robot whose
+        # microphone did not enumerate still has a working `default` to reach for.
         if shutil.which("arecord") is None and self.node is not None:
             mic = RosPcmStreamer(self.node, self.logger)
             mic.start()
@@ -670,9 +668,7 @@ class MicroInput(InputDevice):
 
 
 class RosPcmStreamer:
-    """Microphone audio a client pushes over ROS: the sim's browser is the mic,
-    mirroring /tts/audio where it is the speaker. Same queue-of-chunks surface as
-    ArecordStreamer, so MicroInput drives either."""
+    """ArecordStreamer's surface, fed by MIC_AUDIO_TOPIC instead of a capture device."""
 
     def __init__(self, node, logger):
         self.queue: queue.Queue[bytes] = queue.Queue(maxsize=100)
