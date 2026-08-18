@@ -24,6 +24,10 @@ const TOGGLE_KEY = "KeyP";
  * @property {number} bytes       bytesReceived, cumulative
  * @property {number} packets     packetsReceived, cumulative
  * @property {number} lost        packetsLost, cumulative
+ * @property {number} pli         pliCount, cumulative, summed over all video streams
+ * @property {number} keyframes   keyFramesDecoded, cumulative, summed
+ * @property {number} decoded     framesDecoded, cumulative, summed
+ * @property {number | null} received framesReceived, cumulative, summed; null when unreported
  */
 
 /**
@@ -64,13 +68,15 @@ export function createProfilingPanel(parent, session) {
   const jitterBuffer = metric("jitter buf", "ms", true, "Average de-jitter buffer delay of frames played out since the last poll");
   const rtt = metric("rtt", "ms", false, "Round-trip time on the selected ICE candidate pair");
   const jitter = metric("jitter", "ms", false, "Inter-arrival jitter, inbound video RTP");
-  const fps = metric("fps", "", false, "Decoded frames per second");
+  const fps = metric("fps", "", false, "Decoded / received frames per second — the gap is frames dropped before decode");
   const resolution = metric("res", "", false, "Received video resolution");
   const bitrate = metric("bitrate", "kb/s", false, "Inbound video bitrate since the last poll");
   const loss = metric("loss", "%", false, "Packet loss since the last poll");
   const dropped = metric("dropped", "", false, "Frames dropped (cumulative)");
   const freezes = metric("freezes", "", false, "Freeze events (cumulative)");
-  const all = [jitterBuffer, rtt, jitter, fps, resolution, bitrate, loss, dropped, freezes];
+  const pli = metric("pli", "/m", false, "PLIs per minute — decoder recoveries from corrupted output; ~0 on a healthy stream");
+  const keyf = metric("keyf", "/m", false, "Key frames decoded per minute — near 0 on a clean link, ~60 in degraded 1 Hz keyframe mode");
+  const all = [jitterBuffer, rtt, jitter, fps, resolution, bitrate, loss, dropped, freezes, pli, keyf];
   for (const m of all) grid.append(m.el);
 
   // Connection state — driven by session changes (not the getStats poll), so it stays meaningful even
@@ -142,10 +148,21 @@ export function createProfilingPanel(parent, session) {
     /** @type {any} */ let vid = null;
     /** @type {any} */ let selectedPair = null;
     /** @type {string | undefined} */ let selectedPairId;
+    let pliSum = 0;
+    let keyframesSum = 0;
+    let decodedSum = 0;
+    /** @type {number | null} */ let receivedSum = null;
 
     report.forEach((/** @type {any} */ s) => {
-      if (s.type === "inbound-rtp" && s.kind === "video") vid = s;
-      else if (s.type === "transport" && s.selectedCandidatePairId) selectedPairId = s.selectedCandidatePairId;
+      if (s.type === "inbound-rtp" && s.kind === "video") {
+        vid = s;
+        pliSum += s.pliCount ?? 0;
+        keyframesSum += s.keyFramesDecoded ?? 0;
+        decodedSum += s.framesDecoded ?? 0;
+        if (typeof s.framesReceived === "number") receivedSum = (receivedSum ?? 0) + s.framesReceived;
+      } else if (s.type === "transport" && s.selectedCandidatePairId) {
+        selectedPairId = s.selectedCandidatePairId;
+      }
     });
     report.forEach((/** @type {any} */ s) => {
       if (s.type !== "candidate-pair") return;
@@ -160,7 +177,6 @@ export function createProfilingPanel(parent, session) {
 
     rtt.value.textContent = fmt(selectedPair?.currentRoundTripTime * 1000, 1);
     jitter.value.textContent = fmt(vid.jitter * 1000, 1);
-    fps.value.textContent = fmt(vid.framesPerSecond, 0);
     resolution.value.textContent =
       vid.frameWidth && vid.frameHeight ? `${vid.frameWidth}×${vid.frameHeight}` : "—";
     dropped.value.textContent = fmt(vid.framesDropped, 0);
@@ -174,6 +190,10 @@ export function createProfilingPanel(parent, session) {
       bytes: vid.bytesReceived ?? 0,
       packets: vid.packetsReceived ?? 0,
       lost: vid.packetsLost ?? 0,
+      pli: pliSum,
+      keyframes: keyframesSum,
+      decoded: decodedSum,
+      received: receivedSum,
     };
 
     if (prev) {
@@ -182,7 +202,16 @@ export function createProfilingPanel(parent, session) {
       const dDelay = now.jbDelay - prev.jbDelay;
       jitterBuffer.value.textContent = dEmitted > 0 ? fmt((dDelay / dEmitted) * 1000, 0) : "—";
 
-      if (dt > 0) bitrate.value.textContent = fmt(((now.bytes - prev.bytes) * 8) / dt / 1000, 0);
+      if (dt > 0) {
+        bitrate.value.textContent = fmt(((now.bytes - prev.bytes) * 8) / dt / 1000, 0);
+        pli.value.textContent = fmt(((now.pli - prev.pli) * 60) / dt, 0);
+        keyf.value.textContent = fmt(((now.keyframes - prev.keyframes) * 60) / dt, 0);
+        const decodedFps = fmt((now.decoded - prev.decoded) / dt, 0);
+        fps.value.textContent =
+          now.received !== null && prev.received !== null
+            ? `${decodedFps}/${fmt((now.received - prev.received) / dt, 0)}`
+            : decodedFps;
+      }
 
       const dRecv = now.packets - prev.packets;
       const dLost = now.lost - prev.lost;
