@@ -11,6 +11,38 @@ EMOTIONS = {
         "description": "Quick upward nods",
         "sequence": [(5, 0.12), (-5, 0.12), (10, 0.15), (-5, 0.12), (10, 0.15), (0, 0.18)],
     },
+    "very_happy": {
+        "description": "A long burst of nods that starts eager and winds down",
+        # ~5s: eight fast nods, then the same nod stretched longer and longer
+        # until it settles level — delight running out of steam, not stopping.
+        "sequence": [
+            (15, 0.09),
+            (-10, 0.09),
+            (15, 0.09),
+            (-10, 0.09),
+            (15, 0.09),
+            (-10, 0.09),
+            (15, 0.10),
+            (-10, 0.10),
+            (15, 0.13),
+            (-10, 0.13),
+            (15, 0.15),
+            (-10, 0.15),
+            (15, 0.17),
+            (-10, 0.17),
+            (15, 0.20),
+            (-10, 0.20),
+            (15, 0.24),
+            (-10, 0.24),
+            (15, 0.28),
+            (-10, 0.28),
+            (15, 0.32),
+            (-10, 0.32),
+            (12, 0.36),
+            (-8, 0.40),
+            (0, 0.45),
+        ],
+    },
     "sad": {
         "description": "Slow droop downward",
         "sequence": [(0, 0.3), (-5, 0.35), (-10, 0.4), (-15, 0.4), (-20, 0.45), (-25, 0.5), (-25, 0.3)],
@@ -69,6 +101,7 @@ EMOTIONS = {
 }
 EmotionName = Literal[
     "happy",
+    "very_happy",
     "sad",
     "excited",
     "thinking",
