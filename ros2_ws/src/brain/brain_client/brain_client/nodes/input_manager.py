@@ -59,7 +59,7 @@ class InputManagerNode(Node):
         self.declare_parameter("stt_realtime_vad_silence_secs", 0.7)
         self.declare_parameter("stt_energy_threshold", 0.01)
         self.declare_parameter("elevenlabs_batch_stt_model", "scribe_v2")
-        self.declare_parameter("gemini_stt_model", "gemini-3.6-flash")
+        self.declare_parameter("gemini_stt_model", "gemini-3.7-flash")
         self.declare_parameter("elevenlabs_stt_model", "scribe_v2_realtime")
         self.declare_parameter("openai_realtime_model", "gpt-4o-realtime-preview")
         self.declare_parameter("openai_realtime_url", "wss://api.openai.com/v1/realtime")

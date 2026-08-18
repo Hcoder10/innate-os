@@ -206,7 +206,7 @@
 #     scan_stale_after_sec: 10.0    # seconds without a lidar scan before flagging stale
 #     send_arm_camera_image: true   # also send the arm wrist camera image to the model
 #     log_everything: true          # log every turn's full input
-#     gemini_model: "gemini-3.6-flash"
+#     gemini_model: "gemini-3.7-flash"
 #     idle_turn_interval: 3.0       # seconds between looks when no skill is running
 #     supervision_turn_interval: 5.0  # seconds between looks while a skill runs
 
@@ -237,7 +237,7 @@
 #     stt_realtime_vad_threshold: 0.3       # realtime pair: vendor VAD sensitivity
 #     stt_realtime_vad_silence_secs: 0.7    # realtime pair: vendor silence that ends a turn
 #     elevenlabs_batch_stt_model: "scribe_v2"
-#     gemini_stt_model: "gemini-3.6-flash"
+#     gemini_stt_model: "gemini-3.7-flash"
 #     elevenlabs_stt_model: "scribe_v2_realtime"
 #     openai_realtime_model: "gpt-4o-realtime-preview"
 #     openai_transcribe_model: "gpt-4o-mini-transcribe"

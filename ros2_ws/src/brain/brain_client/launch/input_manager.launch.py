@@ -67,7 +67,7 @@ def generate_launch_description():
     )
     gemini_stt_model_arg = DeclareLaunchArgument(
         "gemini_stt_model",
-        default_value="gemini-3.6-flash",
+        default_value="gemini-3.7-flash",
         description="Gemini model for batch utterance transcription",
     )
     elevenlabs_stt_model_arg = DeclareLaunchArgument(

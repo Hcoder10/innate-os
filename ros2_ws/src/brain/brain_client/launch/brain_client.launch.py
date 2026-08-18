@@ -57,7 +57,7 @@ def generate_launch_description():
     )
     gemini_model_arg = DeclareLaunchArgument(
         "gemini_model",
-        default_value=get_env("GEMINI_MODEL", "gemini-3.6-flash"),
+        default_value=get_env("GEMINI_MODEL", "gemini-3.7-flash"),
         description="Gemini model powering the local brain",
     )
 

@@ -330,7 +330,7 @@ class MicroInput(InputDevice):
 
     def _connect_gemini(self) -> str:
         """Start a batch-transcription session on Gemini. Returns the model id."""
-        model = self.proxy.config.get("gemini_stt_model", "gemini-3.6-flash")
+        model = self.proxy.config.get("gemini_stt_model", "gemini-3.7-flash")
 
         rest = pick_rest(self.proxy)
         if rest is None:

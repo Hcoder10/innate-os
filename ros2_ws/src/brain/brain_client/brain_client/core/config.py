@@ -40,7 +40,7 @@ class BrainConfig:
 
     # --- Local brain (Gemini) ---
     gemini_model: str
-    gemini_thinking_level: str  # "low" | "high"; "" = model default
+    gemini_thinking_level: str  # "low" | "medium" | "high"; "" = model default
     idle_turn_interval: float  # seconds between looks when no skill is running
     supervision_turn_interval: float  # seconds between looks while a skill runs
     history_max_entries: int  # conversation entries kept for the model
@@ -96,15 +96,11 @@ _PARAM_DEFAULTS: dict[str, str | bool | int | float] = {
     "x_cam": 0.0197,
     "height_cam": 0.19663,
     # --- Local brain (Gemini) ---
-    "gemini_model": "gemini-3.6-flash",
-    # "minimal" | "low" | "medium" | "high"; "" = model default.
-    # Measured on 3.6-flash (2026-08): minimal is ~3x faster than the
-    # default level (0.96s vs 3.08s median turn) and passed the same
-    # single-turn discipline probes (wait on idle, ignore STT noise,
-    # tool choice, go_to_point_in_view grounding). An earlier model's "low"
-    # measurably hurt multi-turn instruction-following (skill re-runs,
-    # chatter) — if that resurfaces, revert to "" here.
-    "gemini_thinking_level": "minimal",
+    "gemini_model": "gemini-3.7-flash",
+    # "low" | "medium" | "high"; "" = model default. 3.7-flash dropped
+    # "minimal" (3.6's floor, measured 3x faster there), so "low" is the
+    # fastest turn available; if multi-turn discipline regresses, "" here.
+    "gemini_thinking_level": "low",
     "idle_turn_interval": 3.0,
     "supervision_turn_interval": 5.0,
     "history_max_entries": 60,

@@ -12,7 +12,7 @@ from innate_proxy import ProxyClient
 
 SERVICE = "gemini"
 ENDPOINT = "/v1/chat/completions"
-MODEL = "gemini-3.5-flash"
+MODEL = "gemini-3.7-flash"
 
 
 def make_client():

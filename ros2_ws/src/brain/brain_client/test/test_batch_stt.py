@@ -20,7 +20,7 @@ from brain_client.inputs.batch_stt import (
 
 WAV = b"RIFF-not-really-a-wav"
 
-GEMINI_MODEL = "gemini-3.6-flash"
+GEMINI_MODEL = "gemini-3.7-flash"
 
 
 def gemini_rest(response: dict, calls: list | None = None) -> GeminiRest:

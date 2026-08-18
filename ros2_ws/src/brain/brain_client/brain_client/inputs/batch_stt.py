@@ -223,7 +223,8 @@ def gemini_transcriber(rest: GeminiRest, model: str, language: str) -> Transcrib
                     ],
                 }
             ],
-            "generationConfig": {"temperature": 0.0, "thinkingConfig": {"thinkingLevel": "minimal"}},
+            # "low" is the floor on 3.7-flash: it dropped 3.6's "minimal" level.
+            "generationConfig": {"temperature": 0.0, "thinkingConfig": {"thinkingLevel": "low"}},
         }
         response = rest.post(GENERATE_PATH.format(model=model), body, timeout=TRANSCRIBE_TIMEOUT_SECS)
         # candidates can be [] outright (blocked or empty response), not just absent.
