@@ -44,9 +44,13 @@ std::string WebRTCStreamer::video_encode_branch(const CameraEncoder& cam) const 
            std::to_string(cam.bitrate_kbps * 1000) +
            " cpu-used=4 error-resilient=partitions keyframe-max-dist=" + std::to_string(cam.fps * 4) +
            " end-usage=cbr buffer-size=600 buffer-initial-size=400 buffer-optimal-size=500 ! "
+           // picture-id-mode is not optional for browsers: without picture IDs Chrome cannot prove
+           // frame continuity after a loss, so it discards every delta frame until the next keyframe
+           // — NACK/RTX repair lands and is thrown away (measured: 5 fps + keyframe cycling at 5%
+           // loss with an oversized jitter buffer; picture IDs are what let the repair count).
            "rtpvp8pay name=pay_" +
            cam.name + " pt=" + std::to_string(cam.pt) + " ssrc=" + std::to_string(cam.ssrc) +
-           " ! "
+           " picture-id-mode=15-bit ! "
            "appsink name=sink_" +
            cam.name + " emit-signals=true sync=false async=false max-buffers=2 drop=true ";
 }
