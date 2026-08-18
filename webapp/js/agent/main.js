@@ -13,8 +13,8 @@
 //
 // Connect/disconnect lifecycle and optimistic mount mirror teleop (see
 // pageMount.js): the view builds immediately and panels fill in once the socket
-// is up. The panel's mic toggle is the sim's voice input (the browser is the
-// robot's microphone); robot speech comes back through the shell's ttsAudio.
+// is up. No mic control mounts here; robot speech still comes back through the
+// shell's ttsAudio.
 
 import { ros } from "../rosClient.js";
 import { mountPage } from "../pageMount.js";
@@ -109,9 +109,7 @@ function buildAgentView(root) {
     panel.setView(next);
   }
 
-  // The mic toggle is sim-only: there the browser is the robot's microphone
-  // (micStream.js), while a real robot listens with its own.
-  const panel = createAgentPanel(root, ros, agentState, { onView: setView, mic: !!config.simControls });
+  const panel = createAgentPanel(root, ros, agentState, { onView: setView });
 
   const parts = [
     videoStage,
