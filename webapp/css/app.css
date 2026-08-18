@@ -6183,10 +6183,8 @@ select.skill-input {
 }
 
 .agent-mic-control.unavailable .agent-mic-icon {
-  mask: url("/js/agent/icons/mic-disabled.png") center / contain no-repeat;
-  -webkit-mask: url("/js/agent/icons/mic-disabled.png") center / contain no-repeat;
-  opacity: 0.52;
-  transform: scale(0.94);
+  mask: url("/js/agent/icons/mic-disabled.svg") center / contain no-repeat;
+  -webkit-mask: url("/js/agent/icons/mic-disabled.svg") center / contain no-repeat;
 }
 
 .agent-mic-control.unavailable .agent-mic-label {
