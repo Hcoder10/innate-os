@@ -95,9 +95,10 @@ void WebRTCStreamer::configure_video_transceivers(GstElement* webrtc, size_t vid
         }
         const bool video = i < video_count;
         g_object_set(trans, "do-nack", (video && video_nack_) ? TRUE : FALSE, nullptr);
+        const guint pct = degraded_ ? 100u : video_fec_percentage_;
         g_object_set(trans, "fec-type",
                      (video && video_fec_percentage_ > 0) ? GST_WEBRTC_FEC_TYPE_ULP_RED : GST_WEBRTC_FEC_TYPE_NONE,
-                     "fec-percentage", video_fec_percentage_ > 0 ? video_fec_percentage_ : 0u, nullptr);
+                     "fec-percentage", video_fec_percentage_ > 0 ? pct : 0u, nullptr);
         g_object_unref(trans);
     }
 }
@@ -148,8 +149,9 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
                          auto* self = static_cast<WebRTCStreamer*>(user_data);
                          g_object_set(trans, "do-nack", self->video_nack_ ? TRUE : FALSE, nullptr);
                          if (self->video_fec_percentage_ > 0) {
+                             // A peer arriving mid-DEGRADED gets full protection from the start.
                              g_object_set(trans, "fec-type", GST_WEBRTC_FEC_TYPE_ULP_RED, "fec-percentage",
-                                          self->video_fec_percentage_, nullptr);
+                                          self->degraded_ ? 100u : self->video_fec_percentage_, nullptr);
                          }
                      }),
                      this);

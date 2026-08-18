@@ -366,8 +366,27 @@ void WebRTCStreamer::apply_adaptation(bool degraded) {
         g_object_set(enc, "target-bitrate", bps, nullptr);
         gst_object_unref(enc);
     }
+    // FEC strength follows the state too: webrtcbin binds the transceiver's fec-percentage to the
+    // live rtpulpfecenc, so full protection is only paid for while a viewer actually needs it
+    // (measured: 100% FEC turned a 4-5%-loss path from 17-29 s frozen/min + PLI storms into
+    // 0.7 s frozen and zero PLIs; at 25% the same path stayed keyframe-bound).
+    if (video_fec_percentage_ > 0) {
+        const guint pct = degraded ? 100u : video_fec_percentage_;
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        for (auto& kv : peers_) {
+            for (size_t i = 0; i < kv.second->videos.size(); ++i) {
+                GstWebRTCRTPTransceiver* trans = nullptr;
+                g_signal_emit_by_name(kv.second->webrtc, "get-transceiver", static_cast<gint>(i), &trans);
+                if (trans) {
+                    g_object_set(trans, "fec-percentage", pct, nullptr);
+                    g_object_unref(trans);
+                }
+            }
+        }
+    }
     RCLCPP_INFO(this->get_logger(), "Network adaptation -> %s (viewer loss %.1f%%, rtt %d ms)",
-                degraded ? "DEGRADED: 60% bitrate + 1 Hz keyframes" : "GOOD: full bitrate, on-demand keyframes",
+                degraded ? "DEGRADED: 60% bitrate + 1 Hz keyframes + full FEC"
+                         : "GOOD: full bitrate, on-demand keyframes, base FEC",
                 rtcp_loss_promille_.load() / 10.0, rtcp_rtt_ms_.load());
 }
 
