@@ -5,7 +5,7 @@
 // context and blitted out.
 
 import * as THREE from "three";
-import { SimScene, type CameraView } from "./scene";
+import { SimScene, type CameraMode, type CameraView } from "./scene";
 import type { PropInfo } from "./props";
 import { LoadQueue } from "./loadQueue";
 import { THUMB_H, THUMB_W, type SimSession } from "./simSession";
@@ -152,6 +152,41 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   const divider = document.createElement("span");
   divider.style.cssText = "width:1px;align-self:stretch;margin:2px 2px;background:rgba(255,255,255,.18);";
   propControls.appendChild(divider);
+
+  // How the orbit camera behaves (SimScene.CameraMode). The prop-placement
+  // switch above is the same control with two segments; this one generalises
+  // it, since three modes do not fit a knob that only knows left and right.
+  // Click a label to pick it, or anywhere else to cycle.
+  const CAMERA_MODES = ["free", "chase", "top"] as const satisfies readonly CameraMode[];
+  const cameraSwitch = document.createElement("button");
+  cameraSwitch.type = "button";
+  cameraSwitch.title = "Camera: free orbit, chased from behind, or the whole apartment from above";
+  cameraSwitch.style.cssText = modeSwitch.style.cssText;
+  const cameraKnob = document.createElement("span");
+  cameraKnob.style.cssText =
+    `position:absolute;top:2px;bottom:2px;left:2px;width:calc(${100 / CAMERA_MODES.length}% - 2px);` +
+    "border-radius:999px;background:rgba(0,255,136,.28);transition:transform .15s ease;pointer-events:none;";
+  const cameraLabels = CAMERA_MODES.map((mode) => {
+    const el = document.createElement("span");
+    el.textContent = mode;
+    el.style.cssText = dropLabel.style.cssText;
+    return el;
+  });
+  cameraSwitch.append(cameraKnob, ...cameraLabels);
+  let cameraMode = 0;
+  const refreshCameraSwitch = () => {
+    cameraKnob.style.transform = `translateX(${cameraMode * 100}%)`;
+    cameraLabels.forEach((el, i) => (el.style.color = i === cameraMode ? ON_FG : OFF_FG));
+  };
+  cameraSwitch.onclick = (e) => {
+    const picked = cameraLabels.indexOf(e.target as HTMLSpanElement);
+    cameraMode = picked >= 0 ? picked : (cameraMode + 1) % CAMERA_MODES.length;
+    refreshCameraSwitch();
+    scene.setCameraMode(CAMERA_MODES[cameraMode]);
+  };
+  refreshCameraSwitch();
+  propControls.appendChild(cameraSwitch);
+
   addChip("lidar", (on) => session.setLidarVisible(on));
   addChip("collisions", (on) => session.setCollisionHullsVisible(on));
   debugStack.appendChild(propControls);

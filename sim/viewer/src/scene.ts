@@ -86,6 +86,28 @@ const SHADOW_MAP_PX = 2048;
 const INITIAL_ORBIT_POSITION = { forward: 0.61, left: 0.02, height: 0.25 };
 const INITIAL_ORBIT_TARGET = { forward: -0.01, left: 0, height: 0.13 };
 
+// How the orbit camera behaves. Orthogonal to CameraView, which picks WHICH
+// camera renders: every mode here drives the same orbit camera.
+//   free  -- drag to orbit; the camera pans with the robot but never turns.
+//   chase -- pinned above and behind the robot, turning with it.
+//   top   -- the whole apartment from above, indifferent to where the robot is.
+export type CameraMode = "free" | "chase" | "top";
+// Chase framing, in the robot's own frame: back far enough to keep the robot
+// small in shot, high enough to see the floor it is about to drive over.
+const CHASE_BACK_M = 2.0;
+const CHASE_HEIGHT_M = 1.5;
+const CHASE_TARGET_HEIGHT_M = 0.35;
+// Exponential follow rate. A hard pin makes every wheel wobble a camera
+// shake; this lags the robot slightly and the turn reads as a turn.
+const CHASE_LAG_HZ = 4.0;
+// Near-nadir, not nadir: straight down leaves the camera's roll undefined
+// (up is +Z, and lookAt has nothing to resolve it against).
+const TOP_TILT = new THREE.Vector3(0, -0.35, 1).normalize();
+const TOP_FIT_MARGIN = 1.15;
+// No layout to frame (bare stage, failed manifest): fall back to a fixed
+// height over the robot rather than leaving the camera wherever it was.
+const TOP_FALLBACK_HEIGHT_M = 12;
+
 // Robot-mounted camera views: frames, axis conventions, FOV and near plane
 // match the driver's cameras (mars_sim_driver.core's CAMERAS).
 export type CameraView = "orbit" | "main" | "arm";
@@ -149,6 +171,11 @@ export class SimScene {
   private props: PropLibrary;
   // While true a placement drag owns the pointer and orbit stays off.
   private placementMode = false;
+  private cameraMode: CameraMode = "free";
+  // Whole-apartment extent, kept from the layout so "top" can reframe on every
+  // entry -- frameLayout only ever runs once, and only before the first pose.
+  private layoutBounds?: THREE.Box3;
+  private chaseClock = new THREE.Clock();
 
   /** Fixed render size (offscreen use, e.g. SimSession); null = track the window. */
   private fixedSize: { width: number; height: number } | null = null;
@@ -475,14 +502,18 @@ export class SimScene {
   }
 
   /**
-   * Frame the orbit camera on the placeholder layout so the wireframe reads as
-   * an apartment from the first frame. No-op once a real pose has arrived --
-   * spawnAt's chase framing wins; this is only for the pre-pose gap.
+   * Record the apartment's extent (the "top" camera mode's framing, for the
+   * rest of the session) and frame the orbit camera on the placeholder layout,
+   * so the wireframe reads as an apartment from the first frame. The framing
+   * half is skipped once a real pose has arrived -- spawnAt's close framing
+   * wins; that half is only for the pre-pose gap.
    */
   frameLayout(layout: ApartmentLayout): void {
-    if (this.spawned || layout.rooms.length === 0) return;
+    if (layout.rooms.length === 0) return;
     const bounds = new THREE.Box3().setFromObject(layout.group);
     if (bounds.isEmpty()) return;
+    this.layoutBounds = bounds;
+    if (this.spawned) return;
 
     const center = bounds.getCenter(new THREE.Vector3());
     const size = bounds.getSize(new THREE.Vector3());
@@ -732,8 +763,52 @@ export class SimScene {
     this.applyControlsEnabled();
   }
 
+  /** Pick how the orbit camera behaves; see CameraMode. Entering "top" frames
+   * the apartment once, after which it is an ordinary orbit you can drag. */
+  setCameraMode(mode: CameraMode): void {
+    if (mode === this.cameraMode) return;
+    this.cameraMode = mode;
+    if (mode === "chase") this.chaseClock.getDelta(); // drop the idle gap, or the first frame snaps
+    if (mode === "top") this.frameFromAbove();
+    this.applyControlsEnabled();
+  }
+
   private applyControlsEnabled(): void {
-    this.controls.enabled = this.activeView === "orbit" && !this.placementMode;
+    // Chase owns the camera every frame, so dragging it would fight the follow
+    // and lose; the other modes leave it where the pointer put it.
+    this.controls.enabled = this.activeView === "orbit" && !this.placementMode && this.cameraMode !== "chase";
+  }
+
+  /** Look down on the whole apartment (or, lacking a layout, on the robot). */
+  private frameFromAbove(): void {
+    const bounds = this.layoutBounds;
+    const center = bounds?.getCenter(new THREE.Vector3()) ?? new THREE.Vector3(...this.robotXY, 0);
+    let distance = TOP_FALLBACK_HEIGHT_M;
+    if (bounds) {
+      const size = bounds.getSize(new THREE.Vector3());
+      const fov = (this.camera.fov * Math.PI) / 180;
+      distance = (Math.max(size.x, size.y) / 2 / Math.tan(fov / 2)) * TOP_FIT_MARGIN;
+    }
+    this.camera.position.copy(center).addScaledVector(TOP_TILT, Math.min(distance, this.controls.maxDistance));
+    this.controls.target.copy(center);
+    this.controls.update();
+  }
+
+  /** Ease the camera toward its perch behind the robot. Frame-rate independent:
+   * the same lag whether the tab renders at 30fps or 120. */
+  private updateChase(): void {
+    const [x, y] = this.robotXY;
+    const yaw = this.robotRoot.rotation.z;
+    const desired = new THREE.Vector3(
+      x - Math.cos(yaw) * CHASE_BACK_M,
+      y - Math.sin(yaw) * CHASE_BACK_M,
+      CHASE_HEIGHT_M,
+    );
+    const target = new THREE.Vector3(x, y, CHASE_TARGET_HEIGHT_M);
+    const alpha = 1 - Math.exp(-CHASE_LAG_HZ * Math.min(this.chaseClock.getDelta(), 0.1));
+    this.camera.position.lerp(desired, alpha);
+    this.controls.target.lerp(target, alpha);
+    this.camera.lookAt(this.controls.target);
   }
 
   /** Intersect a canvas pointer position with the floor plane (z=0) through
@@ -868,21 +943,25 @@ export class SimScene {
     this.robotXY = [x, y];
     this.updateShadowVolume();
 
-    if (this.followCamera) {
-      const [prevX, prevY] = this.followPrevXY;
+    // Recorded even when nothing consumes it: a mode that parks the follow
+    // (chase, top) must not hand free-orbit the whole distance travelled while
+    // it was away as one jump.
+    const [prevX, prevY] = this.followPrevXY;
+    this.followPrevXY = [x, y];
+    if (this.followCamera && this.cameraMode === "free") {
       const dx = x - prevX;
       const dy = y - prevY;
       this.camera.position.x += dx;
       this.camera.position.y += dy;
       this.controls.target.x += dx;
       this.controls.target.y += dy;
-      this.followPrevXY = [x, y];
     }
   }
 
   render(): void {
     const robotCam = this.activeView !== "orbit" ? this.robotCameras.get(this.activeView) : undefined;
-    if (!robotCam) this.controls.update();
+    if (!robotCam && this.cameraMode === "chase") this.updateChase();
+    else if (!robotCam) this.controls.update();
     // Fat lines need the current drawing-buffer size to size their width in px.
     this.placeholderMat?.resolution.copy(this.renderer.getDrawingBufferSize(this.tmpSize));
     this.renderer.render(this.scene, robotCam ?? this.camera);
