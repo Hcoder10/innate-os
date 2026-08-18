@@ -130,11 +130,10 @@ function buildAgentView(root) {
 
   session.start();
 
-  // /brain is this page with the monitor open; land there, then settle the URL
-  // on /agent so the address bar matches the one-page model.
-  if (location.pathname.replace(/\/+$/, "") === "/brain") {
-    setView("brain");
-    history.replaceState({}, "", "/agent" + location.search + location.hash);
+  const entryPath = location.pathname.replace(/\/+$/, "");
+  if (entryPath === "/brain") setView("brain");
+  if (entryPath === "/brain" || entryPath === "/agent") {
+    history.replaceState({}, "", "/" + location.search + location.hash);
   }
 
   return {

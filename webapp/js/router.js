@@ -25,16 +25,17 @@ import { SIM_SECTIONS } from "./railLayout.js";
  * @typedef {{ path: string, key: string, load: () => Promise<{ mount: (stage: HTMLElement) => PageView | Promise<PageView> }> }} Route
  */
 
-// Teleop is the site root; every other section lives at /<key>. `key` matches
+// Agent is the site root; every other section lives at /<key>. `key` matches
 // the shell's section keys so setActive can highlight the right rail link.
 // /brain is an alias into the Agent page (which opens its Brain monitor when
-// mounted at that path, then settles the URL on /agent) — old bookmarks keep
+// mounted at that path, then settles the URL at the root) — old bookmarks keep
 // working and the rail highlights Agent.
 /** @type {Route[]} */
 const ROUTES = [
-  { path: "/", key: "teleop", load: () => import("./teleop/main.js") },
+  { path: "/", key: "agent", load: () => import("./agent/main.js") },
   { path: "/agent", key: "agent", load: () => import("./agent/main.js") },
   { path: "/brain", key: "agent", load: () => import("./agent/main.js") },
+  { path: "/teleop", key: "teleop", load: () => import("./teleop/main.js") },
   { path: "/nav", key: "nav", load: () => import("./nav/main.js") },
   { path: "/logging", key: "logging", load: () => import("./logging/main.js") },
   { path: "/datasets", key: "datasets", load: () => import("./datasets/main.js") },
@@ -61,7 +62,7 @@ function normalize(pathname) {
   return p === "" ? "/" : p;
 }
 
-/** The route for a pathname, defaulting to teleop for anything unrecognized. @param {string} pathname */
+/** The route for a pathname, defaulting to Agent for anything unrecognized. @param {string} pathname */
 function routeFor(pathname) {
   const p = normalize(pathname);
   return ROUTES.find((r) => r.path === p) || ROUTES[0];

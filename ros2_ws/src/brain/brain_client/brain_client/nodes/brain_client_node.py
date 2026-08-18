@@ -271,12 +271,6 @@ class BrainClientNode(Node):
         self.publish_agent_status()
         self._agent_status_heartbeat = self.create_timer(3.0, self.publish_agent_status)
 
-        # Without a backend, auto-activating would boot false-active: mic,
-        # camera and gaze on around a heartbeat-only loop.
-        if self.config.simulator_mode and self.brain.available and self.state.current_directive is not None:
-            self.get_logger().info("[BrainClient] Auto-activating brain in simulator mode")
-            self.lifecycle.activate_brain()
-
     # ================= status =================
     def _stop_robot(self) -> None:
         stop = Twist()

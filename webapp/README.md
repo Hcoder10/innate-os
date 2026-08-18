@@ -3,7 +3,8 @@
 Web cockpit for the Innate robot — one zero-build app whose pages share the
 same modules:
 
-- **Teleop** (`index.html`) — live video, joystick/keyboard drive, head tilt,
+- **Agent** (`/`) — autonomous control, camera views, and the Brain monitor.
+- **Teleop** (`/teleop`) — live video, joystick/keyboard drive, head tilt,
   robot speech, telemetry, and leader-arm USB follow.
 - **Nav** (`js/nav/`) — live navigation view: the map widget with laser scan /
   global costmap / traveled-path overlays, telemetry panels (pose, velocity,
@@ -54,8 +55,8 @@ app-wide tooling.
 ## Layout
 
 ```
-index.html              teleop (the front door)
-collect/  datasets/  training/  logging/     the other page entry points
+index.html              shared SPA shell (Agent is the default route)
+js/*/main.js            page modules mounted by the client router
 css/app.css             entire design system
 proxy/https_server.py   HTTPS front door: app + wss rosbridge proxy + episode media
 js/

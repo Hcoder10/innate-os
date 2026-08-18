@@ -16,9 +16,9 @@ import { FOOTER_SECTIONS, GROUPS, SECTIONS, SIM_SECTIONS, railRows } from "./rai
 
 /** @typedef {import("./railLayout.js").Section} Section */
 
-/** Path for a section key: teleop is the site root, the rest are /<key>. @param {string} key */
+/** Path for a section key: Agent is the site root, the rest are /<key>. @param {string} key */
 function pathForKey(key) {
-  return key === "teleop" ? "/" : `/${key}`;
+  return key === "agent" ? "/" : `/${key}`;
 }
 
 /** True when focus is in a text field, so global key shortcuts must stand down. */
@@ -164,7 +164,7 @@ export function initShell(navigate) {
   // A running agent shows a top-center "running" pill, linking back to the Agent
   // page to take control. It's persistent (built once); setActive hides it while
   // the Agent page — which has its own Start/Stop — is open.
-  const agentIndicator = createAgentIndicator(createAgentState(ros), "/agent");
+  const agentIndicator = createAgentIndicator(createAgentState(ros), "/");
 
   // A servo latched into (overcurrent) protection shows a discrete amber card
   // with the reboot remedy, on every page. Real robots only — the sim's arm

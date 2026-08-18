@@ -43,7 +43,7 @@ def generate_launch_description():
     simulator_mode_arg = DeclareLaunchArgument(
         "simulator_mode",
         default_value="False",
-        description="Flag to enable simulator mode (auto-activates brain)",
+        description="Enable simulator-specific behavior",
     )
     current_nav_mode_topic_arg = DeclareLaunchArgument(
         "current_nav_mode_topic",
