@@ -4,8 +4,9 @@
 """
 Microphone Input Device
 
-Connects to microphone hardware and a speech-to-text backend to get voice
-transcripts. This is a pure Python class with NO ROS dependencies.
+Connects to a microphone and a speech-to-text backend to get voice transcripts.
+The microphone is the machine's ALSA capture device, or — on a machine that has
+none, i.e. the sim — a client pushing PCM over ROS (``RosPcmStreamer``).
 
 Four backends, selected by the ``stt_backend`` setting:
 
@@ -27,6 +28,7 @@ import base64
 import json
 import queue
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -51,6 +53,9 @@ CHUNK_DURATION_SEC = 0.02
 # ElevenLabs names the wire format after the rate; the two must agree or the
 # transcript comes out time-warped.
 ELEVENLABS_AUDIO_FORMAT = f"pcm_{DEFAULT_SAMPLE_RATE}"
+
+# std_msgs/String of base64 PCM16 mono at DEFAULT_SAMPLE_RATE.
+MIC_AUDIO_TOPIC = "/mic/audio"
 
 STT_BACKENDS = frozenset({"elevenlabs_batch", "gemini", "elevenlabs", "openai"})
 BATCH_BACKENDS = frozenset({"elevenlabs_batch", "gemini"})
@@ -133,38 +138,37 @@ class MicroInput(InputDevice):
         self._is_robot_talking = is_playing
 
     def on_open(self):
-        """Start microphone and connect to the STT backend via proxy."""
-        # Check proxy is available
-        if not self.proxy or not self.proxy.is_available():
-            self.logger.error("❌ Proxy not configured - cannot start microphone input")
-            return
+        """Start the audio source and connect to the STT backend.
+
+        Failures must propagate: InputDeviceManager clears the active flag only
+        when this raises, and a device left active is never reopened.
+        """
+        if not self.proxy:
+            raise RuntimeError("no STT configuration (the proxy client was never created)")
 
         try:
-            # Auto-detect and start microphone
-            detected_device = self._detect_audio_device()
-            if not detected_device:
-                detected_device = "default"
-
-            self.logger.info(f"🎙️ Using audio device: {detected_device}")
-
-            # Pass logger to ArecordStreamer
-            self.mic = ArecordStreamer(self.logger)
-            self.mic.start(
-                device=detected_device if detected_device != "default" else "default",
-                sample_rate=DEFAULT_SAMPLE_RATE,
-                channels=DEFAULT_CHANNELS,
-            )
-
+            self.mic = self._start_audio_source()
             self.logger.info(f"🎙️ Microphone started (rate: {DEFAULT_SAMPLE_RATE}, channels: {DEFAULT_CHANNELS})")
-
-            # Connect via proxy
             self._connect_via_proxy()
-
         except Exception as e:
             self.logger.error(f"❌ Failed to start microphone: {e}")
-            import traceback
+            self.on_close()  # release the device/socket so the retry starts clean
+            raise
 
-            traceback.print_exc()
+    def _start_audio_source(self):
+        device = self._detect_audio_device()
+
+        # No arecord at all, rather than arecord listing no cards: a robot whose
+        # microphone did not enumerate still has a working `default` to reach for.
+        if shutil.which("arecord") is None and self.node is not None:
+            mic = RosPcmStreamer(self.node, self.logger)
+            mic.start()
+            return mic
+
+        self.logger.info(f"🎙️ Using audio device: {device or 'default'}")
+        mic = ArecordStreamer(self.logger)
+        mic.start(device=device or "default", sample_rate=DEFAULT_SAMPLE_RATE, channels=DEFAULT_CHANNELS)
+        return mic
 
     def _on_elevenlabs_message(self, ws, message: str):
         """Handle incoming messages from the ElevenLabs Scribe realtime API."""
@@ -291,6 +295,11 @@ class MicroInput(InputDevice):
                 f"❌ Unknown stt_backend {backend!r} — using {DEFAULT_STT_BACKEND!r} (options: {sorted(STT_BACKENDS)})"
             )
             backend = DEFAULT_STT_BACKEND
+        if not self.proxy.is_available() and backend != "gemini":
+            self.logger.error(
+                f"❌ {backend!r} needs the Innate proxy (INNATE_SERVICE_KEY) — falling back to 'gemini' (GEMINI_API_KEY)"
+            )
+            backend = "gemini"
         self._backend = backend
 
         if self._backend == "elevenlabs_batch":
@@ -656,6 +665,40 @@ class MicroInput(InputDevice):
 
 
 # ========== Audio Streaming Helpers ==========
+
+
+class RosPcmStreamer:
+    """ArecordStreamer's surface, fed by MIC_AUDIO_TOPIC instead of a capture device."""
+
+    def __init__(self, node, logger):
+        self.queue: queue.Queue[bytes] = queue.Queue(maxsize=100)
+        self.sample_rate = DEFAULT_SAMPLE_RATE
+        self.channels = DEFAULT_CHANNELS
+        self._node = node
+        self.logger = logger
+        self._sub = None
+
+    def start(self):
+        from std_msgs.msg import String
+
+        self._sub = self._node.create_subscription(String, MIC_AUDIO_TOPIC, self._on_audio, 10)
+        self.logger.info(f"🎙️ No capture device — listening for browser audio on {MIC_AUDIO_TOPIC}")
+
+    def _on_audio(self, msg):
+        try:
+            chunk = base64.b64decode(msg.data)
+        except (ValueError, TypeError):
+            self.logger.error(f"❌ {MIC_AUDIO_TOPIC}: payload is not base64 — dropping chunk")
+            return
+        try:
+            self.queue.put_nowait(chunk)
+        except queue.Full:
+            pass
+
+    def stop(self):
+        if self._sub is not None:
+            self._node.destroy_subscription(self._sub)
+            self._sub = None
 
 
 class ArecordStreamer:

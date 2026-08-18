@@ -164,11 +164,23 @@ class DynamicLoader(Generic[T]):
         self.file_errors.pop(str(file_path), None)
         return module
 
+    def _is_candidate(self, obj: type) -> bool:
+        """A real subclass of :attr:`base_class`?
+
+        py3.10 counts a subscripted generic as a class, so an imported alias
+        (``Callable[[bytes], str]``) reaches issubclass, which raises on it —
+        uncaught, one alias voided every class in the file.
+        """
+        try:
+            return issubclass(obj, self.base_class)
+        except TypeError:
+            return False
+
     def _find_classes(self, module: ModuleType) -> list[type]:
         """Validated subclasses of :attr:`base_class` defined in ``module``."""
         found = []
         for name, obj in inspect.getmembers(module, inspect.isclass):
-            if obj is self.base_class or not issubclass(obj, self.base_class):
+            if obj is self.base_class or not self._is_candidate(obj):
                 continue
             if obj.__module__ != module.__name__:
                 continue

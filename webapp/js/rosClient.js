@@ -79,6 +79,7 @@ export class RosClient {
   /** @type {string | null} */ #ip = null;
   /** @type {Set<(state: ConnState, ip: string | null) => void>} */ #stateListeners = new Set();
   /** @type {Map<string, Subscription>} */ #subs = new Map();
+  /** Advertised publish topics, kept for replay on reconnect. @type {Map<string, string>} */ #advertised = new Map();
   /** @type {Map<string, { resolve: (v: any) => void, reject: (e: Error) => void, timer: number }>} */ #pendingCalls = new Map();
   /** @type {Map<string, { resolve: (v: any) => void, reject: (e: Error) => void, onFeedback?: (v: any) => void, action: string, goalId: string, cancelRequested: boolean }>} */ #pendingActions = new Map();
   /** Goals in flight when the socket died, cancelled on the next reconnect. @type {Array<{ id: string, action: string, goalId: string }>} */ #orphanedGoals = [];
@@ -162,6 +163,23 @@ export class RosClient {
    */
   publish(topic, msg) {
     this.#send({ op: "publish", topic, msg });
+  }
+
+  /**
+   * Declare a topic's type before publishing to it. A bare publish resolves the
+   * type against the live graph, which fails when the only subscriber appears
+   * later. Re-sent on reconnect until unadvertised.
+   * @param {string} topic
+   * @param {string} type e.g. "std_msgs/msg/String"
+   * @returns {() => void} unadvertise
+   */
+  advertise(topic, type) {
+    this.#advertised.set(topic, type);
+    this.#send({ op: "advertise", topic, type });
+    return () => {
+      if (!this.#advertised.delete(topic)) return;
+      this.#send({ op: "unadvertise", topic });
+    };
   }
 
   /**
@@ -344,6 +362,9 @@ export class RosClient {
       for (const [topic, sub] of this.#subs) {
         sub.retryCount = 0;
         this.#sendSubscribe(topic, sub);
+      }
+      for (const [topic, type] of this.#advertised) {
+        this.#send({ op: "advertise", topic, type });
       }
       // Cancel goals orphaned by the previous socket's death (see
       // #rejectAllPending) so a skill can't keep running with no owner.

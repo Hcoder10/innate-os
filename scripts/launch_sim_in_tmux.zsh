@@ -103,10 +103,16 @@ tmux split-window -t "${TMUX_TARGET_PREFIX}:nav-brain" -h
 tmux send-keys -t "${TMUX_TARGET_PREFIX}:nav-brain.1" "ros2 launch brain_client brain_client.sim.launch.py" C-m
 echo "Started brain client..."
 
-# === Window 4: Behavior Server ===
+# === Window 4: Behavior Server + Input Manager ===
 tmux new-window -t "$SESSION_NAME" -n behavior
 tmux send-keys -t "${TMUX_TARGET_PREFIX}:behavior" "ros2 launch manipulation behavior.launch.py" C-m
 echo "Started behavior server..."
+settle_after_launch
+# Voice input. The container has no capture device, so MicroInput takes its PCM
+# from the webapp's mic toggle over rosbridge (/mic/audio) instead of arecord.
+tmux split-window -t "${TMUX_TARGET_PREFIX}:behavior" -h
+tmux send-keys -t "${TMUX_TARGET_PREFIX}:behavior.1" "ros2 launch brain_client input_manager.launch.py" C-m
+echo "Started input manager (voice)..."
 
 # === Window 5: Arm IK ===
 tmux new-window -t "$SESSION_NAME" -n arm-ik

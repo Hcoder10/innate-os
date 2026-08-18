@@ -9,7 +9,7 @@
 // which page is open.
 
 import { ros } from "./rosClient.js";
-import { isMicAudioActive } from "./micAudioState.js";
+import { isMicAudioActive, setTtsPlaying } from "./micAudioState.js";
 
 const TTS_AUDIO_TOPIC = "/tts/audio";
 
@@ -36,12 +36,45 @@ export function initTtsAudio() {
     // Defensive: if a clip does arrive while the operator has the robot mic
     // open, skip it — the speaker would be heard through the mic as well.
     if (isMicAudioActive()) return;
-    try {
-      play(b64);
-    } catch (err) {
-      console.warn("[tts] failed to play audio:", err);
-    }
+    enqueue(b64);
   }, undefined, "std_msgs/msg/String");
+}
+
+// The robot speaks one utterance at a time, because speak_text blocks until
+// aplay finishes. In sim a clip is "done" once published, so the robot half can
+// only serialize synthesis — played on arrival, a two-sentence reply talks over
+// itself. This queue is what puts that behavior back.
+/** @type {string[]} */
+const pending = [];
+let playing = false;
+
+// A hidden or muted tab must not bank a monologue and deliver it late (the same
+// reason speak_text_async drops superseded speech).
+const MAX_PENDING = 4;
+
+/** @param {string} b64 */
+function enqueue(b64) {
+  pending.push(b64);
+  while (pending.length > MAX_PENDING) {
+    pending.shift();
+    console.warn("[tts] playback backlog full — dropping the oldest clip");
+  }
+  if (!playing) playNext();
+}
+
+function playNext() {
+  const b64 = pending.shift();
+  if (b64 === undefined) {
+    playing = false;
+    return;
+  }
+  playing = true;
+  try {
+    play(b64);
+  } catch (err) {
+    console.warn("[tts] failed to play audio:", err);
+    playNext(); // one bad clip must not strand the rest of the reply
+  }
 }
 
 /** @param {string} b64 base64-encoded WAV */
@@ -49,12 +82,24 @@ function play(b64) {
   const blob = new Blob([/** @type {BlobPart} */ (base64ToBytes(b64))], { type: "audio/wav" });
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
-  audio.addEventListener("ended", () => URL.revokeObjectURL(url), { once: true });
+  // The mic stream stops publishing while this is set, so every path must
+  // release it — one that never finishes mutes the microphone for the session.
+  setTtsPlaying(true);
+  let released = false;
+  const done = () => {
+    if (released) return;
+    released = true;
+    setTtsPlaying(false);
+    URL.revokeObjectURL(url);
+    playNext();
+  };
+  audio.addEventListener("ended", done, { once: true });
+  audio.addEventListener("error", done, { once: true });
   audio.play().catch((err) => {
     // Browser autoplay policies block playback until the user has interacted
     // with the page; after any click/keypress this succeeds.
     console.warn("[tts] autoplay blocked (interact with the page first):", err?.message || err);
-    URL.revokeObjectURL(url);
+    done();
   });
 }
 

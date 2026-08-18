@@ -11,5 +11,7 @@
     "types": [],
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["js/**/*"]
+  "include": ["js/**/*"],
+  "//": "micWorklet.js runs in the AudioWorklet global scope (AudioWorkletProcessor, registerProcessor, sampleRate), which lib.dom does not declare.",
+  "exclude": ["js/agent/micWorklet.js"]
 }

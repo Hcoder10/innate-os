@@ -84,13 +84,16 @@ class InputManagerNode(Node):
         }
         try:
             proxy = ProxyClient(config=proxy_config)
-            if proxy.is_available():
-                self.logger.info(f"✅ Proxy client initialized (URL: {proxy.proxy_url[:30]}...)")
-                return proxy
-            self.logger.warning("⚠️ Proxy not configured - input devices won't have proxy access")
         except Exception as e:
             self.logger.warning(f"⚠️ Could not initialize proxy client: {e}")
-        return None
+            return None
+        if proxy.is_available():
+            self.logger.info(f"✅ Proxy client initialized (URL: {proxy.proxy_url[:30]}...)")
+        else:
+            # Returned anyway: it still carries the settings above, and the
+            # devices that can run on a direct key (Gemini) need them.
+            self.logger.warning("⚠️ Proxy not configured - only direct-key backends will work")
+        return proxy
 
     def _on_active_inputs(self, msg: String) -> None:
         self.manager.handle_active_inputs(msg.data)
