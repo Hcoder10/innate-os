@@ -92,10 +92,11 @@ const INITIAL_ORBIT_TARGET = { forward: -0.01, left: 0, height: 0.13 };
 //   chase -- pinned above and behind the robot, turning with it.
 //   top   -- the whole apartment from above, indifferent to where the robot is.
 export type CameraMode = "free" | "chase" | "top";
-// Chase framing, in the robot's own frame: back far enough to keep the robot
-// small in shot, high enough to see the floor it is about to drive over.
-const CHASE_BACK_M = 2.0;
-const CHASE_HEIGHT_M = 1.5;
+// Chase framing, in the robot's own frame. Close over the shoulder: ~1.4m out
+// at a 28 degree depression, which fills about a third of the frame height
+// with robot and still shows the floor it is about to drive over.
+const CHASE_BACK_M = 1.2;
+const CHASE_HEIGHT_M = 1.0;
 const CHASE_TARGET_HEIGHT_M = 0.35;
 // Exponential follow rate. A hard pin makes every wheel wobble a camera
 // shake; this lags the robot slightly and the turn reads as a turn.
@@ -104,6 +105,8 @@ const CHASE_LAG_HZ = 4.0;
 // (up is +Z, and lookAt has nothing to resolve it against).
 const TOP_TILT = new THREE.Vector3(0, -0.35, 1).normalize();
 const TOP_FIT_MARGIN = 1.15;
+// Long enough to read as the camera pulling back rather than cutting.
+const TOP_TWEEN_S = 0.8;
 // No layout to frame (bare stage, failed manifest): fall back to a fixed
 // height over the robot rather than leaving the camera wherever it was.
 const TOP_FALLBACK_HEIGHT_M = 12;
@@ -172,10 +175,22 @@ export class SimScene {
   // While true a placement drag owns the pointer and orbit stays off.
   private placementMode = false;
   private cameraMode: CameraMode = "free";
+  /** Notified on every mode change, including one the user caused by grabbing
+   * the camera out of chase -- so a mode switch in the UI can reflect it. */
+  onCameraModeChange?: (mode: CameraMode) => void;
   // Whole-apartment extent, kept from the layout so "top" can reframe on every
   // entry -- frameLayout only ever runs once, and only before the first pose.
   private layoutBounds?: THREE.Box3;
-  private chaseClock = new THREE.Clock();
+  private cameraClock = new THREE.Clock();
+  // True between OrbitControls' start/end: the pointer or wheel owns the camera.
+  private userDriving = false;
+  private cameraTween?: {
+    fromPos: THREE.Vector3;
+    toPos: THREE.Vector3;
+    fromTarget: THREE.Vector3;
+    toTarget: THREE.Vector3;
+    t: number;
+  };
 
   /** Fixed render size (offscreen use, e.g. SimSession); null = track the window. */
   private fixedSize: { width: number; height: number } | null = null;
@@ -218,6 +233,22 @@ export class SimScene {
     this.controls.minDistance = 0.5;
     this.controls.maxDistance = 30;
     this.controls.update();
+    // Grabbing the camera is a statement that you want it: a drag or a wheel
+    // takes chase off and abandons a fly-out mid-arc. "start"/"end" bracket
+    // user input only, so this cannot fire for our own per-frame update() or
+    // for a programmatic reframe (spawnAt) -- and a click that never moves
+    // anything gets a "start" with no "change", so it leaves chase alone.
+    this.controls.addEventListener("start", () => {
+      this.userDriving = true;
+    });
+    this.controls.addEventListener("end", () => {
+      this.userDriving = false;
+    });
+    this.controls.addEventListener("change", () => {
+      if (!this.userDriving) return;
+      this.cameraTween = undefined;
+      if (this.cameraMode === "chase") this.setCameraMode("free");
+    });
 
     this.addLights();
     this.addGround();
@@ -763,24 +794,25 @@ export class SimScene {
     this.applyControlsEnabled();
   }
 
-  /** Pick how the orbit camera behaves; see CameraMode. Entering "top" frames
-   * the apartment once, after which it is an ordinary orbit you can drag. */
+  /** Pick how the orbit camera behaves; see CameraMode. "top" flies out to the
+   * apartment framing, after which it is an ordinary orbit you can drag. */
   setCameraMode(mode: CameraMode): void {
     if (mode === this.cameraMode) return;
     this.cameraMode = mode;
-    if (mode === "chase") this.chaseClock.getDelta(); // drop the idle gap, or the first frame snaps
-    if (mode === "top") this.frameFromAbove();
+    this.cameraTween = undefined;
+    this.cameraClock.getDelta(); // drop the gap since the last frame, or the first step is a jump
+    if (mode === "top") this.flyToOverview();
     this.applyControlsEnabled();
+    this.onCameraModeChange?.(mode);
   }
 
   private applyControlsEnabled(): void {
-    // Chase owns the camera every frame, so dragging it would fight the follow
-    // and lose; the other modes leave it where the pointer put it.
-    this.controls.enabled = this.activeView === "orbit" && !this.placementMode && this.cameraMode !== "chase";
+    this.controls.enabled = this.activeView === "orbit" && !this.placementMode;
   }
 
-  /** Look down on the whole apartment (or, lacking a layout, on the robot). */
-  private frameFromAbove(): void {
+  /** Start the pull-back onto the whole apartment (or, lacking a layout, onto
+   * the robot). */
+  private flyToOverview(): void {
     const bounds = this.layoutBounds;
     const center = bounds?.getCenter(new THREE.Vector3()) ?? new THREE.Vector3(...this.robotXY, 0);
     let distance = TOP_FALLBACK_HEIGHT_M;
@@ -789,14 +821,42 @@ export class SimScene {
       const fov = (this.camera.fov * Math.PI) / 180;
       distance = (Math.max(size.x, size.y) / 2 / Math.tan(fov / 2)) * TOP_FIT_MARGIN;
     }
-    this.camera.position.copy(center).addScaledVector(TOP_TILT, Math.min(distance, this.controls.maxDistance));
-    this.controls.target.copy(center);
-    this.controls.update();
+    this.cameraTween = {
+      fromPos: this.camera.position.clone(),
+      toPos: center.clone().addScaledVector(TOP_TILT, Math.min(distance, this.controls.maxDistance)),
+      fromTarget: this.controls.target.clone(),
+      toTarget: center,
+      t: 0,
+    };
+  }
+
+  /** Swing the camera along its arc to the tween's destination.
+   *
+   * The offset from the target is slerped and its length lerped, rather than
+   * lerping the position outright: a straight line from a close chase to a
+   * ceiling-height overview cuts through the apartment on the way. */
+  private advanceTween(dt: number): void {
+    const tween = this.cameraTween;
+    if (!tween) return;
+    tween.t = Math.min(1, tween.t + dt / TOP_TWEEN_S);
+    const k = tween.t * tween.t * (3 - 2 * tween.t); // smoothstep: no jerk at either end
+    const from = tween.fromPos.clone().sub(tween.fromTarget);
+    const to = tween.toPos.clone().sub(tween.toTarget);
+    const radius = THREE.MathUtils.lerp(from.length(), to.length(), k);
+    from.normalize();
+    to.normalize();
+    // Identity at k=0, the full from->to rotation at k=1.
+    const swing = new THREE.Quaternion().setFromUnitVectors(from, to).slerp(new THREE.Quaternion(), 1 - k);
+    const offset = from.applyQuaternion(swing).multiplyScalar(radius);
+    this.controls.target.lerpVectors(tween.fromTarget, tween.toTarget, k);
+    this.camera.position.copy(this.controls.target).add(offset);
+    this.camera.lookAt(this.controls.target);
+    if (tween.t >= 1) this.cameraTween = undefined;
   }
 
   /** Ease the camera toward its perch behind the robot. Frame-rate independent:
    * the same lag whether the tab renders at 30fps or 120. */
-  private updateChase(): void {
+  private updateChase(dt: number): void {
     const [x, y] = this.robotXY;
     const yaw = this.robotRoot.rotation.z;
     const desired = new THREE.Vector3(
@@ -805,10 +865,18 @@ export class SimScene {
       CHASE_HEIGHT_M,
     );
     const target = new THREE.Vector3(x, y, CHASE_TARGET_HEIGHT_M);
-    const alpha = 1 - Math.exp(-CHASE_LAG_HZ * Math.min(this.chaseClock.getDelta(), 0.1));
+    const alpha = 1 - Math.exp(-CHASE_LAG_HZ * dt);
     this.camera.position.lerp(desired, alpha);
     this.controls.target.lerp(target, alpha);
     this.camera.lookAt(this.controls.target);
+  }
+
+  /** One camera step, whoever owns it this frame. */
+  private stepCamera(): void {
+    const dt = Math.min(this.cameraClock.getDelta(), 0.1);
+    if (this.cameraMode === "chase") this.updateChase(dt);
+    else if (this.cameraTween) this.advanceTween(dt);
+    else this.controls.update();
   }
 
   /** Intersect a canvas pointer position with the floor plane (z=0) through
@@ -960,8 +1028,7 @@ export class SimScene {
 
   render(): void {
     const robotCam = this.activeView !== "orbit" ? this.robotCameras.get(this.activeView) : undefined;
-    if (!robotCam && this.cameraMode === "chase") this.updateChase();
-    else if (!robotCam) this.controls.update();
+    if (!robotCam) this.stepCamera();
     // Fat lines need the current drawing-buffer size to size their width in px.
     this.placeholderMat?.resolution.copy(this.renderer.getDrawingBufferSize(this.tmpSize));
     this.renderer.render(this.scene, robotCam ?? this.camera);

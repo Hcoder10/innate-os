@@ -318,6 +318,14 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
 
   const scene = new SimScene(canvas, { fixedSize: { width: parent.clientWidth || 1280, height: parent.clientHeight || 720 } });
   scene.followCamera = true;
+  // The scene takes chase off when the camera is dragged, so the switch has to
+  // follow the scene rather than be the only thing that knows the mode.
+  scene.onCameraModeChange = (mode) => {
+    const index = CAMERA_MODES.indexOf(mode);
+    if (index < 0) return;
+    cameraMode = index;
+    refreshCameraSwitch();
+  };
 
   // Placement drag (mode "place"): while a prop is armed the orbit controls
   // are off -- press marks the spot on the floor, drag points the yaw (arrow
