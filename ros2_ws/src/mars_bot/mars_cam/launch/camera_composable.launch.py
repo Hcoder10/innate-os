@@ -87,21 +87,23 @@ def generate_launch_description():
                 "enable_audio": True,
                 "audio_source_element": "alsasrc",
                 "audio_capture_device": "sysdefault:CARD=Light",
-                # Bound the teleop receiver's de-jitter buffer (ms) via the playout-delay RTP
-                # extension. Measured effect on the LAN: once this extension advertises playout-delay
-                # support, Chrome (which already pins jitterBufferTarget=0) drops the buffer from
-                # ~75 ms to ~2 ms with no added loss. max is the effective lever — it caps how far the
-                # buffer may grow during jitter spikes, bounding worst-case latency below the 75 ms
-                # default. min is inert while the client pins target=0 (kept at 0). Raise max for
-                # smoother playout under jitter, lower it for tighter latency. Retunable via restart.
+                # Playout-delay RTP extension = the CEILING the receiver may buffer, not a target.
+                # The webapp adapts receiver.jitterBufferTarget itself: 0 on a clean LAN (measured
+                # ~2 ms buffer once this extension is advertised), ~1.2x RTT on a lossy remote path
+                # so NACK resends land before playout. max must leave headroom for that adaptation;
+                # min stays 0 so the LAN case keeps its lowest latency.
                 "playout_min_delay_ms": 0,
-                "playout_max_delay_ms": 40,
+                "playout_max_delay_ms": 500,
                 # Video loss repair (webrtcbin negotiates none by default — one lost packet then
                 # freezes the stream until a PLI keyframe round-trip). ULPFEC repairs losses with
-                # no round trip for ~25% bitrate overhead; NACK resends only land in time if
-                # playout_max_delay_ms also covers the client's RTT, so remote viewers raise both.
+                # no round trip; NACK resends land within the receiver's adaptive jitter buffer.
                 "video_nack": True,
                 "video_fec_percentage": 25,
+                # Per-camera vp8enc target. The sum (+~25% FEC, + retransmits under loss) must fit
+                # the site uplink with margin — 2000 each measurably congested a residential link
+                # once two cameras streamed, and the resulting keyframe storms compounded the loss.
+                "main_bitrate_kbps": 1500,
+                "arm_bitrate_kbps": 800,
                 # Local-only STUN Binding responder. Browsers still obfuscate host candidates as mDNS,
                 # but when they query stun:<robot-lan-ip>:3478, the srflx candidate they emit is the LAN
                 # IP:port observed by the robot, not a public NAT hairpin route.

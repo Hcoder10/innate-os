@@ -196,6 +196,7 @@ void WebRTCStreamer::configure_cameras() {
         cam->fps = static_cast<int>(this->declare_parameter<int>(name + "_fps", def_fps));
         cam->width = static_cast<int>(this->declare_parameter<int>(name + "_width", 640));
         cam->height = static_cast<int>(this->declare_parameter<int>(name + "_height", 480));
+        cam->bitrate_kbps = static_cast<int>(this->declare_parameter<int>(name + "_bitrate_kbps", 2000));
         cam->pt = cam_pt_for_index(cameras_.size());
         cam->ssrc = cam_ssrc_for_index(cameras_.size());
         cam->owner = this;
@@ -203,8 +204,9 @@ void WebRTCStreamer::configure_cameras() {
             RCLCPP_WARN(this->get_logger(), "Camera '%s' has no live topic configured; skipping it", name.c_str());
             continue;
         }
-        RCLCPP_INFO(this->get_logger(), "  Camera[%zu] '%s': pt=%d ssrc=0x%08X %dx%d@%dfps live=%s", cameras_.size(),
-                    name.c_str(), cam->pt, cam->ssrc, cam->width, cam->height, cam->fps, cam->live_topic.c_str());
+        RCLCPP_INFO(this->get_logger(), "  Camera[%zu] '%s': pt=%d ssrc=0x%08X %dx%d@%dfps %dkbps live=%s",
+                    cameras_.size(), name.c_str(), cam->pt, cam->ssrc, cam->width, cam->height, cam->fps,
+                    cam->bitrate_kbps, cam->live_topic.c_str());
         cameras_.push_back(std::move(cam));
     }
     if (cameras_.empty()) {

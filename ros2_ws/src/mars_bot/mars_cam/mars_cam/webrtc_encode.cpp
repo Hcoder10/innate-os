@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>  // std::isalnum (audio element/device validation)
+#include <chrono>  // maybe_force_keyframe throttle clock
 #include <cmath>
 #include <cstdlib>
 #include <cstring>  // memcpy (push_frame)
@@ -30,14 +31,19 @@ struct FanOutTarget {
 std::string WebRTCStreamer::video_encode_branch(const CameraEncoder& cam) const {
     // appsrc -> encoder -> payloader -> appsink. The appsink is the fan-out tap: every connected peer's
     // transport appsrc is fed from here, so each camera is encoded exactly once regardless of peer count.
+    // keyframe-max-dist is a ~4 s backstop only: browsers request keyframes on demand (PLI, forwarded
+    // by on_keyunit_request), so a clean link carries almost no keyframes and a lossy one gets them
+    // exactly when needed — periodic IDR spikes were feeding congestion on constrained uplinks.
     return "appsrc name=src_" + cam.name +
            " is-live=true format=time caps=video/x-raw,format=BGR,width=" + std::to_string(cam.width) +
            ",height=" + std::to_string(cam.height) + ",framerate=" + std::to_string(cam.fps) +
            "/1 ! "
            "queue leaky=downstream max-size-buffers=1 max-size-time=0 max-size-bytes=0 ! "
            "videoconvert ! "
-           "vp8enc deadline=1 target-bitrate=2000000 cpu-used=4 error-resilient=partitions keyframe-max-dist=15 "
-           "end-usage=cbr buffer-size=600 buffer-initial-size=400 buffer-optimal-size=500 ! "
+           "vp8enc deadline=1 target-bitrate=" +
+           std::to_string(cam.bitrate_kbps * 1000) +
+           " cpu-used=4 error-resilient=partitions keyframe-max-dist=" + std::to_string(cam.fps * 4) +
+           " end-usage=cbr buffer-size=600 buffer-initial-size=400 buffer-optimal-size=500 ! "
            "rtpvp8pay name=pay_" +
            cam.name + " pt=" + std::to_string(cam.pt) + " ssrc=" + std::to_string(cam.ssrc) +
            " ! "
@@ -115,6 +121,21 @@ bool WebRTCStreamer::build_encode_pipeline() {
     RCLCPP_INFO(this->get_logger(), "Persistent encode pipeline PLAYING (%s, idle until a peer connects)",
                 names.c_str());
     return true;
+}
+
+// At 5%+ loss Chrome PLIs several times a second; each obeyed PLI is a full IDR, and that keyframe
+// flood re-congests the very link that caused the loss. One per 500 ms repairs just as well.
+void WebRTCStreamer::maybe_force_keyframe(const std::string& cam) {
+    CameraEncoder* c = find_camera(cam);
+    if (!c) {
+        return;
+    }
+    const int64_t now = std::chrono::steady_clock::now().time_since_epoch().count();
+    int64_t last = c->last_forced_ns.load(std::memory_order_relaxed);
+    if (now - last < 500'000'000 || !c->last_forced_ns.compare_exchange_strong(last, now, std::memory_order_relaxed)) {
+        return;
+    }
+    force_keyframe(cam);
 }
 
 void WebRTCStreamer::force_keyframe(const std::string& cam) {

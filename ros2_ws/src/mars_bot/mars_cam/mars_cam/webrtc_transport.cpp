@@ -12,9 +12,33 @@
 
 namespace mars_cam {
 
+namespace {
+struct KeyUnitCtx {
+    WebRTCStreamer* self;
+    std::string cam;
+};
+}  // namespace
+
 // =============================================================================
 // Per-peer transport
 // =============================================================================
+
+// webrtcbin turns an incoming PLI into a GstForceKeyUnit upstream event, but that event dies at the
+// transport appsrc — the encoder lives in a separate pipeline — so without this probe the browser
+// cannot request recovery and every loss waits out the periodic keyframe backstop.
+GstPadProbeReturn WebRTCStreamer::on_keyunit_request(GstPad*, GstPadProbeInfo* info, gpointer user_data) {
+    GstEvent* ev = gst_pad_probe_info_get_event(info);
+    if (!ev || GST_EVENT_TYPE(ev) != GST_EVENT_CUSTOM_UPSTREAM) {
+        return GST_PAD_PROBE_OK;
+    }
+    const GstStructure* s = gst_event_get_structure(ev);
+    if (!s || !gst_structure_has_name(s, "GstForceKeyUnit")) {
+        return GST_PAD_PROBE_OK;
+    }
+    auto* ctx = static_cast<KeyUnitCtx*>(user_data);
+    ctx->self->maybe_force_keyframe(ctx->cam);
+    return GST_PAD_PROBE_DROP;  // consumed; the appsrc has no use for it
+}
 
 std::string WebRTCStreamer::build_transport_description(const std::vector<std::string>& videos,
                                                         bool& with_audio) const {
@@ -134,6 +158,11 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
             gst_object_unref(src);
             ok = false;
             break;
+        }
+        if (GstPad* pad = gst_element_get_static_pad(src, "src")) {
+            gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_EVENT_UPSTREAM, on_keyunit_request, new KeyUnitCtx{this, v},
+                              [](gpointer p) { delete static_cast<KeyUnitCtx*>(p); });
+            gst_object_unref(pad);
         }
         peer->rtp[v] = src;  // keep the ref (camera name -> transport appsrc)
     }
