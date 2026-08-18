@@ -117,6 +117,7 @@ function buildAgentView(root) {
     onView: setView,
     enableMic: Boolean(config.simControls),
     onMicState: (state) => {
+      micControl?.setCaptureState(state);
       micControl?.setAudioFeedback({
         level: state.on ? state.level : 0,
         waveform: state.waveform,

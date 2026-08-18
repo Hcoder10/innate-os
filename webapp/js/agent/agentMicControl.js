@@ -20,6 +20,7 @@ const WAVEFORM_FLOOR = 0.12;
  * @returns {{
  *   destroy: () => void,
  *   setEnabled: (enabled: boolean) => void,
+ *   setCaptureState: (state: { on: boolean, busy: boolean }) => void,
  *   setAudioFeedback: (feedback: { level: number, waveform: number[] }) => void
  * }}
  */
@@ -60,12 +61,18 @@ export function createAgentMicControl(root, callbacks) {
   const holdSources = new Set();
   const eventController = new AbortController();
   let isHeld = false;
+  let captureOn = false;
+  let captureBusy = false;
   let activationId = 0;
 
   function renderHoldState() {
-    control.classList.toggle("listening", isHeld);
+    const listening = isHeld && captureOn;
+    const waiting = isHeld && (captureBusy || !captureOn);
+    control.classList.toggle("listening", listening);
+    control.classList.toggle("waiting", waiting);
     button.setAttribute("aria-pressed", String(isHeld));
-    label.textContent = isHeld ? "Listening…" : "Hold to talk";
+    button.setAttribute("aria-busy", String(waiting));
+    label.textContent = waiting ? "Starting…" : listening ? "Listening…" : "Hold to talk";
   }
 
   async function beginHold() {
@@ -171,6 +178,12 @@ export function createAgentMicControl(root, callbacks) {
       if (button.disabled === disabled) return;
       button.disabled = disabled;
       if (disabled) releaseAllHolds();
+    },
+    setCaptureState({ on, busy }) {
+      if (captureOn === on && captureBusy === busy) return;
+      captureOn = on;
+      captureBusy = busy;
+      renderHoldState();
     },
     /** @param {{ level: number, waveform: number[] }} feedback */
     setAudioFeedback({ level, waveform }) {
