@@ -103,3 +103,4 @@ htop
 btop
 nano
 vim
+innate-gstreamer-opt

@@ -40,9 +40,23 @@ the damage, but bounded-ugly is the ceiling until FEC actually flows.
 | **B. Newer gst from source into `/opt/gst`** | ~1 day + per-robot install | medium | Build core+base+good+bad (meson, ~30-60 min on Orin or cross/CI). Run only the camera container/process with `GST_PLUGIN_PATH`/`LD_LIBRARY_PATH` pointing at `/opt/gst`, system untouched. NVIDIA's plugins (nvv4l2decoder, nvvidconv, nvjpegenc) are built against 1.20 but the gst plugin ABI is stable within 1.x — community reports have them loading on newer cores; **not NVIDIA-certified**, must be verified per V1. |
 | **C. Third-party apt (e.g. savoury1 PPA, 1.24 for 22.04)** | hours | higher | Replaces system gst for *everything* on the robot, not just mars_cam; harder rollback; PPA trust/arm64 coverage to confirm. Path B is strictly safer. |
 
-**Recommendation: Path B, piloted on one office robot.** Isolated, reversible (delete
-/opt/gst + unset env), and testable end-to-end in an afternoon once the build exists.
-Package it as a versioned tarball in CI so fleet rollout is a file drop + env var.
+**Executed: Path B, piloted on mars-the-47th (2026-08-18).** All verification gates
+passed (V1-V3 below; V4 soak ongoing), and on a 240 ms / 4-5%-loss path the result was
+frozen time 17-29 s/min -> 0.5 s and PLIs -> 0 with FEC at 100%.
+
+## Fleet rollout (the executed pipeline)
+
+1. `scripts/update/build_gst_opt.sh` (this repo) builds the deb natively on any Jetson:
+   meson/ninja build into a DESTDIR, element + NVIDIA-plugin verification, then
+   `dpkg-deb` -> `innate-gstreamer-opt_<v>-1_arm64.deb` (~15 MB).
+2. Drop the deb at the **innate-packages** repo root — its `publish.sh` signs and
+   indexes every `*.deb` it finds, so no pipeline changes there.
+3. `ros2_ws/apt-dependencies.hardware.txt` lists `innate-gstreamer-opt`; the normal
+   `innate update apply` (post_update.sh) installs it fleet-wide.
+4. `camera_composable.launch.py` activates `/opt/gst` automatically when present.
+
+**Ordering**: the deb must be published in innate-packages BEFORE a release containing
+the dependency line ships, or post_update's apt step fails on the missing package.
 
 ## Verification checklist for the pilot
 
