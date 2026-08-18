@@ -39,6 +39,10 @@ class BatteryMonitor:
         node.create_subscription(BatteryState, "/battery_state", self._on_battery, 10)
 
     def _on_battery(self, msg: BatteryState) -> None:
+        # A live pack cannot read 0V — the driver reports it (as 0%) until its
+        # first I2C health response lands, ~60s into every boot.
+        if msg.voltage <= 0.0:
+            return
         battery = Battery(
             percentage=msg.percentage,
             voltage=msg.voltage,
