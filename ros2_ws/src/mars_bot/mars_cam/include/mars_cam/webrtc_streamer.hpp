@@ -193,6 +193,9 @@ class WebRTCStreamer : public rclcpp::Node {
     // Apply RTP caps + tuning to a transport appsrc and link it to the next webrtcbin sink pad (consumes
     // caps). Shared by the video and audio m-line setup in create_peer_transport.
     bool link_rtp_appsrc(GstElement* webrtc, GstElement* appsrc, GstCaps* caps, guint64 max_bytes);
+    // Enable NACK/RTX + ULPFEC (per video_nack_ / video_fec_percentage_) on the first `video_count`
+    // transceivers — GStreamer's defaults negotiate no loss repair at all.
+    void configure_video_transceivers(GstElement* webrtc, size_t video_count);
     void publish_offer(const std::string& client_id, const std::string& sdp);
 
     // ---- Camera subscriptions (lazy: a camera is subscribed only while some connected peer negotiates
@@ -258,6 +261,8 @@ class WebRTCStreamer : public rclcpp::Node {
     std::string audio_capture_device_;
     guint playout_min_delay_ms_ = 0;
     guint playout_max_delay_ms_ = 40;
+    bool video_nack_ = true;
+    guint video_fec_percentage_ = 25;
     bool enable_local_stun_ = true;
     int local_stun_port_ = 3478;
     std::atomic<bool> stun_running_{false};

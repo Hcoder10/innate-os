@@ -53,6 +53,27 @@ bool WebRTCStreamer::link_rtp_appsrc(GstElement* webrtc, GstElement* appsrc, Gst
     return linked;
 }
 
+// GStreamer transceivers default to no loss repair (do-nack=FALSE, fec-type=none), so a single lost
+// packet stalls the decoder until a PLI keyframe round-trip — multi-second freezes on lossy remote
+// links. Negotiate NACK/RTX and ULPFEC/RED per video m-line instead; browsers accept both.
+void WebRTCStreamer::configure_video_transceivers(GstElement* webrtc, size_t video_count) {
+    for (size_t i = 0; i < video_count; ++i) {
+        GstWebRTCRTPTransceiver* trans = nullptr;
+        g_signal_emit_by_name(webrtc, "get-transceiver", static_cast<gint>(i), &trans);
+        if (!trans) {
+            RCLCPP_WARN(this->get_logger(), "No transceiver for video m-line %zu; loss repair not applied", i);
+            continue;
+        }
+        g_object_set(trans, "do-nack", video_nack_ ? TRUE : FALSE, nullptr);
+        if (video_fec_percentage_ > 0) {
+            // fec-percentage defaults to 100 (double the bitrate) — always set it alongside fec-type.
+            g_object_set(trans, "fec-type", GST_WEBRTC_FEC_TYPE_ULP_RED, "fec-percentage", video_fec_percentage_,
+                         nullptr);
+        }
+        g_object_unref(trans);
+    }
+}
+
 Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const std::vector<std::string>& negotiated,
                                             const std::vector<std::string>& active, bool with_audio,
                                             bool audio_active) {
@@ -142,6 +163,7 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
         RCLCPP_ERROR(this->get_logger(), "Transport pipeline missing/failed an rtp appsrc");
         return nullptr;  // ~Peer() tears down the pipeline + the rtp appsrcs stored so far
     }
+    configure_video_transceivers(peer->webrtc, negotiated.size());
 
     // Tag the webrtcbin with its client_id (ICE-candidate routing) and a copy of its generation token,
     // so the on-negotiation-needed handler can build the offer context lock-free off the element alone.

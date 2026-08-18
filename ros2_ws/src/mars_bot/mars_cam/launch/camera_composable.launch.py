@@ -96,6 +96,12 @@ def generate_launch_description():
                 # smoother playout under jitter, lower it for tighter latency. Retunable via restart.
                 "playout_min_delay_ms": 0,
                 "playout_max_delay_ms": 40,
+                # Video loss repair (webrtcbin negotiates none by default — one lost packet then
+                # freezes the stream until a PLI keyframe round-trip). ULPFEC repairs losses with
+                # no round trip for ~25% bitrate overhead; NACK resends only land in time if
+                # playout_max_delay_ms also covers the client's RTT, so remote viewers raise both.
+                "video_nack": True,
+                "video_fec_percentage": 25,
                 # Local-only STUN Binding responder. Browsers still obfuscate host candidates as mDNS,
                 # but when they query stun:<robot-lan-ip>:3478, the srflx candidate they emit is the LAN
                 # IP:port observed by the robot, not a public NAT hairpin route.
