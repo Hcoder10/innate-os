@@ -36,12 +36,46 @@ export function initTtsAudio() {
     // Defensive: if a clip does arrive while the operator has the robot mic
     // open, skip it — the speaker would be heard through the mic as well.
     if (isMicAudioActive()) return;
-    try {
-      play(b64);
-    } catch (err) {
-      console.warn("[tts] failed to play audio:", err);
-    }
+    enqueue(b64);
   }, undefined, "std_msgs/msg/String");
+}
+
+// The robot speaks one utterance at a time: speak_text_async queues them and
+// each blocks until aplay finishes. In sim the robot half can only serialize
+// synthesis — a clip is "done" the moment it is published — so a two-sentence
+// reply arrives here within a few hundred ms and, played on arrival, talks over
+// itself. The queue is what puts the robot's behavior back.
+/** @type {string[]} */
+const pending = [];
+let playing = false;
+
+// A hidden or muted tab must not bank a monologue and deliver it late; the
+// robot drops queued speech for the same reason (see speak_text_async).
+const MAX_PENDING = 4;
+
+/** @param {string} b64 */
+function enqueue(b64) {
+  pending.push(b64);
+  while (pending.length > MAX_PENDING) {
+    pending.shift();
+    console.warn("[tts] playback backlog full — dropping the oldest clip");
+  }
+  if (!playing) playNext();
+}
+
+function playNext() {
+  const b64 = pending.shift();
+  if (b64 === undefined) {
+    playing = false;
+    return;
+  }
+  playing = true;
+  try {
+    play(b64);
+  } catch (err) {
+    console.warn("[tts] failed to play audio:", err);
+    playNext(); // one bad clip must not strand the rest of the reply
+  }
 }
 
 /** @param {string} b64 base64-encoded WAV */
@@ -59,6 +93,7 @@ function play(b64) {
     released = true;
     setTtsPlaying(false);
     URL.revokeObjectURL(url);
+    playNext();
   };
   audio.addEventListener("ended", done, { once: true });
   audio.addEventListener("error", done, { once: true });
