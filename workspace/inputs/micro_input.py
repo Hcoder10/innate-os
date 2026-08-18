@@ -138,21 +138,24 @@ class MicroInput(InputDevice):
         self._is_robot_talking = is_playing
 
     def on_open(self):
-        """Start the audio source and connect to the STT backend."""
+        """Start the audio source and connect to the STT backend.
+
+        Failures propagate: InputDeviceManager clears the device's active flag
+        only when this raises, and a device left active-but-unconnected is
+        never reopened — the microphone would stay dead until the directive is
+        toggled, with a transcript-shaped silence as the only symptom.
+        """
         if not self.proxy:
-            self.logger.error("❌ No STT config - cannot start microphone input")
-            return
+            raise RuntimeError("no STT configuration (the proxy client was never created)")
 
         try:
             self.mic = self._open_source()
             self.logger.info(f"🎙️ Microphone started (rate: {DEFAULT_SAMPLE_RATE}, channels: {DEFAULT_CHANNELS})")
             self._connect_via_proxy()
-
         except Exception as e:
             self.logger.error(f"❌ Failed to start microphone: {e}")
-            import traceback
-
-            traceback.print_exc()
+            self.on_close()  # release the device/socket so the retry starts clean
+            raise
 
     def _open_source(self):
         """The started audio source: the machine's ALSA capture device, or a
