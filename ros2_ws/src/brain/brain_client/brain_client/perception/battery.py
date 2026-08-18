@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 Innate Inc
+"""Always-on battery watch: the newest reading for the agent's turn context,
+and the idle-time out-of-battery voice warning.
+
+The skills provider's /battery_state feed only runs while a skill executes,
+so both consumers need their own subscription on the main node.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from brain_client.state.battery import Battery
+from brain_client.transport.chat import Sender
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from rclpy.node import Node
+    from sensor_msgs.msg import BatteryState
+
+    from brain_client.transport.chat import ChatManager
+
+_WARN_BELOW = 0.02  # state of charge, 0-1
+_WARNING = "I'm out of battery. Please replace my battery."
+
+
+class BatteryMonitor:
+    def __init__(self, node: Node, chat: ChatManager, brain_is_active: Callable[[], bool]):
+        # ROS import deferred so tests can construct this without rclpy.
+        from sensor_msgs.msg import BatteryState
+
+        self._chat = chat
+        self._brain_is_active = brain_is_active
+        self._charging_status: int = BatteryState.POWER_SUPPLY_STATUS_CHARGING
+        self._warned = False
+        self.current: Battery | None = None
+        node.create_subscription(BatteryState, "/battery_state", self._on_battery, 10)
+
+    def _on_battery(self, msg: BatteryState) -> None:
+        battery = Battery(
+            percentage=msg.percentage,
+            voltage=msg.voltage,
+            current=msg.current,
+            charging=msg.power_supply_status == self._charging_status,
+        )
+        self.current = battery
+        self._maybe_warn(battery)
+
+    def _maybe_warn(self, battery: Battery) -> None:
+        """One spoken warning per depletion, only while the brain is idle — an
+        active brain sees the level in its turn context and speaks for itself."""
+        if battery.percentage >= _WARN_BELOW or battery.charging:
+            self._warned = False
+            return
+        if self._warned or self._brain_is_active():
+            return
+        self._warned = True
+        self._chat.emit(Sender.ROBOT, _WARNING)
