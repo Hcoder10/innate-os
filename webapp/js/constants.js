@@ -37,10 +37,9 @@ export const HEAD_CURRENT_POSITION_TOPIC = "/mars/head/current_position";
 
 export const TTS_TOPIC = "/brain/tts";
 
-// Sim only: the operator's microphone, streamed to the robot as base64 PCM16
-// mono at 24 kHz (std_msgs/String). The sim container has no capture device, so
-// MicroInput reads this topic instead of arecord — the mirror of /tts/audio,
-// where the browser is the robot's speaker.
+// Sim only: the operator's microphone as base64 PCM16 mono at 24 kHz
+// (std_msgs/String). MicroInput reads this instead of arecord, mirroring
+// /tts/audio where the browser is the robot's speaker.
 export const MIC_AUDIO_TOPIC = "/mic/audio";
 
 // Operator <-> brain chat. Send: std_msgs/String whose data is JSON

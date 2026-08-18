@@ -1,15 +1,13 @@
 // @ts-check
-// Shared audio state, kept out of both owners so ttsAudio and the sessions
-// don't import each other.
+// Shared audio state, kept out of both owners so ttsAudio and the sessions don't
+// import each other.
 //
-// micAudioActive: is the robot's microphone being streamed to (and played in)
-// this browser? Set by the WebRTC session when the operator toggles mic audio;
-// read by ttsAudio to decide whether to play a /tts/audio clip — while the mic
-// is open we already hear the robot's speaker through it.
+// micAudioActive: the robot's mic is streaming to this browser (set by the
+// WebRTC session). ttsAudio skips clips while it is on — we already hear the
+// robot's speaker through the mic.
 //
-// ttsPlaying: is a /tts/audio clip playing right now? Set by ttsAudio; read by
-// the sim's mic stream, which stops publishing while it is true so the robot
-// does not transcribe its own voice back to itself.
+// ttsPlaying: a clip is playing. The sim's mic stream stops publishing while it
+// is on, so the robot does not transcribe its own voice.
 
 let micActive = false;
 

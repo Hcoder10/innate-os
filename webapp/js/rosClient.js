@@ -166,11 +166,9 @@ export class RosClient {
   }
 
   /**
-   * Declare a topic's type before publishing to it. A bare publish makes the
-   * bridge resolve the type against the live ROS graph, which fails for a topic
-   * whose only subscriber appears later — the sim's microphone device opens
-   * with the agent, after the operator has already hit the mic button.
-   * Re-sent on reconnect until unadvertised.
+   * Declare a topic's type before publishing to it. A bare publish resolves the
+   * type against the live graph, which fails when the only subscriber appears
+   * later. Re-sent on reconnect until unadvertised.
    * @param {string} topic
    * @param {string} type e.g. "std_msgs/msg/String"
    * @returns {() => void} unadvertise

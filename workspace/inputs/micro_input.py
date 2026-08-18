@@ -54,8 +54,7 @@ CHUNK_DURATION_SEC = 0.02
 # transcript comes out time-warped.
 ELEVENLABS_AUDIO_FORMAT = f"pcm_{DEFAULT_SAMPLE_RATE}"
 
-# Where a client (the webapp) pushes microphone audio when the machine has no
-# capture device: std_msgs/String carrying base64 PCM16 mono at DEFAULT_SAMPLE_RATE.
+# std_msgs/String of base64 PCM16 mono at DEFAULT_SAMPLE_RATE.
 MIC_AUDIO_TOPIC = "/mic/audio"
 
 STT_BACKENDS = frozenset({"elevenlabs_batch", "gemini", "elevenlabs", "openai"})
@@ -141,10 +140,8 @@ class MicroInput(InputDevice):
     def on_open(self):
         """Start the audio source and connect to the STT backend.
 
-        Failures propagate: InputDeviceManager clears the device's active flag
-        only when this raises, and a device left active-but-unconnected is
-        never reopened — the microphone would stay dead until the directive is
-        toggled, with a transcript-shaped silence as the only symptom.
+        Failures must propagate: InputDeviceManager clears the active flag only
+        when this raises, and a device left active is never reopened.
         """
         if not self.proxy:
             raise RuntimeError("no STT configuration (the proxy client was never created)")
@@ -159,15 +156,10 @@ class MicroInput(InputDevice):
             raise
 
     def _open_source(self):
-        """The started audio source: the machine's ALSA capture device, or a
-        client pushing PCM over ROS when it has no capture stack at all (the
-        sim, where the browser is the microphone just as it is the speaker for
-        /tts/audio).
+        """The started audio source: ALSA, or ROS where there is no capture stack.
 
-        Keyed on arecord being absent, not on it listing no cards: a robot whose
-        USB microphone failed to enumerate still has a working ALSA `default`,
-        and must keep reaching for it rather than going quiet waiting for audio
-        no browser is sending.
+        Keyed on arecord being absent, not on it listing no cards — a robot whose
+        microphone did not enumerate still has a working `default` to reach for.
         """
         device = self._detect_audio_device()
         if shutil.which("arecord") is None and self.node is not None:
@@ -678,12 +670,9 @@ class MicroInput(InputDevice):
 
 
 class RosPcmStreamer:
-    """Streams microphone audio a client pushes over ROS on MIC_AUDIO_TOPIC.
-
-    The sim container has no capture device, so the browser's microphone is the
-    robot's — the mirror of /tts/audio, where the browser is its speaker. Same
-    queue-of-PCM-chunks surface as ArecordStreamer, so MicroInput drives either.
-    """
+    """Microphone audio a client pushes over ROS: the sim's browser is the mic,
+    mirroring /tts/audio where it is the speaker. Same queue-of-chunks surface as
+    ArecordStreamer, so MicroInput drives either."""
 
     def __init__(self, node, logger):
         self.queue: queue.Queue[bytes] = queue.Queue(maxsize=100)

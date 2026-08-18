@@ -2,12 +2,9 @@
 # Copyright (c) 2026 Innate Inc
 """Regression: a type alias in a device file must not hide its devices.
 
-``micro_input.py`` imports ``Transcriber = Callable[[bytes], str]`` to annotate
-against at runtime, and on py3.10 — what the robot runs — a subscripted generic
-still counts as a class, so it reached ``issubclass``, which raised. One member
-took every device in the file with it, and the microphone stopped loading with
-a single cryptic line in the log. It went unnoticed for weeks because the
-symptom is silence, and because py3.11+ does not reproduce it.
+micro_input.py's ``Transcriber = Callable[[bytes], str]`` reached issubclass on
+py3.10 and raised, taking every device in the file with it. Unnoticed for weeks:
+the symptom is silence, and py3.11+ does not reproduce it.
 """
 
 import logging

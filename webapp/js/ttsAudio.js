@@ -40,17 +40,16 @@ export function initTtsAudio() {
   }, undefined, "std_msgs/msg/String");
 }
 
-// The robot speaks one utterance at a time: speak_text_async queues them and
-// each blocks until aplay finishes. In sim the robot half can only serialize
-// synthesis — a clip is "done" the moment it is published — so a two-sentence
-// reply arrives here within a few hundred ms and, played on arrival, talks over
-// itself. The queue is what puts the robot's behavior back.
+// The robot speaks one utterance at a time, because speak_text blocks until
+// aplay finishes. In sim a clip is "done" once published, so the robot half can
+// only serialize synthesis — played on arrival, a two-sentence reply talks over
+// itself. This queue is what puts that behavior back.
 /** @type {string[]} */
 const pending = [];
 let playing = false;
 
-// A hidden or muted tab must not bank a monologue and deliver it late; the
-// robot drops queued speech for the same reason (see speak_text_async).
+// A hidden or muted tab must not bank a monologue and deliver it late (the same
+// reason speak_text_async drops superseded speech).
 const MAX_PENDING = 4;
 
 /** @param {string} b64 */
@@ -83,9 +82,8 @@ function play(b64) {
   const blob = new Blob([/** @type {BlobPart} */ (base64ToBytes(b64))], { type: "audio/wav" });
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
-  // The sim's mic stream reads this to stop publishing while we speak, so the
-  // clip must be released down every path — a clip that never reports finished
-  // would mute the microphone for the rest of the session.
+  // The mic stream stops publishing while this is set, so every path must
+  // release it — one that never finishes mutes the microphone for the session.
   setTtsPlaying(true);
   let released = false;
   const done = () => {

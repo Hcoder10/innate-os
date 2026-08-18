@@ -1,11 +1,10 @@
-// Audio-thread half of the sim's microphone (see micStream.js): resamples the
-// capture stream onto the robot's 24 kHz grid and posts it out as PCM16 chunks.
+// Audio-thread half of the sim's microphone (micStream.js): resamples capture
+// onto the robot's 24 kHz grid and posts PCM16 chunks.
 //
-// Not an ES module — loaded by AudioWorklet.addModule(), which evaluates it in
-// the audio rendering scope: no imports, no DOM, and globals lib.dom does not
-// declare, so tsconfig excludes this one file. It runs off the main thread on
-// purpose: the Agent page renders the sim with Three.js, and audio captured on
-// the main thread drops out whenever a frame runs long.
+// Not an ES module — AudioWorklet.addModule() evaluates it in the audio
+// rendering scope, whose globals lib.dom does not declare, so tsconfig excludes
+// this file. Off the main thread on purpose: the Agent page renders the sim with
+// Three.js, and audio captured there drops out whenever a frame runs long.
 
 const TARGET_RATE = 24000;
 // 60 ms per message — 17 publishes/s over rosbridge instead of 50 at the
@@ -15,11 +14,10 @@ const CHUNK_SAMPLES = 1440;
 class MicChunker extends AudioWorkletProcessor {
   constructor() {
     super();
-    // `sampleRate` is the context's rate; the step is 1 when it already runs at
-    // TARGET_RATE, which is what AudioContext({sampleRate}) normally gives us.
+    // 1 when the context already runs at TARGET_RATE, which is the normal case.
     this._step = sampleRate / TARGET_RATE;
-    // Read position in the current block. Starts negative after a seam: the
-    // sample it interpolates from is the previous block's last one.
+    // Goes negative across a seam: the sample to interpolate from is then the
+    // previous block's last one.
     this._pos = 0;
     this._prev = 0;
     this._chunk = new Int16Array(CHUNK_SAMPLES);

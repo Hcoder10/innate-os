@@ -1,14 +1,11 @@
 // @ts-check
-// The browser as the robot's microphone. In SIM there is no capture device in
-// the container, so the operator's mic is the robot's: this streams it as
-// base64 PCM16 on /mic/audio, where MicroInput picks it up in place of arecord
-// and runs the same VAD + transcription the robot runs (workspace/inputs/
-// micro_input.py). The exact mirror of ttsAudio, where the browser is the
-// robot's speaker. Against a real robot nothing here mounts — it listens with
-// its own microphone.
+// The browser as the sim robot's microphone, mirroring ttsAudio where it is the
+// speaker. Streams base64 PCM16 on /mic/audio, where MicroInput takes it in
+// place of arecord and runs the robot's own VAD + transcription. Never mounts
+// against a real robot, which listens with its own mic.
 //
-// Publishing pauses while a /tts/audio clip plays in this page: the sim's
-// speaker is these same speakers, and the robot must not transcribe itself.
+// Publishing pauses while a clip plays in this page: the sim's speaker is these
+// same speakers, and the robot must not transcribe itself.
 
 import { MIC_AUDIO_TOPIC } from "../constants.js";
 import { isTtsPlaying } from "../micAudioState.js";
@@ -53,15 +50,14 @@ export function createMicStream(rosClient, onState) {
     patch({ busy: true, error: null });
     try {
       media = await navigator.mediaDevices.getUserMedia({
-        // Echo cancellation is what keeps the robot's own speech (played by
-        // ttsAudio through these speakers) out of its ears; the TTS gate in
-        // publish() covers what leaks past it.
+        // Keeps the robot's own speech out of its ears; the gate in publish()
+        // covers what leaks past it.
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
-      // Before the first chunk: the mic device subscribes only once the agent is
-      // running, so the bridge cannot infer the type from the graph yet.
+      // The mic device subscribes only once the agent runs, so the bridge has
+      // nothing to infer the type from yet.
       unadvertise = rosClient.advertise(MIC_AUDIO_TOPIC, "std_msgs/msg/String");
-      if (destroyed) return teardown();
+      if (destroyed) return teardown(); // unmounted mid-await: a stream captured now is never stopped
       ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
       await ctx.audioWorklet.addModule(WORKLET_URL);
       if (destroyed) return teardown();
@@ -128,8 +124,8 @@ function rms(pcm) {
 /** @param {Uint8Array} bytes @returns {string} */
 function toBase64(bytes) {
   let bin = "";
-  // Chunked: String.fromCharCode spreads its arguments, and a whole 3 KB chunk
-  // at once is close enough to the argument limit to be worth not testing.
+  // Chunked: fromCharCode spreads its arguments, and a whole chunk at once sits
+  // close enough to the argument limit to be worth not testing.
   for (let i = 0; i < bytes.length; i += 1024) {
     bin += String.fromCharCode(...bytes.subarray(i, i + 1024));
   }

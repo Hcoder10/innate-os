@@ -436,9 +436,8 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     if (id) await withApplying(() => agentState.setDirective(id));
   }
 
-  /** The talk-to-the-agent toggle: the browser's microphone, streamed to the
-   *  sim as the robot's own (micStream.js). Turning it on starts an idle agent,
-   *  the same as sending a message would. */
+  /** Talk to the agent: the browser's mic, streamed to the sim as the robot's
+   *  own (micStream.js). Turning it on starts an idle agent, as sending does. */
   function createMicButton() {
     const button = document.createElement("button");
     button.type = "button";

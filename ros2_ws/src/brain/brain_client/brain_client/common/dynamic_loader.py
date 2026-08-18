@@ -165,12 +165,11 @@ class DynamicLoader(Generic[T]):
         return module
 
     def _is_candidate(self, obj: type) -> bool:
-        """Is this member a real subclass of :attr:`base_class`?
+        """A real subclass of :attr:`base_class`?
 
-        py3.10 — what the robot runs — counts a subscripted generic as a class,
-        so a module-level alias imported for annotations (``Transcriber =
-        Callable[[bytes], str]`` in micro_input.py) reaches issubclass, which
-        rejects it. Uncaught, that one member voided every device in the file.
+        py3.10 counts a subscripted generic as a class, so an imported alias
+        (``Callable[[bytes], str]``) reaches issubclass, which raises on it —
+        uncaught, one alias voided every class in the file.
         """
         try:
             return issubclass(obj, self.base_class)
