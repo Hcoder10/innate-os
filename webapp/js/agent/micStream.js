@@ -14,6 +14,8 @@ const WORKLET_URL = "/js/agent/micWorklet.js";
 // The rate MicroInput's VAD and the vendor wire formats are built around.
 const SAMPLE_RATE = 24000;
 const WAVEFORM_POINT_COUNT = 7;
+// Batch and realtime VAD need audio after speech to close the utterance.
+const VAD_TAIL_MS = 800;
 
 /**
  * @typedef {{ on: boolean, busy: boolean, level: number, waveform: number[], error: string | null }} MicState
@@ -35,6 +37,8 @@ export function createMicStream(rosClient, onState) {
   let unadvertise = null;
   let destroyed = false;
   let startId = 0;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let stopTimer = null;
 
   /** @param {Partial<MicState>} patch */
   function patch(patch) {
@@ -43,6 +47,10 @@ export function createMicStream(rosClient, onState) {
   }
 
   async function start() {
+    if (stopTimer !== null) {
+      clearTimeout(stopTimer);
+      stopTimer = null;
+    }
     if (state.on || state.busy) return;
     const id = ++startId;
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -104,11 +112,19 @@ export function createMicStream(rosClient, onState) {
   }
 
   function stop() {
-    const wasActive = state.on || state.busy;
-    startId++;
-    if (!wasActive) return;
-    teardown();
-    patch({ on: false, busy: false, level: 0, waveform: emptyWaveform() });
+    if (state.busy) {
+      startId++;
+      teardown();
+      patch({ on: false, busy: false, level: 0, waveform: emptyWaveform() });
+      return;
+    }
+    if (!state.on || stopTimer !== null) return;
+    stopTimer = setTimeout(() => {
+      stopTimer = null;
+      startId++;
+      teardown();
+      patch({ on: false, level: 0, waveform: emptyWaveform() });
+    }, VAD_TAIL_MS);
   }
 
   return {
@@ -116,6 +132,7 @@ export function createMicStream(rosClient, onState) {
     stop,
     destroy() {
       destroyed = true;
+      if (stopTimer !== null) clearTimeout(stopTimer);
       startId++;
       teardown();
     },
