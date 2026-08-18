@@ -6328,6 +6328,37 @@ select.skill-input {
   border-color: var(--ctl-edge-accent-hover);
 }
 
+/* Sim only: talk to the agent. The ring brightens with --mic-level (0..1, set
+   per audio chunk) so a live microphone is visibly being heard. */
+.agent-compose-mic {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  color: var(--ctl-text);
+  background: var(--ctl-glass);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 11px;
+  box-shadow: var(--ctl-sheen);
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.agent-compose-mic:hover:not(:disabled) {
+  color: var(--ctl-accent);
+  background: var(--ctl-glass-hover);
+}
+
+.agent-compose-mic:disabled {
+  opacity: 0.5;
+}
+
+.agent-compose-mic.active {
+  color: var(--ctl-accent);
+  border-color: var(--ctl-edge-accent-hover);
+  box-shadow: 0 0 0 calc(3px * var(--mic-level, 0)) var(--accent-dim);
+}
+
 /* Bottom-left "agent active" chip — only while the brain is running. */
 .agent-active-chip {
   position: absolute;

@@ -68,6 +68,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
         urdf-parser-py \
         websocket-client \
         watchdog \
+        onnxruntime \
         pillow && \
     uv pip install --system \
         --index-url https://download.pytorch.org/whl/cpu \

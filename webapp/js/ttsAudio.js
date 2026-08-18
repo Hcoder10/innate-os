@@ -9,7 +9,7 @@
 // which page is open.
 
 import { ros } from "./rosClient.js";
-import { isMicAudioActive } from "./micAudioState.js";
+import { isMicAudioActive, setTtsPlaying } from "./micAudioState.js";
 
 const TTS_AUDIO_TOPIC = "/tts/audio";
 
@@ -49,12 +49,24 @@ function play(b64) {
   const blob = new Blob([/** @type {BlobPart} */ (base64ToBytes(b64))], { type: "audio/wav" });
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
-  audio.addEventListener("ended", () => URL.revokeObjectURL(url), { once: true });
+  // The sim's mic stream reads this to stop publishing while we speak, so the
+  // clip must be released down every path — a clip that never reports finished
+  // would mute the microphone for the rest of the session.
+  setTtsPlaying(true);
+  let released = false;
+  const done = () => {
+    if (released) return;
+    released = true;
+    setTtsPlaying(false);
+    URL.revokeObjectURL(url);
+  };
+  audio.addEventListener("ended", done, { once: true });
+  audio.addEventListener("error", done, { once: true });
   audio.play().catch((err) => {
     // Browser autoplay policies block playback until the user has interacted
     // with the page; after any click/keypress this succeeds.
     console.warn("[tts] autoplay blocked (interact with the page first):", err?.message || err);
-    URL.revokeObjectURL(url);
+    done();
   });
 }
 
