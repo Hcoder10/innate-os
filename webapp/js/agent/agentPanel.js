@@ -405,10 +405,10 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     if (run.hasDetail) run.wrap.classList.add("has-detail");
     // Terminal updates repeat the inputs; keep the last non-empty rendering so
     // a publisher that omits them can't blank args the run already showed.
-    const argsText = formatSkillArgs(args);
-    if (argsText) {
-      run.args.textContent = argsText;
-      run.args.title = argsText;
+    const inputs = formatSkillArgs(args);
+    if (inputs.text) {
+      run.args.textContent = inputs.text;
+      run.args.title = inputs.full;
     }
     run.status.textContent = cls;
 
@@ -658,18 +658,23 @@ function viewButton(label, title) {
 }
 
 /**
- * A skill's inputs on one line, for the run's header row. A lone input reads
- * better as its bare value ("head emotion  happy") — the skill name already
- * says what it is; several need their keys to stay legible.
+ * A skill's inputs on one line: `text` clipped for the run's header row, `full`
+ * intact for its hover title. A lone input reads better as its bare value
+ * ("head emotion  happy") — the skill name already says what it is; several
+ * need their keys to stay legible.
  * @param {any} args
+ * @returns {{ text: string, full: string }}
  */
 function formatSkillArgs(args) {
-  if (!args || typeof args !== "object" || Array.isArray(args)) return "";
+  if (!args || typeof args !== "object" || Array.isArray(args)) return { text: "", full: "" };
   const entries = Object.entries(args).filter(([, v]) => v !== null && v !== undefined && v !== "");
-  if (entries.length === 0) return "";
-  const show = (/** @type {any} */ v) => clip(roundNums(typeof v === "object" ? JSON.stringify(v) : String(v)), 40);
-  if (entries.length === 1) return show(entries[0][1]);
-  return entries.map(([k, v]) => `${k.replace(/_/g, " ")}: ${show(v)}`).join(" · ");
+  if (entries.length === 0) return { text: "", full: "" };
+  const show = (/** @type {any} */ v) => roundNums(typeof v === "object" ? JSON.stringify(v) : String(v));
+  const line = (/** @type {(v: any) => string} */ value) =>
+    entries.length === 1
+      ? value(entries[0][1])
+      : entries.map(([k, v]) => `${k.replace(/_/g, " ")}: ${value(v)}`).join(" · ");
+  return { text: line((v) => clip(show(v), 40)), full: line(show) };
 }
 
 /** @param {string} text @param {number} max */

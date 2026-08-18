@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
 from innate_skills.close_gripper import CloseGripper
+from innate_skills.head_emotion import HeadEmotion
 from innate_skills.navigate_to_position import NavigateToPosition
 from innate_skills.open_gripper import OpenGripper
 from innate_skills.pick_any_object import PickAnyObject
 from innate_skills.search_memory import SearchMemory
 from innate_skills.wave import Wave
-from innate_skills.head_emotion import HeadEmotion
 from inputs.micro_input import MicroInput
 
 from brain_client.agents.types import Agent, InputRef, SkillRef

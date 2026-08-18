@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-from innate_skills.navigate_to_position import NavigateToPosition
 from innate_skills.head_emotion import HeadEmotion
+from innate_skills.navigate_to_position import NavigateToPosition
 from inputs.micro_input import MicroInput
 
 from brain_client.agents.types import Agent, InputRef, SkillRef
