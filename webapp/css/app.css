@@ -6092,43 +6092,45 @@ select.skill-input {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .agent-mic-control:not(.listening):not(.waiting) .agent-mic-button:hover {
+  .agent-mic-control:not(.listening):not(.waiting):not(.unavailable) .agent-mic-button:hover {
     color: #fff;
     border-color: rgb(255 255 255 / 48%);
   }
 
-  .agent-mic-control:not(.listening):not(.waiting) .agent-mic-button:hover::before {
+  .agent-mic-control:not(.listening):not(.waiting):not(.unavailable) .agent-mic-button:hover::before {
     transform: scale(1.07);
   }
 
-  .agent-mic-control:not(.listening):not(.waiting) .agent-mic-button:hover::after {
+  .agent-mic-control:not(.listening):not(.waiting):not(.unavailable) .agent-mic-button:hover::after {
     opacity: 0.62;
   }
 
-  .agent-mic-control:not(.listening):not(.waiting) .agent-mic-button:hover .agent-mic-icon {
+  .agent-mic-control:not(.listening):not(.waiting):not(.unavailable) .agent-mic-button:hover .agent-mic-icon {
     opacity: 1;
     transform: scale(1.08);
   }
 
-  .agent-mic-control:not(.listening):not(.waiting) .agent-mic-button:hover .agent-mic-hover-glow {
+  .agent-mic-control:not(.listening):not(.waiting):not(.unavailable) .agent-mic-button:hover .agent-mic-hover-glow {
     opacity: 1;
     transform: scale(1.07);
   }
 
-  .agent-mic-control:not(.listening):not(.waiting):has(.agent-mic-button:hover) .agent-mic-outer-waves {
+  .agent-mic-control:not(.listening):not(.waiting):not(.unavailable):has(.agent-mic-button:hover)
+    .agent-mic-outer-waves {
     opacity: 0;
   }
 
-  .agent-mic-control:not(.listening):not(.waiting):has(.agent-mic-button:hover) .agent-mic-outer-wave {
+  .agent-mic-control:not(.listening):not(.waiting):not(.unavailable):has(.agent-mic-button:hover)
+    .agent-mic-outer-wave {
     animation-play-state: paused;
   }
 }
 
-.agent-mic-control:not(.listening):not(.waiting) .agent-mic-outer-waves {
+.agent-mic-control:not(.listening):not(.waiting):not(.unavailable) .agent-mic-outer-waves {
   opacity: 1;
 }
 
-.agent-mic-control:not(.listening):not(.waiting) .agent-mic-outer-wave {
+.agent-mic-control:not(.listening):not(.waiting):not(.unavailable) .agent-mic-outer-wave {
   animation: agent-mic-outer-wave 1.8s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
 }
 
@@ -6159,6 +6161,36 @@ select.skill-input {
 
 .agent-mic-control.waiting .agent-mic-label {
   color: rgb(255 255 255 / 56%);
+}
+
+.agent-mic-control.unavailable .agent-mic-button {
+  color: rgb(255 255 255 / 40%);
+  background: rgb(8 8 10 / 26%);
+  border-color: rgb(255 255 255 / 12%);
+  cursor: not-allowed;
+}
+
+.agent-mic-control.unavailable .agent-mic-button::before {
+  background: rgb(190 190 198 / 14%);
+  border: 1px solid rgb(255 255 255 / 22%);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 4%),
+    0 6px 20px rgb(0 0 0 / 16%);
+}
+
+.agent-mic-control.unavailable .agent-mic-button::after {
+  opacity: 0.12;
+}
+
+.agent-mic-control.unavailable .agent-mic-icon {
+  mask: url("/js/agent/icons/mic-disabled.png") center / contain no-repeat;
+  -webkit-mask: url("/js/agent/icons/mic-disabled.png") center / contain no-repeat;
+  opacity: 0.52;
+  transform: scale(0.94);
+}
+
+.agent-mic-control.unavailable .agent-mic-label {
+  color: rgb(255 255 255 / 44%);
 }
 
 .agent-mic-control.listening .agent-mic-button {

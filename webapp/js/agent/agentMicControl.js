@@ -20,7 +20,7 @@ const WAVEFORM_FLOOR = 0.12;
  * @returns {{
  *   destroy: () => void,
  *   setEnabled: (enabled: boolean) => void,
- *   setCaptureState: (state: { on: boolean, busy: boolean }) => void,
+ *   setCaptureState: (state: { on: boolean, busy: boolean, error: string | null }) => void,
  *   setAudioFeedback: (feedback: { level: number, waveform: number[] }) => void
  * }}
  */
@@ -63,16 +63,30 @@ export function createAgentMicControl(root, callbacks) {
   let isHeld = false;
   let captureOn = false;
   let captureBusy = false;
+  let isViewEnabled = true;
+  /** @type {string | null} */
+  let unavailableReason = null;
   let activationId = 0;
 
   function renderHoldState() {
-    const listening = isHeld && captureOn;
-    const waiting = isHeld && (captureBusy || !captureOn);
+    const unavailable = unavailableReason !== null;
+    const listening = isHeld && captureOn && !unavailable;
+    const waiting = isHeld && (captureBusy || !captureOn) && !unavailable;
     control.classList.toggle("listening", listening);
     control.classList.toggle("waiting", waiting);
+    control.classList.toggle("unavailable", unavailable);
     button.setAttribute("aria-pressed", String(isHeld));
     button.setAttribute("aria-busy", String(waiting));
-    label.textContent = waiting ? "Starting…" : listening ? "Listening…" : "Hold to talk";
+    button.setAttribute("aria-label", unavailable ? "Microphone disabled" : "Hold to talk to the agent");
+    button.title = unavailableReason ?? "Hold to talk — Space, or click and hold";
+    label.textContent = unavailable ? "Mic disabled" : waiting ? "Starting…" : listening ? "Listening…" : "Hold to talk";
+  }
+
+  function applyAvailability() {
+    const wasDisabled = button.disabled;
+    button.disabled = !isViewEnabled || unavailableReason !== null;
+    if (button.disabled && !wasDisabled) releaseAllHolds();
+    renderHoldState();
   }
 
   async function beginHold() {
@@ -174,16 +188,16 @@ export function createAgentMicControl(root, callbacks) {
 
   return {
     setEnabled(enabled) {
-      const disabled = !enabled;
-      if (button.disabled === disabled) return;
-      button.disabled = disabled;
-      if (disabled) releaseAllHolds();
+      if (isViewEnabled === enabled) return;
+      isViewEnabled = enabled;
+      applyAvailability();
     },
-    setCaptureState({ on, busy }) {
-      if (captureOn === on && captureBusy === busy) return;
+    setCaptureState({ on, busy, error }) {
+      if (captureOn === on && captureBusy === busy && unavailableReason === error) return;
       captureOn = on;
       captureBusy = busy;
-      renderHoldState();
+      unavailableReason = error;
+      applyAvailability();
     },
     /** @param {{ level: number, waveform: number[] }} feedback */
     setAudioFeedback({ level, waveform }) {
