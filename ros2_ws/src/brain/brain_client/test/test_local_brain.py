@@ -130,6 +130,13 @@ def test_build_tools_with_no_skills_still_offers_wait():
     assert [d["name"] for d in declarations] == ["wait"]
 
 
+def test_build_tools_with_user_speech_drops_wait():
+    # Same rule as the running-skill case: a no-op tool on a spoken turn is
+    # taken instead of replying, so an idle user turn declares skills only.
+    declarations = build_tools(assign_tool_names([WAVE_SKILL]), None, user_spoke=True)[0]["functionDeclarations"]
+    assert [d["name"] for d in declarations] == ["wave"]
+
+
 def test_unknown_param_type_falls_back_to_annotated_string():
     skill = {"id": "s", "name": "s", "guidelines": "g", "inputs": {"blob": {"type": "list[str]", "required": True}}}
     schema = build_tools(assign_tool_names([skill]), None)[0]["functionDeclarations"][0]["parameters"]["properties"][

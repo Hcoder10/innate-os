@@ -98,10 +98,9 @@ _PARAM_DEFAULTS: dict[str, str | bool | int | float] = {
     # --- Local brain (Gemini) ---
     "gemini_model": "gemini-3.7-flash",
     # "low" | "medium" | "high"; "" = model default. 3.7-flash dropped 3.6's
-    # "minimal", and at "low" it answers a user who speaks to it only ~half
-    # the time (6/12 probes, vs 12/12 at the default) — silence costs more
-    # than the ~0.8s the default level adds.
-    "gemini_thinking_level": "",
+    # "minimal", so "low" is the fastest level it offers; it only keeps the
+    # robot answering because build_tools stops offering wait on user turns.
+    "gemini_thinking_level": "low",
     "idle_turn_interval": 3.0,
     "supervision_turn_interval": 5.0,
     "history_max_entries": 60,

@@ -93,11 +93,12 @@ def build_tools(
     its dispatch map from the same pairs, so the declared names and the
     dispatched names can never diverge.
 
-    While a skill runs, the robot's only action is stopping it, so the
-    declarations collapse. The shape depends on whether the user just spoke:
-    offered any no-op tool, the model calls it and goes silent, so a turn
-    carrying a user message gets stop_current_skill ALONE — plain text becomes
-    the reply channel, and the description steers stop away from questions.
+    A turn carrying user speech never gets a no-op tool: offered one, the
+    model calls it and goes silent instead of replying — 3.7-flash took wait
+    on ~60% of spoken turns (3.6-flash was immune), and dropping it restores
+    97%. So a user turn loses wait, and while a skill runs it collapses to
+    stop_current_skill ALONE — plain text becomes the reply channel, and the
+    description steers stop away from questions.
     """
     if running_skill_name is not None:
         stop = {
@@ -115,7 +116,8 @@ def build_tools(
     declarations = [_declaration(name, meta) for name, meta in named_skills]
     if can_go_to_point_in_view:
         declarations.append(_GO_TO_POINT_IN_VIEW_DECLARATION)
-    declarations.append(_WAIT_DECLARATION)
+    if not user_spoke:
+        declarations.append(_WAIT_DECLARATION)
     return [{"functionDeclarations": declarations}]
 
 
