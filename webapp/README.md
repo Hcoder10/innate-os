@@ -52,6 +52,27 @@ Each page is a sibling sharing those modules. If a page one day genuinely
 needs a chart library or framework, that page adopts it locally — never
 app-wide tooling.
 
+### Load speed without a bundler
+
+No bundler means no dead-code elimination and no minification, so the first load
+stays fast only by keeping bytes and round trips deliberate. Four rules do that:
+
+- **The front door gzips text assets** and caches the compressed bytes per file
+  identity, so a cold load moves ~350 KB instead of ~1.8 MB. The pinned vendor
+  libraries under `public/vendor/` are additionally served immutable.
+- **`index.html` names every first-paint module** in `<link rel="modulepreload">`.
+  Without it the import graph is discovered a level at a time — five serial
+  round trips before the page module is even requested. `node tests/preload.test.js`
+  recomputes the graph and reports any drift.
+- **Anything heavy that a page might not show is a dynamic `import()`** — the map
+  widget, the Brain monitor, the Arm SDK's three.js view. Static-importing them
+  puts them on every visitor's critical path.
+- **The router warms only the cockpit neighbours (teleop, nav), after the first
+  page has mounted.** A browser counts the main thread as idle while the first
+  page waits on the network, so an earlier `requestIdleCallback` races the page
+  the user wants — and warming all twelve routes billed every load ~140 KB for
+  pages most sessions never open. An unwarmed route is one import away.
+
 ## Layout
 
 ```
@@ -67,6 +88,7 @@ js/
   dynamixel.js          leader-arm WebSerial reader (Protocol 2.0)
   shell.js              icon rail on every page
   railLayout.js         the rail's grouped roster (pure — tests/railLayout.test.js)
+  router.js             client-side routing, boot splash, background route warm-up
   teleop/               teleop modules (joystick, keyboard, head tilt, TTS, arm)
   nav/ collect/ datasets/ training/ logging/      per-page modules
 ```

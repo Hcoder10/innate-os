@@ -10,7 +10,6 @@
 // joints and torque come straight off the driver topics, so a page that is
 // just watching the arm costs the robot nothing.
 
-import { createArmViz } from "./viz.js";
 import { copyToButton, ICON_COPY } from "../clipboard.js";
 import { ARM_STATUS_TOPIC } from "../constants.js";
 import { ros } from "../rosClient.js";
@@ -21,6 +20,11 @@ const STREAM_TOPIC = "/armsdk/stream_joints";
 const ARM_STATE_TOPIC = "/mars/arm/state";
 const FK_POSE_TOPIC = "/fk_pose";
 const STATE_THROTTLE_MS = 100;
+
+/** createArmViz with its module fetched on demand — viz.js pulls in the vendored three.js, by far the
+ * heaviest module in the app, and only this page ever renders it.
+ * @type {typeof import("./viz.js").createArmViz} */
+const buildViz = (container, callbacks) => import("./viz.js").then((m) => m.createArmViz(container, callbacks));
 
 const deg = (/** @type {number} */ r) => (r * 180) / Math.PI;
 const rad = (/** @type {number} */ d) => (d * Math.PI) / 180;
@@ -273,7 +277,7 @@ export function mount(stage) {
   let busy = false;
   /** @type {number | null} which slider is mid-drag, so live sync doesn't fight the thumb */
   let dragging = null;
-  /** @type {Awaited<ReturnType<typeof createArmViz>> | null} */
+  /** @type {Awaited<ReturnType<typeof import("./viz.js").createArmViz>> | null} */
   let viz = null;
   let destroyed = false;
   /** Live arm state, mutated by the topic subscriptions and command results —
@@ -281,7 +285,7 @@ export function mount(stage) {
    * @type {{ pose: any, joints: number[] | null, torque: boolean | null, grip_target: number | null }} */
   const lastState = { pose: null, joints: null, torque: null, grip_target: null };
 
-  createArmViz(el("viz"), {
+  buildViz(el("viz"), {
     onDragMove(p) {
       el("dragChip").hidden = false;
       el("dragXyz").textContent = `${fmt(p.x)} ${fmt(p.y)} ${fmt(p.z)}`;

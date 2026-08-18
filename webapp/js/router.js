@@ -84,7 +84,15 @@ const configPromise = getConfig();
  */
 async function render(route) {
   const seq = ++navSeq;
-  if ((await configPromise)?.simControls && !SIM_SECTIONS.has(route.key)) route = ROUTES[0];
+  // Start the page's module graph downloading before the sim gate resolves: the
+  // gate only ever redirects a non-sim section, so on every other load waiting
+  // for /config.json first cost the page a round trip it never needed.
+  let pending = route.load();
+  if ((await configPromise)?.simControls && !SIM_SECTIONS.has(route.key)) {
+    void pending.catch(() => {}); // the speculative load lost the gate; don't strand its rejection
+    route = ROUTES[0];
+    pending = route.load();
+  }
   if (seq !== navSeq) return; // superseded while awaiting config
   // Destroy BEFORE building the next page: the outgoing destroy() stops running
   // skills/drive and frees socket-bound panels, and clears the stage.
@@ -95,7 +103,7 @@ async function render(route) {
   currentKey = route.key;
   shell.setActive(route.key);
   try {
-    const mod = await route.load();
+    const mod = await pending;
     if (seq !== navSeq) return; // a newer navigation superseded this one
     currentView = await mod.mount(stage);
     if (seq !== navSeq && currentView) {
@@ -115,13 +123,20 @@ async function render(route) {
 
 // Boot splash lives in index.html so it paints before this module's graph
 // loads; drop it once the first page mounts. Fade then remove; a fallback
-// timer covers a missed transitionend (reduced-motion, pre-paint start).
+// timer covers a missed transitionend (a pre-paint start).
 function dismissBootSplash() {
   const splash = document.getElementById("boot-splash");
   if (!splash) return;
+  // Reduced motion turns the fade into `transition: none` (app.css), so there is
+  // no transitionend to wait for and the fallback timer would hold an opaque
+  // cover over a page that is already up. Drop it now instead.
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    splash.remove();
+    return;
+  }
   splash.classList.add("is-leaving");
   splash.addEventListener("transitionend", () => splash.remove(), { once: true });
-  setTimeout(() => splash.remove(), 600);
+  setTimeout(() => splash.remove(), 400); // fallback ≥ the 0.2s fade in app.css
 }
 
 /**
@@ -195,16 +210,23 @@ if (connectTarget) {
   });
 }
 
-// Render the page for the URL we loaded at (deep link or refresh), then prefetch
-// the other route modules while idle so later switches are instant.
-void render(routeFor(location.pathname));
-prefetchRoutes();
+// Render the page for the URL we loaded at (deep link or refresh), then warm the
+// routes a session actually switches to, so those rail clicks are instant.
+void render(routeFor(location.pathname)).then(prefetchRoutes);
 
-function prefetchRoutes() {
+// Only the cockpit neighbours: warming all twelve routes pulled ~140 KB (and a
+// long tail of requests) off the robot's uplink on every load, mostly for pages
+// the session never opens. An unwarmed route is one dynamic import away (~50 ms
+// on a LAN) — cold-open cost, not correctness. Strictly after the first page has
+// mounted, and one route at a time: the browser counts the main thread as idle
+// while the first page still waits on the network, so an earlier idle callback
+// put the warm-up on the same six connections as the page the user asked for.
+const WARM_KEYS = new Set(["agent", "teleop", "nav"]);
+
+async function prefetchRoutes() {
   const idle = /** @type {any} */ (window).requestIdleCallback || ((/** @type {() => void} */ fn) => setTimeout(fn, 1500));
-  idle(() => {
-    for (const route of ROUTES) {
-      if (route.key !== currentKey) route.load().catch(() => {});
-    }
-  });
+  await new Promise((resolve) => idle(resolve));
+  for (const route of ROUTES) {
+    if (route.key !== currentKey && WARM_KEYS.has(route.key)) await route.load().catch(() => {});
+  }
 }

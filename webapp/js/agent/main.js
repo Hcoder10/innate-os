@@ -23,7 +23,7 @@ import { robotSessionFactory } from "../robotSession.js";
 import { createVideoStage } from "../teleop/videoStage.js";
 import { createTelemetry } from "../teleop/telemetry.js";
 import { createCameraSwitch } from "../teleop/cameraSwitch.js";
-import { createAgentState } from "../teleop/agentState.js";
+import { sharedAgentState } from "../teleop/agentState.js";
 import { createAgentPanel } from "./agentPanel.js";
 import { createChallengePanel } from "./challengePanel.js";
 
@@ -66,7 +66,7 @@ function buildAgentView(root) {
   const telemetryOverlay = document.createElement("div");
   telemetryOverlay.className = "overlay";
   cornerStack.append(telemetryOverlay);
-  const agentState = createAgentState(ros);
+  const agentState = sharedAgentState();
 
   const cameraSwitch = createCameraSwitch(root, session, ros, { storeKey: "innate.cameras.agent" });
 
@@ -121,7 +121,6 @@ function buildAgentView(root) {
     cameraSwitch,
     panel,
     createActiveChip(root, agentState, () => setView("brain")),
-    { destroy: () => agentState.destroy() },
     {
       destroy: () => {
         unmounted = true; // a monitor import still in flight must not build into the dead layer
@@ -152,7 +151,7 @@ function buildAgentView(root) {
  * Clicking it opens the Brain monitor: the moment the robot is acting on its
  * own is exactly when you want to see inside.
  * @param {HTMLElement} root
- * @param {ReturnType<typeof import("../teleop/agentState.js").createAgentState>} agentState
+ * @param {ReturnType<typeof import("../teleop/agentState.js").sharedAgentState>} agentState
  * @param {() => void} onWatch
  * @returns {{ destroy: () => void }}
  */

@@ -33,13 +33,64 @@ async def test_static_etag_304_and_range(tmp_path):
 
 
 @sync
-async def test_no_compression(tmp_path):
-    # compression was removed from this PR; nothing is gzipped on the fly.
+async def test_gzip_text_assets(tmp_path):
     root = make_app_root(tmp_path)
+    big = "// filler\n" * 4000
+    (root / "assets" / "big.js").write_text(big)
     async with serve(ROOT=root) as (s, base):
-        r = await s.get(base + "/assets/app.js", headers={"Accept-Encoding": "gzip"})
-        assert r.headers.get("Content-Encoding") is None
+        r = await s.get(base + "/assets/big.js", headers={"Accept-Encoding": "gzip"})
+        assert r.status == 200
+        assert r.headers["Content-Encoding"] == "gzip"
+        assert r.headers["Vary"] == "Accept-Encoding"
+        assert int(r.headers["Content-Length"]) < len(big) // 4
+        assert await r.text() == big  # aiohttp inflates it; the bytes round-trip
+        gz_etag = r.headers["ETag"]
+
+        # the compressed representation revalidates to a bodyless 304 of its own
+        r2 = await s.get(base + "/assets/big.js", headers={"Accept-Encoding": "gzip", "If-None-Match": gz_etag})
+        assert r2.status == 304 and await r2.read() == b""
+
+        # a client that takes no gzip gets the plain file, under a different ETag
+        r3 = await s.get(base + "/assets/big.js", headers={"Accept-Encoding": "identity"})
+        assert r3.headers.get("Content-Encoding") is None
+        assert r3.headers["ETag"] != gz_etag
+        assert await r3.text() == big
+
+
+@sync
+async def test_gzip_skipped_where_it_does_not_pay(tmp_path):
+    root = make_app_root(tmp_path)
+    (root / "assets" / "clip.mp4").write_bytes(b"\x00" * 8000)
+    async with serve(ROOT=root) as (s, base):
+        # app.js is well under GZIP_MIN_BYTES, and video is not a text type
+        for path in ("/assets/app.js", "/assets/clip.mp4"):
+            r = await s.get(base + path, headers={"Accept-Encoding": "gzip"})
+            assert r.headers.get("Content-Encoding") is None, path
+            assert r.headers["Accept-Ranges"] == "bytes", path
+            await r.read()
+
+        # a Range request stays on the file itself even for a gzippable type
+        (root / "assets" / "big.css").write_text("body { color: red }\n" * 500)
+        r = await s.get(base + "/assets/big.css", headers={"Accept-Encoding": "gzip", "Range": "bytes=0-3"})
+        assert r.status == 206 and r.headers.get("Content-Encoding") is None
+        assert len(await r.read()) == 4
+
+
+@sync
+async def test_vendor_assets_cache_forever(tmp_path):
+    root = make_app_root(tmp_path)
+    vendor = root / "public" / "vendor"
+    vendor.mkdir(parents=True)
+    (vendor / "three.module.min.js").write_text("export const x = 1;\n" * 200)
+    async with serve(ROOT=root) as (s, base):
+        r = await s.get(base + "/public/vendor/three.module.min.js", headers={"Accept-Encoding": "gzip"})
+        assert r.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+        assert r.headers["Content-Encoding"] == "gzip"
         await r.read()
+        # everything outside public/vendor stays no-cache
+        r2 = await s.get(base + "/assets/app.js")
+        assert r2.headers["Cache-Control"] == "no-cache"
+        await r2.read()
 
 
 @sync

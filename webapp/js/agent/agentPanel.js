@@ -29,7 +29,7 @@ import {
 /**
  * @param {HTMLElement} root cockpit root — the panel mounts as a right-edge overlay.
  * @param {import("../rosClient.js").RosClient} rosClient
- * @param {ReturnType<typeof import("../teleop/agentState.js").createAgentState>} agentState
+ * @param {ReturnType<typeof import("../teleop/agentState.js").sharedAgentState>} agentState
  * @param {{ onView: (view: "live" | "brain") => void, mic?: boolean }} opts
  *   onView is the stage-view switch, owned by the page; setView reflects a flip
  *   the page made itself (chip, Esc). mic adds the talk-to-the-agent toggle —

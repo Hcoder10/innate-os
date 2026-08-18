@@ -7,6 +7,7 @@
 // agent picker and the skills active-skill toggles read from here so they stay
 // in sync.
 
+import { ros } from "../rosClient.js";
 import {
   AGENT_STATUS_TOPIC,
   GET_AVAILABLE_DIRECTIVES_SERVICE,
@@ -26,10 +27,25 @@ import {
  * }} AgentSnapshot
  */
 
+/** @type {ReturnType<typeof createAgentState> | undefined} */
+let _shared;
+
+/** The session's agent state, built on first use and kept for the whole session.
+ *
+ * There is deliberately only one: the shell's "agent is running" pill and the
+ * Agent page's panel both read it, and a second instance would double every
+ * get_available_directives against the brain's single-threaded executor — the
+ * very query refresh() already has to defend with a retry backoff. Pages drop
+ * their own subscriptions on unmount; nothing destroys the state itself.
+ */
+export function sharedAgentState() {
+  return (_shared ??= createAgentState(ros));
+}
+
 /**
  * @param {import("../rosClient.js").RosClient} rosClient
  */
-export function createAgentState(rosClient) {
+function createAgentState(rosClient) {
   /** @type {AgentSnapshot} */
   let state = { agents: [], broken: [], currentDirective: "", activeSkills: new Set(), brainActive: false };
   /** @type {Set<(s: AgentSnapshot) => void>} */
@@ -188,7 +204,7 @@ export function createAgentState(rosClient) {
   // churn. The roster still comes from refresh(); this only updates the live
   // bits (a status arriving before the first roster is fine — the picker just
   // stays empty until refresh lands).
-  const unsubStatus = rosClient.subscribe(AGENT_STATUS_TOPIC, (msg) => {
+  rosClient.subscribe(AGENT_STATUS_TOPIC, (msg) => {
     let payload;
     try {
       payload = JSON.parse(msg?.data ?? "");
@@ -216,7 +232,7 @@ export function createAgentState(rosClient) {
     emit();
   }, undefined, "std_msgs/msg/String");
 
-  const unsubConn = rosClient.onStateChange((s) => {
+  rosClient.onStateChange((s) => {
     if (s === "connected") {
       resetRetry();
       void refresh();
@@ -238,11 +254,5 @@ export function createAgentState(rosClient) {
     setDirective,
     toggleSkill,
     resetBrain,
-    destroy() {
-      unsubStatus();
-      unsubConn();
-      resetRetry();
-      listeners.clear();
-    },
   };
 }

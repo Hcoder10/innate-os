@@ -29,6 +29,33 @@ import {
 } from "../constants.js";
 import { MEMORY_COLOR, SEARCH_REPLAY_FRESH_S, ageAlpha, ageText, headerSkew, memoryImageUrl, parseMemories, parseSearch, withAlpha } from "./memories.js";
 
+// The /map grid rides ONE session-lived subscription instead of one per mount.
+// The topic is latched, and rws replays the full grid — hundreds of KB of JSON
+// for an apartment — to every new subscriber, so re-subscribing on each page
+// switch re-downloaded an unchanged map. A newly mounted widget paints the
+// cached message synchronously; map changes (SLAM updates, a map switch) keep
+// flowing to the cache, and outside those the topic is silent, so the standing
+// subscription costs nothing.
+/** @type {any} */
+let lastMapMsg = null;
+/** @type {Set<(msg: any) => void>} */
+const mapFeed = new Set();
+let mapFeedStarted = false;
+
+function ensureMapFeed() {
+  if (mapFeedStarted) return;
+  mapFeedStarted = true;
+  ros.subscribe(
+    MAP_TOPIC,
+    (msg) => {
+      lastMapMsg = msg;
+      for (const cb of mapFeed) cb(msg);
+    },
+    250,
+    "nav_msgs/msg/OccupancyGrid",
+  );
+}
+
 // Overlay palette — exported so the Nav page legend shows the same colors.
 // The robot is deliberately far from the costmap ramp (blue → amber → red):
 // it used to be the same amber as the inscribed band and vanished into it.
@@ -1722,7 +1749,9 @@ export function createMap(root, opts = {}) {
   render();
 
   syncLayerSubs();
-  const unsubMap = ros.subscribe(MAP_TOPIC, onMap, 250, "nav_msgs/msg/OccupancyGrid");
+  ensureMapFeed();
+  mapFeed.add(onMap);
+  if (lastMapMsg) onMap(lastMapMsg);
   const unsubOdom = ros.subscribe(ODOM_TOPIC, onOdom, 100, "nav_msgs/msg/Odometry");
   const unsubAmcl = ros.subscribe(AMCL_POSE_TOPIC, onAmcl, 0, "geometry_msgs/msg/PoseWithCovarianceStamped");
   const unsubPlans = PLAN_TOPICS.map((topic) => ros.subscribe(topic, (msg) => onPlan(topic, msg), 250, "nav_msgs/msg/Path"));
@@ -1849,7 +1878,7 @@ export function createMap(root, opts = {}) {
       cancelAnimationFrame(memAnimFrame);
       document.removeEventListener("keydown", onKeyDown);
       ro.disconnect();
-      unsubMap();
+      mapFeed.delete(onMap);
       unsubOdom();
       unsubAmcl();
       for (const unsub of unsubPlans) unsub();

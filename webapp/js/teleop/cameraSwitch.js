@@ -1,5 +1,4 @@
 import { WEBRTC_ACTIVE_STREAMS_TOPIC } from "../constants.js";
-import { createMap } from "../map/mapWidget.js";
 
 // Multi-view PiP strip — a Zoom-style switcher pinned bottom-right. The big stage shows the PRIMARY view;
 // the strip shows every OTHER view as a tile that climbs a three-rung ladder:
@@ -52,8 +51,10 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
   /** @type {Map<string, { tile: HTMLElement, video: HTMLVideoElement | null, index: number }>} */
   let tiles = new Map(); // video is null for sim tiles (canvas-backed, no MediaStream)
 
-  // The map widget is heavy (subscriptions + canvas), so it exists only while the map is on. Its host div
-  // is persistent and reparents between a strip tile (small) and the stage (big) — never rebuilt.
+  // The map widget is heavy (subscriptions + canvas + the app's biggest module), so both the module and the
+  // widget arrive only when the map is turned on. The host div is what marks the map as live: it is created
+  // synchronously so the tiles have something to reparent, and the widget drops into it once the import
+  // lands. It is persistent and reparents between a strip tile (small) and the stage (big) — never rebuilt.
   /** @type {HTMLElement | null} */ let mapHost = null;
   /** @type {{ destroy: () => void, setZoom: (m: number) => void } | null} */ let mapWidget = null;
   /** @type {"small" | "big"} which saved zoom is live: thumbnail vs full stage */ let mapMode = "small";
@@ -138,23 +139,27 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
 
   // Match the live map widget to mapOn (create when turned on, tear down when off).
   function ensureMap() {
-    if (mapOn && !mapWidget) {
-      mapHost = document.createElement("div");
-      mapHost.className = "cam-map-host";
-      mapWidget = createMap(mapHost, {
-        zoom: mapZoom[mapMode],
-        // Scroll-zoom persists against whichever size is showing now.
-        onZoomChange: (m) => {
-          mapZoom[mapMode] = m;
-          saveMapZoom();
-        },
-        // Memories pulse in live while you drive — the tour builds the
-        // robot's spatial memory, and this is where you watch it happen.
-        layers: { memories: true },
+    if (mapOn && !mapHost) {
+      const host = document.createElement("div");
+      host.className = "cam-map-host";
+      mapHost = host;
+      void import("../map/mapWidget.js").then((m) => {
+        if (mapHost !== host) return; // the map was turned off (or the strip torn down) mid-fetch
+        mapWidget = m.createMap(host, {
+          zoom: mapZoom[mapMode], // read on arrival: the size may have changed while it loaded
+          // Scroll-zoom persists against whichever size is showing now.
+          onZoomChange: (z) => {
+            mapZoom[mapMode] = z;
+            saveMapZoom();
+          },
+          // Memories pulse in live while you drive — the tour builds the
+          // robot's spatial memory, and this is where you watch it happen.
+          layers: { memories: true },
+        });
       });
-    } else if (!mapOn && mapWidget) {
-      mapWidget.destroy();
-      mapHost?.remove();
+    } else if (!mapOn && mapHost) {
+      mapWidget?.destroy();
+      mapHost.remove();
       mapWidget = null;
       mapHost = null;
     }
@@ -280,6 +285,7 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
       unsubSession();
       mapWidget?.destroy();
       mapHost?.remove();
+      mapHost = null; // an import still in flight must not build into the removed host
       parent.classList.remove("cam-map-primary");
       strip.remove();
     },

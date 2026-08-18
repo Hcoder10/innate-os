@@ -325,7 +325,9 @@ select.skill-input {
   gap: 20px;
   background: var(--bg);
   opacity: 1;
-  transition: opacity 0.4s ease;
+  /* Short: the page mounts in ~0.4s on robot WiFi, so a 0.4s fade was half the
+     perceived load. Long enough to not flash. */
+  transition: opacity 0.2s ease;
 }
 
 /* .is-leaving is set by router.js to fade out; then the element is removed. */
