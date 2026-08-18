@@ -30,16 +30,26 @@ import {
  * @param {HTMLElement} root cockpit root — the panel mounts as a right-edge overlay.
  * @param {import("../rosClient.js").RosClient} rosClient
  * @param {ReturnType<typeof import("../teleop/agentState.js").createAgentState>} agentState
- * @param {{ onView: (view: "live" | "brain") => void, mic?: boolean }} opts
+ * @param {{
+ *   onView: (view: "live" | "brain") => void,
+ *   enableMic?: boolean,
+ *   onMicState?: (state: {on: boolean, busy: boolean, level: number, waveform: number[], error: string | null}) => void
+ * }} opts
  *   onView is the stage-view switch, owned by the page; setView reflects a flip
- *   the page made itself (chip, Esc). mic adds the talk-to-the-agent toggle —
- *   sim only, where the browser is the robot's microphone (see micStream.js).
- * @returns {{ destroy: () => void, setView: (view: "live" | "brain") => void }}
+ *   the page made itself (chip, Esc). enableMic connects the browser microphone
+ *   in sim, where the robot has no physical microphone (see micStream.js).
+ * @returns {{
+ *   destroy: () => void,
+ *   setView: (view: "live" | "brain") => void,
+ *   startMic: () => Promise<void>,
+ *   stopMic: () => void
+ * }}
  */
 export function createAgentPanel(root, rosClient, agentState, opts) {
   const selfOrigin = crypto.randomUUID?.() ?? `web-${Date.now()}-${Math.random()}`;
-  /** @type {ReturnType<typeof createMicStream> | null} */
-  let mic = null;
+  const mic = opts.enableMic
+    ? createMicStream(rosClient, (state) => opts.onMicState?.(state))
+    : null;
 
   const panel = document.createElement("section");
   panel.className = "overlay agent-panel";
@@ -140,8 +150,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   send.className = "agent-compose-send";
   send.textContent = "Send";
   send.title = CHAT_IN_TOPIC;
-  const micButton = opts.mic ? createMicButton() : null;
-  form.append(input, ...(micButton ? [micButton] : []), send);
+  form.append(input, send);
 
   panel.append(head, controls, activeSkill, streamLabel, stream, form);
   root.append(panel);
@@ -446,36 +455,13 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     if (id) await withApplying(() => agentState.setDirective(id));
   }
 
-  /** Talk to the agent: the browser's mic, streamed to the sim as the robot's
-   *  own (micStream.js). Turning it on starts an idle agent, as sending does. */
-  function createMicButton() {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "agent-compose-mic";
-    button.title = "Talk to the agent";
-    button.setAttribute("aria-label", "Talk to the agent");
-    button.setAttribute("aria-pressed", "false");
-    button.innerHTML =
-      '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" ' +
-      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-      '<rect x="9" y="3" width="6" height="11" rx="3"/>' +
-      '<path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/>' +
-      "</svg>";
+  async function startMic() {
+    await startIfIdle();
+    await mic?.start();
+  }
 
-    mic = createMicStream(rosClient, (state) => {
-      button.classList.toggle("active", state.on);
-      button.disabled = state.busy;
-      button.setAttribute("aria-pressed", String(state.on));
-      button.title = state.error ?? (state.on ? "Listening — click to stop" : "Talk to the agent");
-      // The ring tracks speech level so it is obvious the mic is being heard.
-      button.style.setProperty("--mic-level", state.on ? String(Math.min(1, state.level * 6)) : "0");
-    });
-
-    button.addEventListener("click", async () => {
-      await startIfIdle();
-      await mic?.toggle();
-    });
-    return button;
+  function stopMic() {
+    mic?.stop();
   }
 
   async function submit() {
@@ -630,6 +616,8 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
 
   return {
     setView,
+    startMic,
+    stopMic,
     destroy() {
       mic?.destroy();
       if (flashTimer) clearTimeout(flashTimer);
