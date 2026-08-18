@@ -1742,9 +1742,18 @@ def _extract_bundle_from_image(config: dict[str, object], image: str, destinatio
     if marker.exists() and marker.read_text().split()[:1] == [image_id] and destination.is_dir():
         return
 
-    container = capture_command_output(["docker", "create", image], cwd=os_repo, env=env).strip()
+    # The command is never run -- but `docker create` refuses without one, and
+    # the bundle image is a bare FROM scratch carrying no CMD to inherit.
+    created = capture_command_output(["docker", "create", image, "/bundle"], cwd=os_repo, env=env).strip()
+    # capture_command_output falls back to stderr, so a failure here arrives
+    # looking like a container id and `docker cp` reports the daemon's error
+    # as the name of a container it cannot find. Insist it looks like an id.
+    container = created if re.fullmatch(r"[0-9a-f]{12,64}", created) else ""
     if not container:
-        raise StackError(f"Could not create a container from {shorten_docker_image_ref(image)} to read the bundle.")
+        detail = f"\n  docker said: {created}" if created else ""
+        raise StackError(
+            f"Could not create a container from {shorten_docker_image_ref(image)} to read the bundle.{detail}"
+        )
     staging = destination.parent / f".{destination.name}.tmp"
     shutil.rmtree(staging, ignore_errors=True)
     try:
