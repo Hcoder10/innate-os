@@ -97,10 +97,11 @@ _PARAM_DEFAULTS: dict[str, str | bool | int | float] = {
     "height_cam": 0.19663,
     # --- Local brain (Gemini) ---
     "gemini_model": "gemini-3.7-flash",
-    # "low" | "medium" | "high"; "" = model default. 3.7-flash dropped
-    # "minimal" (3.6's floor, measured 3x faster there), so "low" is the
-    # fastest turn available; if multi-turn discipline regresses, "" here.
-    "gemini_thinking_level": "low",
+    # "low" | "medium" | "high"; "" = model default. 3.7-flash dropped 3.6's
+    # "minimal", and at "low" it answers a user who speaks to it only ~half
+    # the time (6/12 probes, vs 12/12 at the default) — silence costs more
+    # than the ~0.8s the default level adds.
+    "gemini_thinking_level": "",
     "idle_turn_interval": 3.0,
     "supervision_turn_interval": 5.0,
     "history_max_entries": 60,

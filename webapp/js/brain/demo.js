@@ -103,7 +103,7 @@ export function startDemo(h) {
       body: {
         systemInstruction: { parts: [{ text: DEMO_SYSTEM }] },
         contents: [...contents.map((c) => ({ ...c })), userContent],
-        generationConfig: { thinkingConfig: { includeThoughts: true, thinkingLevel: "low" } },
+        generationConfig: { thinkingConfig: { includeThoughts: true } },
         tools: [{ functionDeclarations: TOOLS.map((name) => ({ name, description: `demo declaration for ${name}` })) }],
       },
     });
