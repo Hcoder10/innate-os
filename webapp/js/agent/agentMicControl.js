@@ -97,7 +97,7 @@ export function createAgentMicControl(root, callbacks) {
     try {
       await startListening();
       // release may land while permission or agent startup is pending
-      if (currentActivationId !== activationId) stopListening();
+      if (currentActivationId !== activationId && !isHeld) stopListening();
     } catch {
       if (currentActivationId !== activationId) return;
       holdSources.clear();
