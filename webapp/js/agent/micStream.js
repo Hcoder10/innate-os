@@ -50,6 +50,7 @@ export function createMicStream(rosClient, onState) {
     if (stopTimer !== null) {
       clearTimeout(stopTimer);
       stopTimer = null;
+      for (const track of media?.getAudioTracks() ?? []) track.enabled = true;
     }
     if (state.on || state.busy) return;
     const id = ++startId;
@@ -119,6 +120,9 @@ export function createMicStream(rosClient, onState) {
       return;
     }
     if (!state.on || stopTimer !== null) return;
+    // Disabled audio tracks emit zero-valued frames, so VAD gets silence while
+    // speech after release never leaves the browser.
+    for (const track of media?.getAudioTracks() ?? []) track.enabled = false;
     stopTimer = setTimeout(() => {
       stopTimer = null;
       startId++;
