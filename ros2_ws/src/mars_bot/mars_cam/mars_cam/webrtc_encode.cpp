@@ -210,14 +210,6 @@ void WebRTCStreamer::fan_out(GstElement* appsink, const std::function<GstElement
             // unlike gst_app_src_push_buffer(); the copy must be unreffed or it leaks
             // one RTP packet per push (~1 GB/h per viewing peer at 2 Mbps).
             g_signal_emit_by_name(target.src, "push-buffer", out, &ret);
-            // Duplicate-transmission repair: srtpenc encrypts a given seqnum deterministically, so the
-            // duplicate is byte-identical on the wire — the receiver's SRTP replay window silently drops
-            // it when the original arrived and accepts it as the original when that was lost. In-band
-            // repair with no negotiation and no round trip, for links where NACK can't beat libwebrtc's
-            // ~200 ms delta-frame deadline (RTT > ~200 ms) and webrtcbin's ULPFEC never engages (1.20).
-            if (video_duplicate_packets_ && stream != "audio" && ret == GST_FLOW_OK) {
-                g_signal_emit_by_name(target.src, "push-buffer", out, &ret);
-            }
             gst_buffer_unref(out);
             {
                 std::lock_guard<std::mutex> lock(peers_mutex_);
