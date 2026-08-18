@@ -79,21 +79,25 @@ bool WebRTCStreamer::link_rtp_appsrc(GstElement* webrtc, GstElement* appsrc, Gst
 
 // GStreamer transceivers default to no loss repair (do-nack=FALSE, fec-type=none), so a single lost
 // packet stalls the decoder until a PLI keyframe round-trip — multi-second freezes on lossy remote
-// links. Negotiate NACK/RTX and ULPFEC/RED per video m-line instead; browsers accept both.
+// links. The on-new-transceiver hook sets NACK/RTX + ULPFEC/RED at creation (where webrtcbin's FEC
+// wiring reads them); this post-link pass re-asserts the video m-lines and strips the audio one,
+// which got the props too because a pad-created transceiver's kind isn't known at creation.
+// fec-percentage defaults to 100 (double the bitrate) — always set it alongside fec-type.
 void WebRTCStreamer::configure_video_transceivers(GstElement* webrtc, size_t video_count) {
-    for (size_t i = 0; i < video_count; ++i) {
+    for (size_t i = 0;; ++i) {
         GstWebRTCRTPTransceiver* trans = nullptr;
         g_signal_emit_by_name(webrtc, "get-transceiver", static_cast<gint>(i), &trans);
         if (!trans) {
-            RCLCPP_WARN(this->get_logger(), "No transceiver for video m-line %zu; loss repair not applied", i);
-            continue;
+            if (i < video_count) {
+                RCLCPP_WARN(this->get_logger(), "No transceiver for video m-line %zu; loss repair not applied", i);
+            }
+            return;
         }
-        g_object_set(trans, "do-nack", video_nack_ ? TRUE : FALSE, nullptr);
-        if (video_fec_percentage_ > 0) {
-            // fec-percentage defaults to 100 (double the bitrate) — always set it alongside fec-type.
-            g_object_set(trans, "fec-type", GST_WEBRTC_FEC_TYPE_ULP_RED, "fec-percentage", video_fec_percentage_,
-                         nullptr);
-        }
+        const bool video = i < video_count;
+        g_object_set(trans, "do-nack", (video && video_nack_) ? TRUE : FALSE, nullptr);
+        g_object_set(trans, "fec-type",
+                     (video && video_fec_percentage_ > 0) ? GST_WEBRTC_FEC_TYPE_ULP_RED : GST_WEBRTC_FEC_TYPE_NONE,
+                     "fec-percentage", video_fec_percentage_ > 0 ? video_fec_percentage_ : 0u, nullptr);
         g_object_unref(trans);
     }
 }
@@ -133,6 +137,22 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
         RCLCPP_ERROR(this->get_logger(), "Transport pipeline missing webrtcbin");
         return nullptr;  // ~Peer() tears down the pipeline
     }
+
+    // Loss-repair props must land the moment each transceiver is CREATED (as its sink pad links):
+    // webrtcbin wires its internal FEC/RTX elements from them during negotiation setup, so the
+    // post-link pass in configure_video_transceivers is too late for the FEC encoder to engage.
+    // A pad-created transceiver may not know its media kind yet, so set the props on every one;
+    // configure_video_transceivers strips them from the audio m-line again before the offer.
+    g_signal_connect(peer->webrtc, "on-new-transceiver",
+                     G_CALLBACK(+[](GstElement*, GstWebRTCRTPTransceiver* trans, gpointer user_data) {
+                         auto* self = static_cast<WebRTCStreamer*>(user_data);
+                         g_object_set(trans, "do-nack", self->video_nack_ ? TRUE : FALSE, nullptr);
+                         if (self->video_fec_percentage_ > 0) {
+                             g_object_set(trans, "fec-type", GST_WEBRTC_FEC_TYPE_ULP_RED, "fec-percentage",
+                                          self->video_fec_percentage_, nullptr);
+                         }
+                     }),
+                     this);
 
     // Configure each RTP appsrc: caps (incl. the extmap so webrtcbin emits a=extmap), drop-old on
     // congestion so one slow peer can't backpressure the shared encoders.
