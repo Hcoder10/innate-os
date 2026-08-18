@@ -28,6 +28,7 @@ import base64
 import json
 import queue
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -159,10 +160,17 @@ class MicroInput(InputDevice):
 
     def _open_source(self):
         """The started audio source: the machine's ALSA capture device, or a
-        client pushing PCM over ROS when it has none (the sim, where the
-        browser is the microphone just as it is the speaker for /tts/audio)."""
+        client pushing PCM over ROS when it has no capture stack at all (the
+        sim, where the browser is the microphone just as it is the speaker for
+        /tts/audio).
+
+        Keyed on arecord being absent, not on it listing no cards: a robot whose
+        USB microphone failed to enumerate still has a working ALSA `default`,
+        and must keep reaching for it rather than going quiet waiting for audio
+        no browser is sending.
+        """
         device = self._detect_audio_device()
-        if device is None and self.node is not None:
+        if shutil.which("arecord") is None and self.node is not None:
             mic = RosPcmStreamer(self.node, self.logger)
             mic.start()
             return mic
