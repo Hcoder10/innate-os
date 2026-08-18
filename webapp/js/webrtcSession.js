@@ -49,6 +49,11 @@ const OFFER_GUARD_RESET_MS = 1_000;
 // Bounded retries instead of a single long stare-at-black, which is what made
 // refreshing feel faster.
 const MAX_HANDSHAKE_ATTEMPTS = 3;
+// Adaptive receive jitter buffer: receivers attach pinned to 0 (lowest latency,
+// right on LAN), then every poll the target is re-derived from path RTT + recent
+// video loss. On WAN a NACK retransmit arrives ~1 RTT after the gap, so the
+// buffer must cover that or loss plays out as artifacts/freezes.
+const JITTER_POLL_MS = 3_000;
 
 export class WebRtcSession {
   /** @type {import("./rosClient.js").RosClient} */ #ros;
@@ -95,6 +100,10 @@ export class WebRtcSession {
   /** @type {number | null} */ #watchdog = null;
   /** @type {number | null} */ #degradeTimer = null;
   /** @type {number | null} */ #audioDebounce = null;
+  /** @type {number | null} */ #jitterPoll = null;
+  #lastJitterTargetMs = 0;
+  // Previous poll's cumulative inbound-video packet counters, for a per-interval loss fraction.
+  #lastVideoPackets = { received: 0, lost: 0 };
 
   /** @param {import("./rosClient.js").RosClient} rosClient */
   constructor(rosClient) {
@@ -269,6 +278,7 @@ export class WebRtcSession {
     this.#pc = pc;
     this.#builtWithAudio = this.#state.audioRequested;
     wireDiagnosticDataChannels(pc);
+    this.#startJitterPoll();
 
     pc.onicecandidate = (event) => {
       if (this.#pc !== pc || !event.candidate) return;
@@ -359,13 +369,12 @@ export class WebRtcSession {
       return;
     }
 
-    // Minimize the receive-side jitter buffer on the video receiver. The
-    // playout-delay extension caps the ceiling; these pin the floor.
-    // Units differ: jitterBufferTarget is in milliseconds, playoutDelayHint in
-    // seconds. Both 0 here means "minimal delay". Modern Chrome honors
-    // jitterBufferTarget and ignores the hint (not a strict fallback — both are
-    // set whenever present). To match the robot-side max=40, the values diverge:
-    // jitterBufferTarget = 40, playoutDelayHint = 0.04.
+    // Start the video receiver's jitter buffer at zero (lowest latency, right
+    // on LAN); #adaptJitterBuffer raises it when RTT/loss show retransmits need
+    // room to land. Units differ: jitterBufferTarget is in milliseconds,
+    // playoutDelayHint in seconds (a 40ms target is 40 vs 0.04). Modern Chrome
+    // honors jitterBufferTarget and ignores the hint (not a strict fallback —
+    // both are set whenever present).
     const receiver = event.receiver;
     if (receiver) {
       try {
@@ -574,9 +583,63 @@ export class WebRtcSession {
     }
   }
 
+  #startJitterPoll() {
+    this.#clearJitterPoll();
+    this.#lastJitterTargetMs = 0; // the new pc's receivers attach pinned to 0 (#onTrack)
+    this.#lastVideoPackets = { received: 0, lost: 0 };
+    this.#jitterPoll = setInterval(() => void this.#adaptJitterBuffer(), JITTER_POLL_MS);
+  }
+
+  #clearJitterPoll() {
+    if (this.#jitterPoll !== null) {
+      clearInterval(this.#jitterPoll);
+      this.#jitterPoll = null;
+    }
+  }
+
+  // Clean fast path (LAN-ish RTT, ~no loss) → 0. Otherwise ~1.2×RTT + 30ms, capped at 500,
+  // so a NACK retransmit lands before playout. 20ms hysteresis avoids churning the decoder.
+  async #adaptJitterBuffer() {
+    const pc = this.#pc;
+    if (!pc) return;
+    const stats = await pc.getStats().catch(() => null);
+    if (!stats || this.#pc !== pc) return;
+
+    /** @type {number | null} */ let rttMs = null;
+    const packets = { received: 0, lost: 0 };
+    stats.forEach((s) => {
+      if (s.type === "candidate-pair" && s.nominated && s.state === "succeeded") {
+        if (typeof s.currentRoundTripTime === "number") rttMs = s.currentRoundTripTime * 1000;
+      } else if (s.type === "inbound-rtp" && s.kind === "video") {
+        packets.received += s.packetsReceived ?? 0;
+        packets.lost += s.packetsLost ?? 0;
+      }
+    });
+    const dReceived = packets.received - this.#lastVideoPackets.received;
+    const dLost = packets.lost - this.#lastVideoPackets.lost;
+    this.#lastVideoPackets = packets;
+    if (rttMs === null) return;
+
+    const loss = dLost > 0 ? dLost / (dReceived + dLost) : 0;
+    const target = rttMs < 60 && loss < 0.005 ? 0 : Math.min(500, Math.round(rttMs * 1.2 + 30));
+    if (Math.abs(target - this.#lastJitterTargetMs) <= 20) return;
+    this.#lastJitterTargetMs = target;
+    for (const receiver of pc.getReceivers()) {
+      if (receiver.track.kind !== "video") continue;
+      try {
+        if ("jitterBufferTarget" in receiver) receiver.jitterBufferTarget = target;
+        if ("playoutDelayHint" in receiver) receiver.playoutDelayHint = target / 1000; // seconds (see #onTrack)
+      } catch {
+        // unsupported; default buffer applies
+      }
+    }
+    console.log(`[webrtc] jitter target -> ${target}ms (rtt ${Math.round(rttMs)}ms, loss ${(loss * 100).toFixed(1)}%)`);
+  }
+
   #closePc() {
     this.#clearWatchdog();
     this.#clearDegradeTimer();
+    this.#clearJitterPoll();
     this.#processingOffer = false;
     this.#remoteDescriptionSet = false;
     this.#iceQueue = [];

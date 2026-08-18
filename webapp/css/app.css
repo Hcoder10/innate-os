@@ -5872,8 +5872,8 @@ select.skill-input {
   bottom: 84px !important;
 }
 
-/* Agent page keeps every camera live (no off pill), so any off tile here is the
-   optional map — give it the same square footprint as the live feeds. */
+/* On the agent page off tiles (cameras or the map) keep the same square
+   footprint as the live feeds so the strip's grid stays tidy. */
 .agent-cockpit .cam-tile.off {
   display: flex;
   align-items: center;
