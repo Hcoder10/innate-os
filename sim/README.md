@@ -14,6 +14,38 @@ anything you build against the simulator works unchanged on a real MARS.
 
 ## Setup
 
+```bash
+curl -fsSL https://link.innate.bot/sim | sh
+```
+
+That is the whole install on Linux and WSL2: it asks before installing
+anything missing (Docker, uv, git, the rendering libraries), clones this
+repository into `innate-os/` in the directory you run it from, asks how the
+agent should reach a cloud LLM, and downloads the runtime — so the first
+`./innate-sim up` is a start, not a download.
+
+**On macOS, install [Docker
+Desktop](https://docs.docker.com/desktop/install/mac-install/) first** and open
+it once; the installer handles everything after that. Then:
+
+```bash
+cd innate-os && ./innate-sim up
+```
+
+Set `INNATE_DIR` to put the checkout somewhere else.
+
+**Already cloned this repository?** Run the same script from inside it — it
+skips the clone and sets up the checkout you have:
+
+```bash
+sh scripts/install-sim.sh
+```
+
+`./innate-sim setup` does the same *last* step on its own, but installs no
+prerequisites: use it when Docker and uv are already in place.
+
+Prefer to do it yourself? The rest of this section is the same setup by hand.
+
 You need two tools installed; everything else (world geometry, the Docker
 image, the ROS build) is provisioned automatically on first start:
 
@@ -21,20 +53,20 @@ image, the ROS build) is provisioned automatically on first start:
 - **uv** — runs the physics world natively on your machine
   (`./innate-sim setup` offers to install this one for you).
 
-A machine with 4 CPU cores and 8 GB of RAM is comfortable. The first start
-downloads and builds a few GB, so it takes a while; later starts take
-seconds.
+16 GB of RAM and 4 or more CPU cores is comfortable; 8 GB runs it, but the
+physics and the robot's software compete for the machine. The first start
+downloads a few GB, so it takes a while; later starts take seconds.
 
 <details>
 <summary><b>macOS</b></summary>
 
-Install Docker Desktop and start it:
+Install [Docker Desktop](https://docs.docker.com/desktop/install/mac-install/)
+and open it once to accept its terms. macOS has no headless Docker: containers
+are Linux processes, so they run inside the VM Docker Desktop provides.
 
-```bash
-brew install --cask docker
-```
-
-(or download it from [docker.com](https://docs.docker.com/get-started/get-docker/)).
+The installer does not do this one for you — a desktop app with a licence to
+agree to and a first launch to sit through is not something a shell script can
+finish — so it checks, and says so if it is missing.
 
 </details>
 
@@ -42,8 +74,7 @@ brew install --cask docker
 <summary><b>Linux (Ubuntu / Debian / Raspberry Pi OS)</b></summary>
 
 Use Docker's own install script — it sets up the official apt repo and
-installs Docker plus the Compose v2 plugin, the same way on every
-Debian-family distro:
+installs Docker the same way on every Debian-family distro:
 
 ```bash
 curl -fsSL https://get.docker.com | sudo sh
@@ -52,7 +83,7 @@ curl -fsSL https://get.docker.com | sudo sh
 Then let your user talk to Docker:
 
 ```bash
-sudo usermod -aG docker $USER && newgrp docker
+sudo usermod -aG docker $USER
 ```
 
 Install the rendering libraries. On a headless server or VM these provide
@@ -79,6 +110,11 @@ then open the Ubuntu terminal and follow the **Linux** steps above. WSLg
 (included in current WSL) gives the sim GPU-accelerated rendering
 automatically.
 
+Install into your Linux home folder — run `cd ~` first if the prompt shows a
+path starting with `/mnt/`. That prefix is the Windows drive seen from Linux,
+and every file the container reads there crosses a bridge slow enough to turn
+a two-minute start into a coffee break.
+
 One caution: use exactly **one** Docker — either Docker Desktop (with WSL
 integration enabled) or `docker.io` installed inside WSL. Having both
 installed makes the `docker` command hang in confusing ways.
@@ -88,20 +124,27 @@ installed makes the `docker` command hang in confusing ways.
 Then, from the repository root:
 
 ```bash
-./innate-sim setup     # checks prerequisites (offers to install uv) + configures your agent keys
+./innate-sim setup     # prerequisites + agent keys, then downloads the runtime
 ./innate-sim up        # starts everything; leave the live dashboard open
 ```
+
+`setup` downloads the images, the world geometry and the sim world's Python
+environment once it has your keys, which is the slow part; `up` then starts in
+a minute or two rather than after a multi-gigabyte download. `--no-prefetch`
+skips it and leaves the downloading to the first `up`.
 
 `setup` asks how the robot's AI agent reaches a cloud LLM. The agent loop
 itself always runs on the robot (`brain_client`); the choice is only about
 which key it thinks with:
 
-- **Your own Gemini key** — the agent calls Google directly with a
-  [Gemini API key](https://aistudio.google.com/api-keys). Everything works
-  except voice: the web app's speak bar is disabled without a service key.
-- **Innate service key** — the agent calls Gemini through Innate's proxy with
-  your service key (it ships with a MARS robot). The full experience,
-  including voice — the robot speaks.
+- **Your own Gemini key** — the choice for most people. Create a
+  [Gemini API key](https://aistudio.google.com/api-keys) and the agent calls
+  Google directly with it. Everything works except voice: the web app's speak
+  bar is disabled without a service key.
+- **Innate service key** — pick this if you already have one: it ships with a
+  MARS robot, and we hand them out to people building on the simulator. The
+  agent calls Gemini through Innate's proxy and the robot speaks. Ask on
+  [Discord](https://discord.gg/innate) if you would like one.
 - **None** — no agent; you can still drive, navigate, and trigger skills
   manually.
 

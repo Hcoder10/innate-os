@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import grp
 import hashlib
 import json
 import os
+import pwd
 import re
 import shlex
 import shutil
@@ -15,6 +17,7 @@ import socket
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -22,6 +25,7 @@ from urllib.request import Request, urlopen
 import oci
 from config import (
     ASSETS_IMAGE_LAYERS,
+    BOOTSTRAP_LOG_PATH,
     CLI_SIM,
     COMPOSE_LOG_PATH,
     COMPOSE_PROJECT_NAME,
@@ -60,7 +64,19 @@ from config import (
     viewer_tree_dirty,
     warn,
 )
-from dashboard import BOLD, GREEN, NC, RED, USE_COLOR
+from dashboard import (
+    CYAN,
+    DIM,
+    GREEN,
+    NC,
+    RED,
+    STEP_LABEL_WIDTH,
+    USE_COLOR,
+    active_step,
+    format_bytes,
+    live_step,
+    render_progress_bar,
+)
 
 DOCKER_INSTALL_URL = "https://docs.docker.com/get-started/get-docker/"
 COMPOSE_INSTALL_URL = "https://docs.docker.com/compose/install/linux/"
@@ -107,6 +123,77 @@ def latest_log_line(path: Path) -> str | None:
     return None
 
 
+_DOCKER_LAYER_RE = re.compile(r"^([0-9a-f]{12}): (.+)$")
+_DOCKER_SIZE_RE = re.compile(r"([\d.]+)([kMG]?B)/([\d.]+)([kMG]?B)")
+_BYTE_UNITS = {"B": 1, "kB": 1000, "MB": 1000**2, "GB": 1000**3}
+
+
+_DOWNLOADED = ("Download complete", "Verifying Checksum", "Extracting", "Pull complete", "Already exists")
+_PULLED = ("Pull complete", "Already exists")
+
+
+def _parse_size(status: str) -> tuple[float, float]:
+    size = _DOCKER_SIZE_RE.search(status)
+    if not size:
+        return 0.0, 0.0
+    return (
+        float(size.group(1)) * _BYTE_UNITS[size.group(2)],
+        float(size.group(3)) * _BYTE_UNITS[size.group(4)],
+    )
+
+
+def _layer_share(status: str, ratio: float) -> float:
+    """How much of one layer's work is done: half for the download, half for
+    the extraction. Progress per layer only ever grows, unlike a byte
+    percentage, whose denominator jumps every time a queued layer starts."""
+    if status.startswith(_PULLED):
+        return 1.0
+    if status.startswith("Extracting"):
+        return 0.5 + 0.5 * ratio
+    if status.startswith(("Download complete", "Verifying Checksum")):
+        return 0.5
+    if status.startswith("Downloading"):
+        return 0.5 * ratio
+    return 0.0
+
+
+def docker_pull_progress(output: str) -> str | None:
+    """One aggregate progress line for a `docker pull`, or None when the output
+    is not one (a compose or build log, or nothing yet).
+
+    Docker's own per-layer chatter is what users read as confusing: a dozen
+    interleaved ids, each announcing "Download complete" while the pull plainly
+    continues.
+    """
+    layers: dict[str, dict[str, float | str]] = {}
+    for line in output.splitlines():
+        match = _DOCKER_LAYER_RE.match(line.strip())
+        if not match:
+            continue
+        status = match.group(2)
+        layer = layers.setdefault(match.group(1), {"status": "", "ratio": 0.0, "done": 0.0, "total": 0.0})
+        layer["status"] = status
+        done, total = _parse_size(status)
+        layer["ratio"] = done / total if total else 0.0
+        # Only download lines carry download bytes -- an Extracting line
+        # reports the layer's UNCOMPRESSED size, which would inflate the total.
+        if status.startswith("Downloading"):
+            layer["done"], layer["total"] = done, total
+        elif status.startswith(_DOWNLOADED):
+            layer["done"] = layer["total"]
+    if not layers:
+        return None
+
+    progress = sum(_layer_share(str(layer["status"]), float(layer["ratio"])) for layer in layers.values())
+    downloaded = sum(float(layer["done"]) for layer in layers.values())
+    complete = sum(1 for layer in layers.values() if str(layer["status"]).startswith(_PULLED))
+    fraction = progress / len(layers)
+    # Only when docker actually reported sizes: its non-TTY output often has
+    # none, and "0 MB" beside a moving bar reads as a stalled download.
+    size = f"{format_bytes(downloaded)}  " if downloaded else ""
+    return f"{render_progress_bar(fraction)} {fraction * 100:3.0f}%  {size}{DIM}{complete}/{len(layers)} layers{NC}"
+
+
 def run_logged_with_heartbeat(
     cmd: list[str],
     *,
@@ -117,6 +204,7 @@ def run_logged_with_heartbeat(
     progress_message: str,
     heartbeat_seconds: float = 10.0,
     include_recent_log_on_failure: bool = True,
+    progress_formatter: Callable[[str], str | None] | None = None,
 ) -> None:
     ensure_state_dir()
     # Heartbeats must describe THIS command: reading the whole shared log
@@ -124,6 +212,12 @@ def run_logged_with_heartbeat(
     # 'unauthorized' haunted the subsequent build's heartbeats).
     log_offset = log_path.stat().st_size if log_path.exists() else 0
     started = time.monotonic()
+    # A bar redrawn in place needs to be refreshed often to look like one; a
+    # log file gets the slow cadence, so a CI transcript is not a flipbook.
+    live = progress_formatter is not None and sys.stdout.isatty()
+    if live:
+        heartbeat_seconds = 0.5
+    drew_progress = False
     with log_path.open("a", encoding="utf-8") as log_file:
         proc = subprocess.Popen(
             cmd,
@@ -141,18 +235,33 @@ def run_logged_with_heartbeat(
                 break
             now = time.monotonic()
             if now >= next_heartbeat:
-                latest = ""
+                appended = latest = ""
                 with contextlib.suppress(OSError):
                     appended = log_path.read_text(errors="replace")[log_offset:]
                     latest = next((line.strip() for line in reversed(appended.splitlines()) if line.strip()), "")
                 elapsed = int(now - started)
                 stamp = f"{elapsed // 60}m{elapsed % 60:02d}s" if elapsed >= 60 else f"{elapsed}s"
-                if latest:
+                progress = progress_formatter(appended) if progress_formatter and appended else None
+                step = active_step()
+                if step is not None:
+                    # The step line already says what is happening; the detail
+                    # says how far along. Before docker's first layer line is
+                    # parseable that is just the clock.
+                    step.detail = f"{progress}  {stamp}" if progress else stamp
+                elif progress and live:
+                    print(f"\r\033[K  {progress}  {DIM}{stamp}{NC}", end="", flush=True)
+                    drew_progress = True
+                elif progress:
+                    log(f"{progress_message} ({stamp}) {progress}")
+                elif latest:
                     log(f"{progress_message} ({stamp}) Latest: {latest}")
                 else:
                     log(f"{progress_message} ({stamp}, no output yet)")
                 next_heartbeat = now + heartbeat_seconds
-            time.sleep(0.5)
+            time.sleep(0.25 if live else 0.5)
+
+    if drew_progress:
+        print()  # close the line the bar was redrawing
 
     if return_code != 0:
         if not include_recent_log_on_failure:
@@ -160,7 +269,109 @@ def run_logged_with_heartbeat(
         raise StackError(f"{failure_message}\nRecent log output:\n{tail_file(log_path, limit=60)}")
 
 
+DOCKER_GROUP = "docker"
+DOCKER_GROUP_REEXEC_ENV = "INNATE_SIM_DOCKER_GROUP_REEXEC"
+
+
+def _docker_group_is_stale() -> bool:
+    """Is this user a member of the docker group everywhere except in this
+    process? That is precisely what `usermod -aG docker` leaves behind: the
+    grant is in /etc/group, but a process only reads its groups at creation,
+    so every shell opened before it stays locked out until the next login.
+    """
+    if sys.platform != "linux":
+        return False
+    try:
+        entry = grp.getgrnam(DOCKER_GROUP)
+        user = pwd.getpwuid(os.getuid()).pw_name
+    except KeyError:
+        return False
+    return entry.gr_gid not in os.getgroups() and user in entry.gr_mem
+
+
+def reexec_under_docker_group() -> None:
+    """Re-run this command with the docker group applied, or return.
+
+    `sg` runs one command under a group the caller is already a member of --
+    the non-interactive half of `newgrp`, and the only way to fix this without
+    a new login session, since no process can add a group to a running one.
+    Returns (rather than raising) whenever it cannot help, leaving the caller's
+    own diagnosis to stand.
+    """
+    if os.environ.get(DOCKER_GROUP_REEXEC_ENV) or not _docker_group_is_stale():
+        return
+    command = shlex.join([sys.executable, str(Path(sys.argv[0]).resolve()), *sys.argv[1:]])
+    argv = _docker_group_argv(command)
+    if argv is None:
+        return
+    log(f"Your user is in the {DOCKER_GROUP} group, but this shell predates it -- rerunning with it applied.")
+    log("A new login session will not need this.")
+    # The guard rides along in the environment: a re-exec that somehow does not
+    # confer the group must fail once, not fork forever.
+    os.environ[DOCKER_GROUP_REEXEC_ENV] = "1"
+    try:
+        os.execvp(argv[0], argv)
+    except OSError:
+        os.environ.pop(DOCKER_GROUP_REEXEC_ENV, None)
+
+
+def _docker_group_argv(command: str) -> list[str] | None:
+    """How to re-run `command` with the docker group applied, or None.
+
+    `sg` is the direct route. Minimized WSL images ship neither it nor newgrp
+    (both live in the `passwd` package), so fall back to sudo, which re-reads
+    the target user's groups from the database. Only passwordless sudo: a
+    prompt nobody asked for, in the middle of `up`, is worse than the message
+    this would have replaced.
+    """
+    if shutil.which("sg") is not None:
+        return ["sg", DOCKER_GROUP, "-c", command]
+    if shutil.which("sudo") is None or not command_succeeds(
+        ["sudo", "-n", "true"], cwd=Path.cwd(), env=os.environ.copy()
+    ):
+        return None
+    # `env VAR=1` in the argv, because sudo's env_reset drops the guard this
+    # function's caller just set -- and a guard that silently vanishes is not
+    # one. See DOCKER_GROUP_REEXEC_ENV.
+    return [
+        "sudo",
+        "-n",
+        "-u",
+        pwd.getpwuid(os.getuid()).pw_name,
+        "--",
+        "env",
+        f"{DOCKER_GROUP_REEXEC_ENV}=1",
+        "sh",
+        "-c",
+        command,
+    ]
+
+
+# Docker Desktop 4.x can install its CLI into ~/.docker/bin rather than
+# /usr/local/bin, and teaches the shell about it by editing ~/.zprofile --
+# which bash never reads, and no non-login shell reads either. The binary is
+# there; only the search is wrong.
+DOCKER_CLI_DIRS = (
+    Path.home() / ".docker" / "bin",
+    Path("/usr/local/bin"),
+    Path("/Applications/Docker.app/Contents/Resources/bin"),
+)
+
+
+def _find_docker_cli() -> None:
+    """Put Docker's own CLI on PATH for this process, if PATH lacks it."""
+    if shutil.which("docker"):
+        return
+    for directory in DOCKER_CLI_DIRS:
+        candidate = directory / "docker"
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            os.environ["PATH"] = f"{directory}{os.pathsep}{os.environ.get('PATH', '')}"
+            log(f"Using the docker command from {directory} (your shell's PATH does not have it).")
+            return
+
+
 def ensure_docker_available(*, command_hint: str = CLI_SIM, require_compose: bool = True) -> None:
+    _find_docker_cli()
     """Check Docker (and, unless opted out, the Compose v2 plugin).
 
     `require_compose=False` is for commands that only touch an already-running
@@ -181,7 +392,10 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM, require_compose: boo
                 "On Ubuntu (including WSL):    sudo apt install docker.io docker-compose-v2\n"
                 "On Debian / Raspberry Pi OS:  curl -fsSL https://get.docker.com | sudo sh\n"
                 "then let your user talk to Docker:\n"
-                "  sudo usermod -aG docker $USER && newgrp docker    # newgrp applies it to this shell\n"
+                "  sudo usermod -aG docker $USER\n"
+                "then open a new login session -- or, if `newgrp` is installed (it ships in the\n"
+                "`passwd` package, which minimized WSL images leave out), `newgrp docker` applies\n"
+                "it to this shell.\n"
                 f"Other platforms: {DOCKER_INSTALL_URL}"
             )
         raise StackError(
@@ -211,10 +425,14 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM, require_compose: boo
         if "permission denied" in detail_lower:
             # The daemon runs fine; this user just isn't in the docker group
             # yet (the usual state right after `apt install docker.io`).
+            reexec_under_docker_group()  # returns only if it cannot be fixed here
             raise StackError(
                 "Docker is running, but your user is not allowed to talk to it (permission denied "
                 "on the Docker socket).\n"
-                "  sudo usermod -aG docker $USER && newgrp docker    # newgrp applies it to this shell\n"
+                "  sudo usermod -aG docker $USER\n"
+                "then open a new login session -- or, if `newgrp` is installed (it ships in the\n"
+                "`passwd` package, which minimized WSL images leave out), `newgrp docker` applies\n"
+                "it to this shell.\n"
                 f"Then rerun `{command_hint}` in that shell (new logins have it everywhere)."
             )
         daemon_unreachable = (
@@ -235,7 +453,6 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM, require_compose: boo
     # Right after the engine probe, before any Compose check can raise over
     # it: a broken-mount daemon plus an old Compose plugin are two problems,
     # and fixing the second must not hide the first.
-    _warn_broken_image_mounts(result.stdout)
 
     if not require_compose:
         return
@@ -255,7 +472,7 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM, require_compose: boo
         )
     except subprocess.TimeoutExpired:
         raise StackError(
-            f"Docker did not answer `docker compose version` within {DOCKER_PROBE_TIMEOUT_S:.0f}s.\n"
+            f"Docker Compose did not answer `version` within {DOCKER_PROBE_TIMEOUT_S:.0f}s.\n"
             f"The docker daemon looks stuck. Restart Docker, then rerun `{command_hint}`."
         ) from None
     if compose.returncode != 0:
@@ -277,7 +494,9 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM, require_compose: boo
     _require_min_version(
         "Docker Engine",
         result.stdout,
-        (28, 0),
+        # Conservative floors, not feature-driven: the compose file asks for
+        # nothing exotic now that the image mounts are gone.
+        (20, 10),
         "Update Docker (Desktop: update the app; Linux: reinstall docker-ce from Docker's\nrepo)",
         command_hint,
         DOCKER_INSTALL_URL,
@@ -287,53 +506,11 @@ def ensure_docker_available(*, command_hint: str = CLI_SIM, require_compose: boo
     _require_min_version(
         "Docker Compose",
         compose.stdout,
-        (2, 35),
+        (2, 0),
         "Update the Compose plugin (Docker Desktop: update the app; Linux: reinstall\n"
         "docker-compose-v2 / docker-compose-plugin from Docker's repo)",
         command_hint,
         COMPOSE_INSTALL_URL,
-    )
-
-
-# Docker 29.0.0 names an image mount's layer directory after the hex of the whole
-# mount spec -- past NAME_MAX=255 for even our shortest ref, so `up` dies at
-# container create with "file name too long" (moby#51687; 29.1.4 hashes it).
-BROKEN_IMAGE_MOUNTS_SINCE = (29, 0, 0)
-BROKEN_IMAGE_MOUNTS_FIXED = (29, 1, 4)
-
-
-@functools.cache  # `up` probes the daemon twice (cmd_up, then start_cloud_agent) -- warn once
-def _warn_broken_image_mounts(version_output: str | None) -> None:
-    """Warn -- not refuse, every other verb works -- when the daemon's `type: image`
-    mounts are broken, so `up` fails at preflight with a diagnosis instead of a hex
-    blob. Names `up` whichever verb ran the preflight: only `up` creates the
-    container. Silent on an unparseable version, like _require_min_version."""
-    version = _parse_version(version_output)
-    if version is None or len(version) < 3:
-        return
-    if not BROKEN_IMAGE_MOUNTS_SINCE <= version < BROKEN_IMAGE_MOUNTS_FIXED:
-        return
-    running = ".".join(map(str, version))
-    since = ".".join(map(str, BROKEN_IMAGE_MOUNTS_SINCE))
-    fixed = ".".join(map(str, BROKEN_IMAGE_MOUNTS_FIXED))
-    remedy = (
-        f"Update Docker Desktop -- the app update ships a fixed engine ({fixed} or newer)."
-        if sys.platform == "darwin"
-        else (
-            f"Update Docker Engine to {fixed} or newer (Docker Desktop: update the app).\n"
-            "      Ubuntu's docker.io can sit on a broken patch with nothing newer to upgrade\n"
-            "      to -- if `apt` offers none, switch to Docker's own repo:\n"
-            "      `curl -fsSL https://get.docker.com | sudo sh`"
-        )
-    )
-    warn(
-        f"Docker Engine {running} cannot mount the sim viewer's assets.\n"
-        f"      Engines since {since} fail every `type: image` mount with 'file name too\n"
-        f"      long' (moby#51687, fixed in {fixed}), so `{CLI_SIM} up` will die at container\n"
-        f"      create. No launcher-side workaround exists -- the mount spec is over budget\n"
-        f"      even for the shortest ref.\n"
-        f"      {remedy}\n"
-        f"      Details: https://github.com/moby/moby/issues/51687"
     )
 
 
@@ -361,8 +538,8 @@ def _require_min_version(
     if version is None or version[:2] >= minimum:
         return
     raise StackError(
-        f"{label} {'.'.join(map(str, version))} is too old: the sim mounts its viewer assets straight from "
-        f"an image (`type: image`), which needs {label} {minimum[0]}.{minimum[1]} or newer.\n"
+        f"{label} {'.'.join(map(str, version))} is older than the simulator supports; "
+        f"it needs {label} {minimum[0]}.{minimum[1]} or newer.\n"
         f"{remedy}, then rerun `{command_hint}`.\nGuide: {guide_url}"
     )
 
@@ -463,6 +640,7 @@ def ensure_os_image_available(
         failure_message=(f"Could not pull the prebuilt Innate OS image: {shorten_docker_image_ref(image)}"),
         progress_message="Docker is still pulling the Innate OS image.",
         include_recent_log_on_failure=include_pull_log_on_failure,
+        progress_formatter=docker_pull_progress,
     )
 
 
@@ -608,16 +786,6 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
                     f"{shorten_docker_image_ref(local_image)} nor a pinned prebuilt).\n"
                     f"Run `{CLI_SIM} up` online once first."
                 )
-            # The viewer mount is an IMAGE, not a bind: compose resolves it
-            # even with --pull never, so offline needs it in the local store.
-            assets_image = assets_image_ref(config)
-            if not docker_image_present(assets_image, cwd=os_repo, env=probe_env):
-                raise StackError(
-                    "Offline, but the sim asset image is not in the local Docker store:\n"
-                    f"  {shorten_docker_image_ref(assets_image)}\n"
-                    "The webapp's 3D view mounts the viewer straight from it, so compose cannot "
-                    f"start without it.\nRun `{CLI_SIM} up` online once first."
-                )
             up_cmd.append("--no-build")
         elif os_image:
             compose_probe_env = os_compose_env(env_file=os_env_file)
@@ -666,12 +834,6 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
         compose_values = {"INNATE_OS_ENV_FILE": str(os_env_file)}
         if os_image:
             compose_values["INNATE_OS_IMAGE"] = os_image
-        # The viewer's public assets (models, physics) mount straight off this
-        # image. The bundle has its own, below.
-        compose_values["INNATE_SIM_ASSETS_IMAGE"] = assets_image_ref(config)
-        # Published or locally built; ensure_sim_viewer_bundle has made sure
-        # whichever it is exists.
-        compose_values["INNATE_SIM_VIEWER_BUNDLE_IMAGE"] = viewer_image_ref(config)
         compose_values["VIRTUAL_MARS_REMOTE"] = str(config.get("world_endpoint", "") or "")
         compose_env = os_compose_env(compose_values, env_file=os_env_file)
         log("Starting Innate OS dev container...")
@@ -1148,9 +1310,10 @@ def runtime_already_running(config: dict[str, object]) -> bool:
 
 
 def format_startup_check(ok: bool, label: str, detail: str) -> str:
-    icon = "✓" if ok else "✗"
-    color = GREEN if ok else RED
-    return f"  {color}{icon}{NC} {BOLD}{label}:{NC} {detail}"
+    """The row a live step settles into, so the summary at the end of `up` and
+    the steps that produced it are visibly one list."""
+    mark = f"{GREEN}✔{NC}" if ok else f"{RED}✗{NC}"
+    return f"  {CYAN}{label:>{STEP_LABEL_WIDTH}}{NC}  {mark} {detail}"
 
 
 def world_server_health(*, timeout: float = 2.0) -> tuple[bool, str]:
@@ -1190,35 +1353,35 @@ def print_startup_checks(
         time.sleep(2.0)  # a saturated box can miss one ping; don't cry wolf
         world_ok, world_detail = world_server_health()
     checks = [
-        (world_ok, "World server", world_detail),
+        (world_ok, "world", world_detail),
         (
             os_status["os_running"],
-            "OS container",
+            "os",
             "running" if os_status["os_running"] else "down",
         ),
         (
             os_status["os_session_running"],
-            "ROS session",
+            "ros",
             "tmux session running" if os_status["os_session_running"] else "missing",
         ),
         (
             bool(probe["rosbridge_live"]),
-            "ROSBridge",
+            "bridge",
             "ws://localhost:9090 live" if probe["rosbridge_live"] else "not accepting connections",
         ),
         (
             os_status["brain_process_live"],
-            "Brain process",
+            "brain",
             "brain_client_node.py running" if os_status["brain_process_live"] else "brain_client_node.py missing",
         ),
         (
             sim_driver_ready,
-            "Sim driver",
+            "sim",
             "/odom publishing" if sim_driver_ready else "/odom not publishing",
         ),
     ]
 
-    log("Startup checks:")
+    print()
     for ok, label, detail in checks:
         print(format_startup_check(ok, label, detail))
     return world_ok
@@ -1416,8 +1579,87 @@ def ensure_sim_assets(config: dict[str, object]) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def ensure_viewer_public_assets(config: dict[str, object]) -> None:
+    """Install the models and physics the webapp serves at /models and /physics.
+
+    The same image as the geometry, a different layer -- and on disk rather
+    than mounted from the image, for the reasons in install_layer_subtree.
+    """
+    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
+    install_layer_subtree(
+        assets_image_ref(config),
+        ASSETS_IMAGE_LAYERS.index("viewer"),
+        "viewer",
+        sim_repo / "viewer" / "public",
+        sim_repo / "viewer" / "public" / ".installed-tag",
+        label="viewer assets",
+    )
+
+
+def install_layer_subtree(
+    image: str,
+    layer_index: int,
+    subtree: str,
+    destination: Path,
+    marker: Path,
+    *,
+    label: str,
+) -> None:
+    """Put one subtree of one image layer on disk, idempotently.
+
+    The host reads these directories directly and the container bind-mounts
+    them. They used to be `type: image` mounts, which is a tidier idea and a
+    worse one in practice: two Docker components broke that feature in a
+    single year (moby#51687, and Compose 5 resolving the source to a manifest
+    digest), and both failures land on a user who never chose the feature.
+
+    Idempotent through `marker`, which lives INSIDE the directory it describes
+    (like sim/assets/.assets-tag): both are gitignored, so neither shows up as
+    a working-tree change -- which would make every checkout look dirty and
+    send the viewer bundle down the local-build path forever -- and deleting
+    the directory forgets the marker with it. It holds "<layer digest> <ref>" --
+    the digest, so a tag that moved for an unrelated input does not re-fetch,
+    and the ref, so an override that renames the image does.
+    """
+    parts = marker.read_text().split() if marker.exists() else []
+    if parts[1:] == [image] and destination.is_dir() and any(destination.iterdir()):
+        return
+
+    manifest = oci.manifest_for_image(image)
+    digest = manifest["layers"][layer_index]["digest"]
+    if parts[:1] == [digest] and destination.is_dir() and any(destination.iterdir()):
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(f"{digest} {image}\n")
+        return
+
+    # Staged beside the destination so the install is a rename, not a copy
+    # across filesystems.
+    blob = destination.parent / f".{destination.name}.tmp.tar.gz"
+    staging = destination.parent / f".{destination.name}.tmp"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+    try:
+        repo, _ = oci.split_ref(image)
+        with blob.open("wb") as handle:
+            oci.fetch_layer(repo, digest, handle, oci.anon_token(repo), label=label)
+        oci.safe_extract(blob, staging)
+        source = staging / subtree
+        if not source.is_dir():
+            raise StackError(f"{shorten_docker_image_ref(image)} layer {digest[7:19]} has no {subtree}/ subtree.")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(destination, ignore_errors=True)
+        shutil.move(str(source), str(destination))
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(f"{digest} {image}\n")
+        log(f"{label} {digest[7:19]} installed.")
+    finally:
+        blob.unlink(missing_ok=True)
+        shutil.rmtree(staging, ignore_errors=True)
+
+
 def viewer_image_ref(config: dict[str, object]) -> str:
-    """The image compose mounts dist-lib from.
+    """The image the bundle came from, for reporting and for the local build.
 
     Published `inputs-<content hash of sim/viewer>` normally, or the local build
     when the working tree has diverged from HEAD.
@@ -1440,28 +1682,89 @@ def viewer_image_ref(config: dict[str, object]) -> str:
 
 
 def ensure_sim_viewer_bundle(config: dict[str, object], *, offline: bool = False) -> None:
-    """Make sure the image holding the webapp's 3D-view bundle exists.
+    """Install the SimSession bundle the webapp loads, at sim/viewer/dist-lib.
 
-    Published image when one describes this checkout, otherwise built right
-    here from sim/viewer/Dockerfile. Two ways to end up building:
+    The published bundle when one describes this checkout -- fetched as a layer
+    over plain HTTPS, so this path needs no Docker at all -- otherwise built
+    here from sim/viewer/Dockerfile and copied out of the image. Two ways to
+    end up building:
 
       * the tree is dirty, so no published image CAN describe it
       * the tree is clean but CI has not published it yet (or retention expired
         a branch tag) -- worth a warning, not worth blocking on
 
-    Either way the bundle arrives as a mounted image, so the host needs Docker
-    and never Node.js. Never runs on robots.
+    Either way the bundle lands on disk and the container bind-mounts it, so
+    the host never needs Node.js. Never runs on robots.
     """
-    if os.environ.get("INNATE_SIM_VIEWER_BUNDLE_IMAGE", "").strip():
-        # An explicit override names the image; building a different one and
-        # mounting neither would be the one useless outcome.
-        return
-    if not viewer_bundle_built_locally() and _published_bundle_usable(config, offline=offline):
-        return
-    _build_viewer_image_locally(config, offline=offline)
+    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
+    destination = sim_repo / "viewer" / "dist-lib"
+    marker = destination / ".installed-tag"
+
+    override = os.environ.get("INNATE_SIM_VIEWER_BUNDLE_IMAGE", "").strip()
+    if not override and not viewer_bundle_built_locally():
+        image = resolve_viewer_image(config["os_repo"])  # type: ignore[arg-type]
+        try:
+            # A marker match returns before any network call, which is what
+            # makes this work offline.
+            install_layer_subtree(image, 0, "bundle", destination, marker, label="viewer bundle")
+            config["viewer_bundle_image"] = image
+            return
+        except oci.OciError as exc:
+            if offline:
+                raise StackError(
+                    f"Offline, and the sim viewer bundle is not installed:\n  {image}\n"
+                    f"Run `{CLI_SIM} up` online once first."
+                ) from exc
+            # A permanently broken publish pipeline would otherwise be
+            # invisible: everyone would quietly build their own.
+            warn(
+                f"No published sim viewer bundle for this commit ({shorten_docker_image_ref(image)}).\n"
+                "  CI may still be publishing it (publish-viewer-bundle.yml, about a minute). "
+                "Building it locally with the same Dockerfile in the meantime."
+            )
+
+    image = override or _build_viewer_image_locally(config, offline=offline)
+    _extract_bundle_from_image(config, image, destination, marker)
 
 
-def _build_viewer_image_locally(config: dict[str, object], *, offline: bool) -> None:
+def _extract_bundle_from_image(config: dict[str, object], image: str, destination: Path, marker: Path) -> None:
+    """Copy /bundle out of a local image, for the builds no registry has.
+
+    `docker cp` from a created-but-never-started container: the bundle is
+    static files, and starting the image to read them would need it to have an
+    entrypoint worth running.
+    """
+    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
+    env = os_compose_env()
+    image_id = capture_command_output(
+        ["docker", "image", "inspect", image, "--format", "{{.Id}}"], cwd=os_repo, env=env
+    )
+    if marker.exists() and marker.read_text().split()[:1] == [image_id] and destination.is_dir():
+        return
+
+    container = capture_command_output(["docker", "create", image], cwd=os_repo, env=env).strip()
+    if not container:
+        raise StackError(f"Could not create a container from {shorten_docker_image_ref(image)} to read the bundle.")
+    staging = destination.parent / f".{destination.name}.tmp"
+    shutil.rmtree(staging, ignore_errors=True)
+    try:
+        run_logged(
+            ["docker", "cp", f"{container}:/bundle/.", str(staging)],
+            cwd=os_repo,
+            env=env,
+            log_path=VIEWER_BUILD_LOG_PATH,
+            failure_message=f"Could not copy the viewer bundle out of {shorten_docker_image_ref(image)}.",
+        )
+        shutil.rmtree(destination, ignore_errors=True)
+        shutil.move(str(staging), str(destination))
+        marker.write_text(f"{image_id} {image}\n")
+        log("Viewer bundle installed.")
+    finally:
+        subprocess.run(["docker", "rm", "-f", container], cwd=os_repo, env=env, capture_output=True, check=False)
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def _build_viewer_image_locally(config: dict[str, object], *, offline: bool) -> str:
     """Build sim/viewer/Dockerfile into LOCAL_VIEWER_IMAGE_REPO:inputs-<hash>.
 
     Skipped when that tag is already in the store: the tag hashes the build's
@@ -1480,7 +1783,7 @@ def _build_viewer_image_locally(config: dict[str, object], *, offline: bool) -> 
     config["viewer_bundle_image"] = image
     env = os_compose_env()
     if docker_image_present(image, cwd=os_repo, env=env):
-        return
+        return image
     # The two ways to get here have different remedies: stash your own edit, or
     # wait for CI to finish publishing.
     why = "sim/viewer differs from HEAD" if viewer_bundle_built_locally() else "nothing is published for it"
@@ -1492,7 +1795,7 @@ def _build_viewer_image_locally(config: dict[str, object], *, offline: bool) -> 
             "The build installs npm dependencies, which needs a connection. Re-run online, or "
             "check out a commit whose bundle you have already built."
         )
-    log(f"Building the sim viewer bundle image ({why})...")
+    log(f"Building the sim viewer bundle ({why})...")
     run_logged_with_heartbeat(
         [
             "docker",
@@ -1521,54 +1824,7 @@ def _build_viewer_image_locally(config: dict[str, object], *, offline: bool) -> 
     # Every edit to sim/viewer mints a new tag, so these pile up faster than
     # any other local image in the project.
     prune_stale_local_images(image, cwd=os_repo, env=env, label="sim viewer bundle")
-
-
-def _published_bundle_usable(config: dict[str, object], *, offline: bool) -> bool:
-    """Can compose mount the published bundle for this checkout?
-
-    False means "build it here instead" -- the caller's fallback. The warning
-    matters: a permanently broken publish pipeline would otherwise be
-    invisible, since every user would just quietly build their own.
-
-    Probed here and NOT in viewer_bundle_built_locally, which is asked on paths
-    that must not touch the network. Records the chosen ref in the config, as
-    _build_viewer_image_locally does.
-    """
-    image = resolve_viewer_image(config["os_repo"])  # type: ignore[arg-type]
-    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
-    if docker_image_present(image, cwd=os_repo, env=os_compose_env()):
-        config["viewer_bundle_image"] = image
-        return True
-    if offline:
-        # Fatal, not a fallback: the local build needs the network too (npm ci).
-        raise StackError(
-            "Offline, and the sim viewer bundle image is not in the local Docker store:\n"
-            f"  {image}\n"
-            f"Run `{CLI_SIM} up` online once first."
-        )
-    if _viewer_image_published(image):
-        config["viewer_bundle_image"] = image
-        return True
-    warn(
-        f"No published sim viewer bundle for this commit ({image}).\n"
-        "  CI may still be publishing it (publish-viewer-bundle.yml, about a minute). "
-        "Building it locally with the same Dockerfile in the meantime."
-    )
-    return False
-
-
-def _viewer_image_published(image: str) -> bool:
-    """Does the registry serve `image` to an anonymous client?
-
-    The registry API rather than `docker manifest inspect`, because the
-    anonymous HTTPS path is the one users actually pull on -- so this also
-    catches GHCR making a brand-new package private, where every fetch 401s.
-    """
-    try:
-        oci.manifest_for_image(image)
-    except oci.OciError:
-        return False
-    return True
+    return image
 
 
 def _recv_exact(conn: socket.socket, n: int) -> bytes | None:
@@ -1645,6 +1901,82 @@ def ensure_uv_available() -> None:
     """Prerequisite gate for commands that need the host world server."""
     if find_uv() is None:
         raise StackError(_UV_MISSING_MESSAGE)
+
+
+def prefetch_runtime(config: dict[str, object]) -> None:
+    """Download everything the first `up` would otherwise fetch, so that `up`
+    is a start rather than a multi-gigabyte download.
+
+    Every step is idempotent and individually non-fatal: a prefetch that only
+    gets half way leaves `up` with less to do, never with a broken state --
+    which is why a failing phase is reported and stepped over rather than
+    raised, after the keys the user just entered have been written.
+    """
+    print()
+    phases: list[tuple[str, str, str, Callable[[], None]]] = [
+        ("assets", "Downloading the world geometry", "world geometry", lambda: ensure_sim_assets(config)),
+        ("skills", "Downloading the skill assets", "skill assets", lambda: ensure_skill_assets(config)),
+        ("viewer", "Downloading the 3D view assets", "3D view assets", lambda: ensure_viewer_public_assets(config)),
+        ("bundle", "Fetching the 3D viewer bundle", "3D viewer bundle", lambda: ensure_sim_viewer_bundle(config)),
+        ("image", "Pulling the Innate OS image", "Innate OS image", lambda: _prefetch_os_image(config)),
+        ("world", "Preparing the sim world environment", "sim world environment", lambda: _prefetch_world_env(config)),
+    ]
+    for label, doing, done, phase in phases:
+        with live_step(label, doing, done) as step:
+            try:
+                phase()
+            except StackError as exc:
+                # One phase failing must not throw away the rest, nor the keys
+                # already written: `up` fetches whatever is missing anyway, so
+                # a network blip costs a retry rather than the whole setup.
+                step.ok = False
+                warn(f"{exc}\n`{CLI_SIM} up` will fetch this when you start the simulator.")
+    print()
+
+
+def _prefetch_os_image(config: dict[str, object]) -> None:
+    os_image = str(config["os_image"]).strip()
+    if not os_image or not config["os_pull_image"]:
+        return  # os.image = "local": there is no prebuilt to pull
+    try:
+        ensure_os_image_available(
+            os_image,
+            cwd=config["os_repo"],  # type: ignore[arg-type]
+            env=os_compose_env(),
+            pull_if_missing=True,
+            include_pull_log_on_failure=not config["os_image_auto"],
+        )
+    except StackError:
+        if not config["os_image_auto"]:
+            raise
+        # `up` handles this the same way, with the same fallback -- warn and
+        # let it, rather than failing a setup that has otherwise succeeded.
+        warn(
+            f"No prebuilt Innate OS image for this checkout ({shorten_docker_image_ref(os_image)}).\n"
+            f"`{CLI_SIM} up` will build one locally instead, which takes considerably longer."
+        )
+
+
+def _prefetch_world_env(config: dict[str, object]) -> None:
+    """Resolve the host venv the world server runs in (MuJoCo, rendering).
+
+    Not covered by any Docker pull -- it is built on the host by uv, and is
+    the largest remaining cold-start cost once the images are local.
+    """
+    uv = find_uv()
+    if uv is None:
+        warn(f"uv is not installed, so the sim world's Python environment was not prepared for `{CLI_SIM} up`.")
+        return
+    sim_repo: Path = config["sim_repo"]  # type: ignore[assignment]
+    log("Preparing the sim world's Python environment...")
+    run_logged_with_heartbeat(
+        [uv, "sync", "--project", str(sim_repo)],
+        cwd=sim_repo,
+        env=os.environ.copy(),
+        log_path=BOOTSTRAP_LOG_PATH,
+        failure_message="Could not prepare the sim world's Python environment.",
+        progress_message="uv is still resolving the sim world's Python environment.",
+    )
 
 
 def _world_server_bind_addresses() -> str:

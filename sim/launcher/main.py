@@ -33,6 +33,7 @@ from dashboard import (
     NC,
     DashboardCallbacks,
     DashboardOptions,
+    live_step,
     print_banner,
     print_status,
     watch_dashboard,
@@ -48,9 +49,11 @@ from runtime import (
     ensure_sim_viewer_bundle,
     ensure_skill_assets,
     ensure_uv_available,
+    ensure_viewer_public_assets,
     ensure_workspace_dirs,
     ensure_world_server,
     open_os_container_shell,
+    prefetch_runtime,
     print_startup_checks,
     remove_legacy_cloud_agent,
     runtime_already_running,
@@ -61,7 +64,9 @@ from runtime import (
     world_server_running,
 )
 from setup_wizard import (
+    BRAIN_BACKENDS,
     _prompt_yes_no,
+    apply_brain_backend,
     configure_brain_backend,
     ensure_uv_prerequisite,
     is_interactive_terminal,
@@ -127,20 +132,27 @@ def cmd_up(
             log("Offline: skipping sim/skill asset downloads.")
         else:
             try:
-                ensure_sim_assets(config)
-                ensure_skill_assets(config)
+                with live_step("assets", "Downloading the world geometry", "world geometry"):
+                    ensure_sim_assets(config)
+                with live_step("skills", "Downloading the skill assets", "skill assets"):
+                    ensure_skill_assets(config)
             except StackError as exc:
                 raise StackError(
                     f"{exc}\n\n"
                     "This step needs internet access. Re-run with a connection, or re-run "
                     f"`{CLI_SIM} up --offline` to start with whatever is already downloaded."
                 ) from exc
-        ensure_sim_viewer_bundle(config, offline=offline)
-        config["world_endpoint"] = ensure_world_server(config)
+        with live_step("viewer", "Downloading the 3D view assets", "3D view assets"):
+            ensure_viewer_public_assets(config)
+        with live_step("bundle", "Fetching the 3D viewer bundle", "3D viewer bundle"):
+            ensure_sim_viewer_bundle(config, offline=offline)
+        with live_step("world", "Starting the physics world", "physics world"):
+            config["world_endpoint"] = ensure_world_server(config)
 
         started = True
         try:
-            ensure_os_container(config, os_env_file, offline=offline)
+            with live_step("os", "Starting the Innate OS container", "Innate OS container"):
+                ensure_os_container(config, os_env_file, offline=offline)
         except StackError as exc:
             if offline:
                 raise
@@ -151,17 +163,18 @@ def cmd_up(
                 "to reuse the existing images instead of pulling/building."
             ) from exc
 
-        log("Waiting for ROS bridge and brain client...")
         # Startup is dominated by ROS node bring-up (the workspace build
         # cache is warm), so give the nodes real time to come up.
-        if not wait_for_os_runtime_ready(config, timeout_seconds=120.0):
+        with live_step("brain", "Waiting for the ROS bridge and brain client", "ROS bridge and brain client") as step:
+            step.ok = wait_for_os_runtime_ready(config, timeout_seconds=120.0)
+        if not step.ok:
             print_startup_checks(config, sim_driver_ready=False)
             raise StackError(
                 "The OS ROS bridge/brain client did not become ready.\n"
                 f"Recent OS log output:\n{tail_file(OS_SESSION_LOG_PATH, limit=80)}"
             )
-        log("Waiting for the sim driver (/odom)...")
-        sim_driver_ready = wait_for_virtual_mars(config)
+        with live_step("sim", "Waiting for the sim driver (/odom)", "sim driver (/odom)") as step:
+            sim_driver_ready = step.ok = wait_for_virtual_mars(config)
         world_alive = print_startup_checks(config, sim_driver_ready=sim_driver_ready)
         if not world_alive:
             # It passed the startup gate and died during boot -- on small
@@ -264,23 +277,60 @@ def cmd_logs(target: str, lines: int | None = None) -> None:
     print(tail_file(path, limit=lines or 120))
 
 
-def cmd_setup(config: dict[str, object]) -> None:
+def cmd_setup(
+    config: dict[str, object],
+    *,
+    prefetch: bool = True,
+    configure: bool = True,
+    backend: str | None = None,
+) -> None:
+    """Ask which key the agent thinks with, then download what `up` would.
+
+    The two halves are separable because the installer asks everything before
+    it installs anything: it runs `--no-prefetch` right after the clone, while
+    the user is still at the keyboard, and `--prefetch-only` once Docker is in
+    place -- by which time nobody has to be watching.
+    """
     print_banner()
-    ensure_docker_available(command_hint=f"{CLI_SIM} setup")
-    ensure_uv_prerequisite()
-    configure_brain_backend(config)
-    success("Simulator setup is ready.")
+    if backend:
+        # The installer asked before it installed anything; the key arrives on
+        # stdin so it never becomes a temp file or an entry in `ps`.
+        apply_brain_backend(config, backend, sys.stdin.read().strip() if backend != "none" else "")
+    elif configure:
+        configure_brain_backend(config)
+    if prefetch:
+        ensure_docker_available(command_hint=f"{CLI_SIM} setup")
+        ensure_uv_prerequisite()
+        prefetch_runtime(config)
+    success("Simulator setup is ready." if prefetch else "Keys saved.")
     print(f"OS secrets: {ENV_PATH}")
-    print(f"Sim config: {SIM_CONFIG_PATH}")
+    if prefetch:
+        print(f"Sim config: {SIM_CONFIG_PATH}")
+        log(f"Start the simulator with `{CLI_SIM} up`.")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="innate-sim", description="Innate local simulator CLI.")
     sim_subparsers = parser.add_subparsers(dest="sim_command", required=True)
-    sim_subparsers.add_parser(
+    setup_parser = sim_subparsers.add_parser(
         "setup",
         prog=f"{CLI_SIM} setup",
-        help="Prepare the simulator runtime credentials",
+        help="Prepare the simulator: prerequisites, agent keys, and the runtime download",
+    )
+    setup_parser.add_argument(
+        "--no-prefetch",
+        action="store_true",
+        help="Configure keys only; leave the images and assets for the first `up` to download",
+    )
+    setup_parser.add_argument(
+        "--backend",
+        choices=BRAIN_BACKENDS,
+        help="Apply a cloud-LLM choice made elsewhere, reading the key from stdin (used by the installer)",
+    )
+    setup_parser.add_argument(
+        "--prefetch-only",
+        action="store_true",
+        help="Download the runtime without asking about keys again (they are already set)",
     )
     up_parser = sim_subparsers.add_parser(
         "up",
@@ -365,7 +415,12 @@ def main() -> int:
         config = get_config()
 
         if args.sim_command == "setup":
-            cmd_setup(config)
+            cmd_setup(
+                config,
+                prefetch=not args.no_prefetch,
+                configure=not args.prefetch_only,
+                backend=args.backend,
+            )
         elif args.sim_command == "up":
             cmd_up(
                 config,

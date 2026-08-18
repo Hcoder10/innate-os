@@ -18,8 +18,15 @@ from config import (
     success,
     warn,
 )
-from dashboard import BOLD, CYAN, DIM, GREEN, NC, YELLOW
+from dashboard import BOLD, CYAN, DIM, GREEN, NC, YELLOW, confirm, menus_supported, select_one
 from runtime import UV_INSTALL_COMMAND, find_uv
+
+
+def _split_option(label: str) -> tuple[str, str]:
+    """Split `Name (hint)` into its parts, so the menu can dim the hint. The
+    typed prompt shows the same strings whole."""
+    name, sep, hint = label.partition(" (")
+    return (name, hint.rstrip(")")) if sep else (label, "")
 
 
 def is_interactive_terminal() -> bool:
@@ -42,6 +49,12 @@ def _is_active_env_assignment(line: str, key: str) -> bool:
 
 
 def _prompt_yes_no(question: str, *, default: bool = False) -> bool:
+    if menus_supported():
+        try:
+            return confirm(question, default=default)
+        except (KeyboardInterrupt, EOFError):
+            print()
+            raise SystemExit(1)  # noqa: B904
     default_label = "Y/n" if default else "y/N"
     while True:
         try:
@@ -228,6 +241,19 @@ def _use_service_key_for_run(config: dict[str, object], service_key: str) -> Non
 
 
 def _prompt_choice(question: str, options: dict[str, str], *, default: str) -> str:
+    if menus_supported():
+        keys = list(options)
+        try:
+            chosen = select_one(
+                question,
+                [_split_option(options[key]) for key in keys],
+                default=keys.index(default),
+            )
+        except (KeyboardInterrupt, EOFError):
+            print()
+            raise SystemExit(1)  # noqa: B904
+        return keys[chosen]
+
     print(f"{YELLOW}{question}{NC}")
     for key, label in options.items():
         marker = "  (default)" if key == default else ""
@@ -355,6 +381,29 @@ def report_configured_keys(config: dict[str, object]) -> None:
         success(f"Keys set in {ENV_PATH.name}: {', '.join(active)}")
     else:
         warn(f"No brain keys set in {ENV_PATH.name}.")
+
+
+BRAIN_BACKENDS = ("gemini", "innate", "none")
+
+
+def apply_brain_backend(config: dict[str, object], backend: str, key: str) -> None:
+    """Write a choice someone already made, without asking again.
+
+    The installer collects this before it installs anything, so the question
+    lands in the first ten seconds rather than after apt, uv and a clone. It
+    collects the answer only -- which key goes in .env, and which get commented
+    out, stays here, so there is one implementation of that.
+    """
+    if backend == "gemini":
+        _save_gemini_key(config, key)
+        _disable_keys(config, [INNATE_SERVICE_KEY])
+    elif backend == "innate":
+        _save_service_key(config, key)
+        _disable_keys(config, [GEMINI_API_KEY])
+    else:
+        _disable_keys(config, [GEMINI_API_KEY, INNATE_SERVICE_KEY])
+        warn("No brain backend selected. The sim will run without an agent.")
+    report_configured_keys(config)
 
 
 def configure_brain_backend(config: dict[str, object]) -> None:
