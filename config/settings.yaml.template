@@ -225,12 +225,18 @@
 # stt_vad_threshold / stt_vad_silence_secs tune only the local (batch)
 # endpointing and the stt_realtime_* pair tunes only the realtime backends;
 # stt_energy_threshold only applies to the energy engine.
+# stt_keyterms is the vocabulary both batch backends bias toward — the robot's
+# name and the phrases it is given. Scribe takes them as a parameter (+20% per
+# transcription; [] turns biasing and the surcharge off), Gemini gets them in its
+# prompt. A term is under 50 characters, at most 5 words, and free of <>{}[]\ —
+# anything else is dropped with a warning rather than failing transcription.
 # The model knobs of the backends you aren't using are simply unused.
 # input_manager_node:
 #   ros__parameters:
 #     stt_backend: "elevenlabs_batch"
 #     stt_vad_engine: "silero"
 #     stt_language: "en"
+#     stt_keyterms: ["MARS", "go forwards", "turn left"]   # [] disables biasing
 #     stt_energy_threshold: 0.01    # energy engine: RMS (0-1) that counts as speech
 #     stt_vad_threshold: 0.2        # batch/silero: lower = more sensitive to speech
 #     stt_vad_silence_secs: 0.5     # batch: silence that closes an utterance
