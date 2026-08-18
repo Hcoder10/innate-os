@@ -82,9 +82,9 @@ const SHADOW_BOX_STEP_M = 0.25; // quantised, so the box does not resize every f
 const SHADOW_MARGIN_M = 0.5; // the robot's own extent plus the throw of its shadow
 const SHADOW_MAP_PX = 2048;
 
-// Chase-cam framing used when a pose is snapped in (see spawnAt below).
-const CHASE_DISTANCE = 1.8; // meters behind the robot
-const CHASE_HEIGHT = 1.1; // meters above the ground
+// Initial orbit framing used when a pose is snapped in (see spawnAt below).
+const INITIAL_ORBIT_POSITION = { forward: 0.61, left: 0.02, height: 0.25 };
+const INITIAL_ORBIT_TARGET = { forward: -0.01, left: 0, height: 0.13 };
 
 // Robot-mounted camera views: frames, axis conventions, FOV and near plane
 // match the driver's cameras (mars_sim_driver.core's CAMERAS).
@@ -157,6 +157,8 @@ export class SimScene {
     this.fixedSize = opts.fixedSize ?? null;
     const w = this.fixedSize?.width ?? window.innerWidth;
     const h = this.fixedSize?.height ?? window.innerHeight;
+    // Pre-pose orbit framing would flash before spawnAt replaces it.
+    canvas.style.visibility = "hidden";
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(this.fixedSize ? 1 : Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(w, h, !this.fixedSize);
@@ -829,9 +831,9 @@ export class SimScene {
   }
 
   /**
-   * Place the robot at a pose immediately and frame the camera zoomed in
-   * behind it (chase-cam), rather than following the incremental delta used
-   * by setPose. Use once — e.g. on spawn or reset — before driving resumes.
+   * Place the robot at a pose immediately and frame the camera facing its
+   * front, rather than following the incremental delta used by setPose.
+   * Use once — e.g. on spawn or reset — before driving resumes.
    */
   spawnAt(x: number, y: number, yaw: number): void {
     this.spawned = true;
@@ -841,9 +843,20 @@ export class SimScene {
 
     const forwardX = Math.cos(yaw);
     const forwardY = Math.sin(yaw);
-    this.camera.position.set(x - forwardX * CHASE_DISTANCE, y - forwardY * CHASE_DISTANCE, CHASE_HEIGHT);
-    this.controls.target.set(x, y, 0.5);
+    const leftX = -forwardY;
+    const leftY = forwardX;
+    this.camera.position.set(
+      x + forwardX * INITIAL_ORBIT_POSITION.forward + leftX * INITIAL_ORBIT_POSITION.left,
+      y + forwardY * INITIAL_ORBIT_POSITION.forward + leftY * INITIAL_ORBIT_POSITION.left,
+      INITIAL_ORBIT_POSITION.height,
+    );
+    this.controls.target.set(
+      x + forwardX * INITIAL_ORBIT_TARGET.forward + leftX * INITIAL_ORBIT_TARGET.left,
+      y + forwardY * INITIAL_ORBIT_TARGET.forward + leftY * INITIAL_ORBIT_TARGET.left,
+      INITIAL_ORBIT_TARGET.height,
+    );
     this.controls.update();
+    this.renderer.domElement.style.visibility = "";
 
     this.followPrevXY = [x, y];
   }

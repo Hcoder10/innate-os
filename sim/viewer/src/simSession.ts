@@ -30,6 +30,7 @@ export const THUMB_H = 240;
  * still-watchable worst case. */
 const DELAY_MIN_S = 0.025;
 const DELAY_MAX_S = 0.25;
+const DEFAULT_CAMERA = "orbit";
 
 /** Advance `samples` past renderT and return the bracketing pair plus the
  * clamped interpolation factor (holds the last sample during a gap instead
@@ -68,9 +69,9 @@ export class SimSession {
   #listeners = new Set<(state: SimSessionState) => void>();
 
   #roster = ["main", "arm", "orbit"];
-  #activeCams = ["main"];
-  #primaryIndex = 0;
-  #primaryName = "main";
+  #activeCams = [DEFAULT_CAMERA];
+  #primaryIndex = this.#roster.indexOf(DEFAULT_CAMERA);
+  #primaryName = DEFAULT_CAMERA;
 
   #controller: WorldStateController | null = null;
   #scanFeed: RosbridgePhysicsController | null = null;
