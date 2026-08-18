@@ -214,6 +214,15 @@ class WebRTCStreamer : public rclcpp::Node {
     void poll_pipeline_health();  // per-peer teardown of dead transports
     void publish_status();        // /webrtc/active_streams snapshot at 0.5 Hz
 
+    // ---- RTCP-driven sender adaptation (executor thread + webrtcbin stats callbacks) ----
+    // The viewers' RTCP receiver reports carry loss + RTT back to us; a 1 Hz poll turns the worst
+    // of them into two states. GOOD = full bitrate, keyframes on demand only (lowest latency).
+    // DEGRADED = ~60% bitrate + a periodic 1 Hz keyframe, so reference-chain corruption on an
+    // unrepairable link clears in bounded time instead of smearing until a PLI round-trip.
+    void poll_network_adaptation();
+    static void on_peer_stats(GstPromise* promise, gpointer user_data);  // parses one get-stats reply
+    void apply_adaptation(bool degraded);                                // sets vp8enc bitrates + logs
+
     // ---- Local STUN helper ----
     // Minimal RFC 8489 Binding responder. This gives browsers a robot-local STUN server so their srflx
     // candidate is the LAN IP:port seen by the robot, avoiding public NAT hairpin and mDNS host lookup.
@@ -253,6 +262,15 @@ class WebRTCStreamer : public rclcpp::Node {
     // Timers
     rclcpp::TimerBase::SharedPtr health_timer_;
     rclcpp::TimerBase::SharedPtr status_timer_;
+    rclcpp::TimerBase::SharedPtr adapt_timer_;
+
+    // Worst viewer-reported link quality from the last stats round (-1 = no report yet). Written by
+    // webrtcbin stats callbacks, read by the 1 Hz adaptation tick.
+    std::atomic<int> rtcp_loss_promille_{-1};
+    std::atomic<int> rtcp_rtt_ms_{-1};
+    bool degraded_ = false;  // adaptation state (executor thread only)
+    int adapt_bad_ticks_ = 0;
+    int adapt_good_ticks_ = 0;
 
     // RTCP-inactivity watchdog timeout (seconds without RTCP before a peer's transport is released).
     double rtcp_inactivity_timeout_s_ = kDefaultRtcpInactivityTimeoutS;
