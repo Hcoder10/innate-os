@@ -206,7 +206,10 @@ def _safe_resolve(path: Path) -> "Path | None":
 # Text assets are gzipped on the way out — the app is zero-build, so there are no
 # precompressed build siblings to sendfile, and the alternative is shipping ~1.8 MB
 # of source per cold load. Compressed bytes are cached in memory keyed by the file's
-# identity, so each file is deflated once per edit, not once per request.
+# identity, so each file is deflated once per edit, not once per request — which is
+# why this isn't aiohttp's enable_compression: that re-deflates every response on
+# the event loop shared with the /ws teleop relay, and can't give the gzip
+# representation its own ETag/304 path.
 COMPRESSIBLE = {".js", ".css", ".html", ".json", ".svg", ".md", ".urdf", ".obj", ".stl"}
 GZIP_MIN_BYTES = 1024  # below this the gzip framing eats the saving
 GZIP_MAX_BYTES = 4 * 1024 * 1024  # a mesh this large stays a sendfile rather than a cache entry
