@@ -208,3 +208,29 @@ def test_generation_is_captured_at_claim_time_so_a_mid_send_disown_orphans_the_g
     assert cancelled == [True]
     assert state.primitive_running is None
     assert runner._goal_handle is None
+
+
+def test_successful_code_output_keeps_the_legacy_chat_event_exactly_once():
+    runner, _ = make_runner(None)
+    emitted = []
+    runner._chat = SimpleNamespace(emit=lambda *args, **kwargs: emitted.append((args, kwargs)))
+    result = SimpleNamespace(success=True, success_type="success", message="  exact 1.2345 output  ")
+
+    runner._emit_skill_output(result, is_code=True)
+
+    assert len(emitted) == 1
+    assert emitted[0][0][1] == "  exact 1.2345 output  "
+    assert emitted[0][1] == {"speak": False}
+
+
+def test_legacy_chat_output_is_omitted_for_non_success_results():
+    runner, _ = make_runner(None)
+    emitted = []
+    runner._chat = SimpleNamespace(emit=lambda *args, **kwargs: emitted.append((args, kwargs)))
+
+    runner._emit_skill_output(SimpleNamespace(success=True, success_type="success", message=" "), True)
+    runner._emit_skill_output(SimpleNamespace(success=False, success_type="failure", message="no"), True)
+    runner._emit_skill_output(SimpleNamespace(success=True, success_type="cancelled", message="no"), True)
+    runner._emit_skill_output(SimpleNamespace(success=True, success_type="success", message="physical"), False)
+
+    assert emitted == []

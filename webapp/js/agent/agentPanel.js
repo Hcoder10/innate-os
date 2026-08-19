@@ -14,6 +14,12 @@
 // (it originated in the old teleop chat pane, since removed).
 
 import { copyText } from "../clipboard.js";
+import {
+  findMatchingOutputIndex,
+  readCompactActivity,
+  SKILL_OUTPUT_LINK_WINDOW_SEC,
+  writeCompactActivity,
+} from "./activityView.js";
 import { createMicStream } from "./micStream.js";
 import {
   AGENT_STATUS_TOPIC,
@@ -130,10 +136,26 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   activeSkill.append(activeSkillLabel, activeSkillName);
 
   // ---- live stream (thoughts + chat + skill runs) -------------------------
+  const streamHead = document.createElement("div");
+  streamHead.className = "agent-stream-head";
   const streamLabel = document.createElement("p");
   streamLabel.className = "microlabel agent-stream-label";
-  streamLabel.textContent = "AI thoughts";
+  streamLabel.textContent = "Activity";
   streamLabel.title = `the brain's thoughts, chat, and skill runs — ${CHAT_OUT_TOPIC}`;
+
+  const compactToggle = document.createElement("button");
+  compactToggle.type = "button";
+  compactToggle.className = "agent-compact-toggle mono";
+  compactToggle.setAttribute("role", "switch");
+  compactToggle.setAttribute("aria-label", "Use compact activity view");
+  const compactLabel = document.createElement("span");
+  compactLabel.textContent = "Compact";
+  const compactTrack = document.createElement("span");
+  compactTrack.className = "agent-compact-track";
+  compactTrack.setAttribute("aria-hidden", "true");
+  compactTrack.appendChild(document.createElement("span"));
+  compactToggle.append(compactLabel, compactTrack);
+  streamHead.append(streamLabel, compactToggle);
 
   const stream = document.createElement("div");
   stream.className = "agent-stream";
@@ -152,8 +174,57 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   send.title = CHAT_IN_TOPIC;
   form.append(input, send);
 
-  panel.append(head, controls, activeSkill, streamLabel, stream, form);
+  panel.append(head, controls, activeSkill, streamHead, stream, form);
   root.append(panel);
+
+  let compactActivity = true;
+  try {
+    compactActivity = readCompactActivity(localStorage);
+  } catch {
+    // Accessing localStorage itself can throw on a locked-down origin.
+  }
+
+  /** @param {boolean} compact @param {boolean} [persist] */
+  function setCompactActivity(compact, persist = false) {
+    const wasAtBottom = atBottom();
+    compactActivity = compact;
+    panel.classList.toggle("compact-activity", compact);
+    compactToggle.classList.toggle("on", compact);
+    compactToggle.setAttribute("aria-checked", String(compact));
+    compactToggle.title = compact
+      ? "Compact view is on — show completed reasoning and legacy outputs"
+      : "Hide completed reasoning and legacy outputs";
+    if (compact) {
+      for (const block of stream.querySelectorAll(".chat-thoughts.open")) {
+        block.classList.remove("open");
+        const toggle = block.querySelector(".chat-thoughts-toggle");
+        const arrow = block.querySelector(".chat-thoughts-arrow");
+        toggle?.setAttribute("aria-expanded", "false");
+        if (arrow) arrow.textContent = "▾";
+      }
+      for (const block of stream.querySelectorAll(".chat-skill.open:not(.failed)")) {
+        block.classList.remove("open");
+        const head = block.querySelector(".chat-skill-head");
+        const arrow = block.querySelector(".chat-skill-chevron");
+        const detail = block.querySelector(".chat-skill-detail");
+        head?.setAttribute("aria-expanded", "false");
+        detail?.setAttribute("aria-hidden", "true");
+        if (detail instanceof HTMLElement) detail.hidden = true;
+        if (arrow) arrow.textContent = "▾";
+      }
+    }
+    if (persist) {
+      try {
+        writeCompactActivity(localStorage, compact);
+      } catch {
+        // Keep the toggle functional when the storage getter is blocked.
+      }
+    }
+    snapIfAtBottom(wasAtBottom);
+  }
+
+  compactToggle.addEventListener("click", () => setCompactActivity(!compactActivity, true));
+  setCompactActivity(compactActivity);
 
   // ---- directive roster + start/stop --------------------------------------
   // The dropdown ARMS a directive; Start activates it. While active, switching
@@ -292,6 +363,24 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   let thoughts = null;
   let lastTs = 0;
 
+  /** @typedef {{ wrap: HTMLElement, head: HTMLElement, args: HTMLElement, status: HTMLElement, detail: HTMLElement | null, chevron: HTMLElement | null }} SkillRunView */
+  /** @typedef {{ text: string, ts: number }} LegacyOutputEcho */
+  /** @typedef {{ run: SkillRunView, text: string, ts: number }} OrphanOutput */
+  /** Authoritative status outputs awaiting their identical legacy chat copy. @type {LegacyOutputEcho[]} */
+  let pendingLegacyOutputs = [];
+  /** Legacy chat copies that arrived before their authoritative status event. @type {OrphanOutput[]} */
+  let orphanOutputs = [];
+
+  /** Drop bookkeeping only after an entry is too old to match by definition. @param {number} referenceTs */
+  function pruneOutputQueues(referenceTs) {
+    pendingLegacyOutputs = pendingLegacyOutputs.filter(
+      (candidate) => referenceTs - candidate.ts <= SKILL_OUTPUT_LINK_WINDOW_SEC,
+    );
+    // A legacy output may precede its authoritative status by at most the
+    // one-second cross-topic reorder grace in skillEventsAreAdjacent().
+    orphanOutputs = orphanOutputs.filter((candidate) => referenceTs - candidate.ts <= 1);
+  }
+
   /** @param {boolean} active */
   function setThoughtsStatus(active) {
     if (!thoughts) return;
@@ -328,9 +417,15 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       toggle.append(label, status, arrow);
       const list = document.createElement("div");
       list.className = "chat-thoughts-list";
+      list.id = `thoughts-${crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`}`;
+      toggle.setAttribute("aria-controls", list.id);
+      toggle.setAttribute("aria-expanded", "false");
       toggle.addEventListener("click", () => {
+        const wasAtBottom = atBottom();
         const open = wrap.classList.toggle("open");
+        toggle.setAttribute("aria-expanded", String(open));
         arrow.textContent = open ? "▴" : "▾";
+        snapIfAtBottom(wasAtBottom);
       });
       wrap.append(toggle, list);
       stream.appendChild(wrap);
@@ -369,13 +464,103 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     snapIfAtBottom(wasAtBottom);
   }
 
-  /** @type {Map<string, { wrap: HTMLElement, head: HTMLElement, args: HTMLElement, status: HTMLElement, hasDetail: boolean }>} */
+  /** @type {Map<string, SkillRunView>} */
   const skillRuns = new Map();
 
-  /** @param {string} key @param {string} name @param {string} status @param {number} ts @param {string} [reason]
-   *  @param {any} [args] */
-  function addSkillRun(key, name, status, ts, reason, args) {
+  /** @param {string} name @param {string} [tagText] @returns {SkillRunView} */
+  function createSkillRow(name, tagText = "skill") {
+    const wrap = document.createElement("div");
+    wrap.className = "chat-skill";
+    const head = document.createElement("div");
+    head.className = "chat-skill-head";
+    const tag = document.createElement("span");
+    tag.className = "chat-skill-tag mono";
+    tag.textContent = tagText;
+    const nameEl = document.createElement("span");
+    nameEl.className = "chat-skill-name";
+    nameEl.textContent = name.replace(/_/g, " ");
+    const argsEl = document.createElement("span");
+    argsEl.className = "chat-skill-args mono";
+    const statusEl = document.createElement("span");
+    statusEl.className = "chat-skill-status mono";
+    statusEl.title = SKILL_STATUS_UPDATE_TOPIC;
+    head.append(tag, nameEl, argsEl, statusEl);
+    wrap.append(head);
+    /** @type {SkillRunView} */
+    const run = { wrap, head, args: argsEl, status: statusEl, detail: null, chevron: null };
+    const toggleDetail = () => {
+      if (!run.detail) return;
+      const wasAtBottom = atBottom();
+      const open = run.wrap.classList.toggle("open");
+      run.head.setAttribute("aria-expanded", String(open));
+      run.detail.setAttribute("aria-hidden", String(!open));
+      run.detail.hidden = !open;
+      if (run.chevron) run.chevron.textContent = open ? "▴" : "▾";
+      snapIfAtBottom(wasAtBottom);
+    };
+    head.addEventListener("click", toggleDetail);
+    head.addEventListener("keydown", (event) => {
+      if (!run.detail || (event.key !== "Enter" && event.key !== " ")) return;
+      event.preventDefault();
+      toggleDetail();
+    });
+    return run;
+  }
+
+  /** @param {SkillRunView} run @param {string} text @param {{ open?: boolean, title?: string, round?: boolean }} [opts] */
+  function attachSkillDetail(run, text, opts = {}) {
+    if (!run.detail) {
+      run.detail = document.createElement("div");
+      run.detail.className = "chat-skill-detail";
+      run.detail.id = `skill-detail-${crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`}`;
+      run.chevron = document.createElement("span");
+      run.chevron.className = "chat-skill-chevron mono";
+      run.head.appendChild(run.chevron);
+      run.wrap.appendChild(run.detail);
+      run.wrap.classList.add("has-detail");
+      run.head.tabIndex = 0;
+      run.head.setAttribute("role", "button");
+      run.head.setAttribute("aria-controls", run.detail.id);
+    }
+    run.detail.textContent = opts.round === false ? text : roundNums(text);
+    run.head.title = opts.title || "Show or hide skill details";
+    const open = !!opts.open;
+    run.wrap.classList.toggle("open", open);
+    run.head.setAttribute("aria-expanded", String(open));
+    run.detail.setAttribute("aria-hidden", String(!open));
+    run.detail.hidden = !open;
+    if (run.chevron) run.chevron.textContent = open ? "▴" : "▾";
+  }
+
+  /** @param {string} text @param {number} ts */
+  function addSkillOutput(text, ts) {
     const wasAtBottom = atBottom();
+    finalizeThoughts();
+    pruneOutputQueues(ts);
+
+    const echoIndex = findMatchingOutputIndex(pendingLegacyOutputs, text, ts);
+    if (echoIndex >= 0) {
+      pendingLegacyOutputs.splice(echoIndex, 1);
+      lastTs = ts;
+      return;
+    }
+
+    // Old history may contain output without its status row. Keep it reachable
+    // in Detailed mode, but never guess which output-less call it belongs to.
+    const run = createSkillRow("output");
+    run.wrap.classList.add("completed", "orphan-output");
+    attachSkillDetail(run, text, { title: "Show or hide skill output" });
+    stream.appendChild(run.wrap);
+    orphanOutputs.push({ run, text, ts });
+    lastTs = ts;
+    snapIfAtBottom(wasAtBottom);
+  }
+
+  /** @param {string} key @param {string} name @param {string} status @param {number} ts @param {string} [reason]
+   *  @param {any} [args] @param {string} [output] */
+  function addSkillRun(key, name, status, ts, reason, args, output) {
+    const wasAtBottom = atBottom();
+    pruneOutputQueues(ts);
     const cls = ["running", "completed", "failed", "interrupted"].includes(status) ? status : "running";
     // Reflect the running primitive in the Active Skill readout.
     if (cls === "running") {
@@ -389,29 +574,14 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     let run = skillRuns.get(key);
     if (!run) {
       finalizeThoughts();
-      const wrap = document.createElement("div");
-      wrap.className = "chat-skill";
-      const head = document.createElement("div");
-      head.className = "chat-skill-head";
-      const tag = document.createElement("span");
-      tag.className = "chat-skill-tag mono";
-      tag.textContent = "skill";
-      const nameEl = document.createElement("span");
-      nameEl.className = "chat-skill-name";
-      nameEl.textContent = name.replace(/_/g, " ");
-      const argsEl = document.createElement("span");
-      argsEl.className = "chat-skill-args mono";
-      const statusEl = document.createElement("span");
-      statusEl.className = "chat-skill-status mono";
-      statusEl.title = SKILL_STATUS_UPDATE_TOPIC;
-      head.append(tag, nameEl, argsEl, statusEl);
-      wrap.append(head);
-      stream.appendChild(wrap);
-      run = { wrap, head, args: argsEl, status: statusEl, hasDetail: false };
+      run = createSkillRow(name);
+      stream.appendChild(run.wrap);
       skillRuns.set(key, run);
     }
+    const wasOpen = run.wrap.classList.contains("open");
     run.wrap.className = `chat-skill ${cls}`;
-    if (run.hasDetail) run.wrap.classList.add("has-detail");
+    if (run.detail) run.wrap.classList.add("has-detail");
+    if (wasOpen) run.wrap.classList.add("open");
     // Terminal updates repeat the inputs; keep the last non-empty rendering so
     // a publisher that omits them can't blank args the run already showed.
     const inputs = formatSkillArgs(args);
@@ -423,22 +593,21 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
 
     // A failed run carries the failure reason / error — show it expanded
     // in-place (collapsible so a long trace can be tucked away).
-    if (cls === "failed" && reason && !run.hasDetail) {
-      run.hasDetail = true;
-      run.wrap.classList.add("has-detail", "open");
-      run.head.title = "Click to show/hide the failure reason";
-      const chevron = document.createElement("span");
-      chevron.className = "chat-skill-chevron mono";
-      chevron.textContent = "▴";
-      run.head.appendChild(chevron);
-      const detail = document.createElement("div");
-      detail.className = "chat-skill-detail";
-      detail.textContent = reason;
-      run.wrap.appendChild(detail);
-      run.head.addEventListener("click", () => {
-        const open = run.wrap.classList.toggle("open");
-        chevron.textContent = open ? "▴" : "▾";
-      });
+    if (cls === "failed" && reason && !run.detail) {
+      attachSkillDetail(run, reason, { open: true, title: "Show or hide the failure reason", round: false });
+    }
+
+    const outputText = typeof output === "string" && output.trim() ? output : "";
+    if (cls === "completed" && outputText) {
+      const orphanIndex = findMatchingOutputIndex(orphanOutputs, outputText, ts, false);
+      if (orphanIndex >= 0) {
+        orphanOutputs[orphanIndex].run.wrap.remove();
+        orphanOutputs.splice(orphanIndex, 1);
+      }
+      attachSkillDetail(run, outputText, { title: "Show or hide skill output" });
+      if (orphanIndex < 0) {
+        pendingLegacyOutputs.push({ text: outputText, ts });
+      }
     }
 
     lastTs = ts;
@@ -523,6 +692,8 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     stream.replaceChildren();
     thoughts = null;
     skillRuns.clear();
+    pendingLegacyOutputs = [];
+    orphanOutputs = [];
     lastTs = 0;
     for (const e of entries) replayEntry(e);
     historyLoaded = true;
@@ -539,7 +710,15 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       const status = String(e?.taskStatus ?? "");
       if (!name || !status) return;
       const key = String(e?.primitiveId ?? e?.skillId ?? name);
-      addSkillRun(key, name, status, ts, typeof e?.failureReason === "string" ? e.failureReason : "", e?.args);
+      addSkillRun(
+        key,
+        name,
+        status,
+        ts,
+        typeof e?.failureReason === "string" ? e.failureReason : "",
+        e?.args,
+        typeof e?.output === "string" ? e.output : "",
+      );
       return;
     }
     const text = String(e?.text ?? "");
@@ -548,6 +727,8 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       addThought(sender, text, ts);
     } else if (sender === "vision_agent_output") {
       return; // raw vision dumps — noisy, drop (matches live)
+    } else if (sender === "skill_output") {
+      addSkillOutput(text, ts);
     } else if (sender === "user" || sender === "robot") {
       addMessage(sender, text, ts);
     } else {
@@ -591,6 +772,8 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       addThought(sender, text, ts);
     } else if (sender === "vision_agent_output") {
       return; // raw vision dumps — noisy, drop
+    } else if (sender === "skill_output") {
+      addSkillOutput(text, ts);
     } else if (sender === "user" || sender === "robot") {
       addMessage(sender, text, ts);
     } else {
@@ -611,7 +794,15 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     if (!name || !status) return;
     const key = String(payload?.primitive_id ?? payload?.skill_id ?? name);
     const reason = typeof payload?.reason === "string" ? payload.reason : "";
-    addSkillRun(key, name, status, Number(payload?.timestamp) || Date.now() / 1000, reason, payload?.args);
+    addSkillRun(
+      key,
+      name,
+      status,
+      Number(payload?.timestamp) || Date.now() / 1000,
+      reason,
+      payload?.args,
+      typeof payload?.output === "string" ? payload.output : "",
+    );
   }, undefined, "std_msgs/msg/String");
 
   return {

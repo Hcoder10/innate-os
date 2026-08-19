@@ -45,6 +45,7 @@ from brain_client.skills.hot_reload import ReloadCoordinator
 from brain_client.skills.roster import SkillRoster
 from brain_client.skills.runner import PrimitiveRunner
 from brain_client.skills.workspace_import import format_load_error, unique_key
+from brain_client.transport.activity import task_status_history_entry
 from brain_client.transport.chat import ChatManager
 from brain_client.transport.tts import TTSHandler
 
@@ -238,6 +239,7 @@ class BrainClientNode(Node):
         self.create_subscription(String, "/brain/set_directive", self._on_set_directive, 10)
         self.create_subscription(String, "/brain/set_active_skills", self._on_set_active_skills, 10)
         self.create_subscription(String, "/brain/manual_skill_event", self._on_manual_skill_event, 10)
+        self.create_subscription(String, "/brain/skill_status_update", self._on_skill_status_update, 10)
 
     def _create_services(self) -> None:
         self.create_service(GetChatHistory, "/brain/get_chat_history", self._svc_get_chat_history)
@@ -415,6 +417,9 @@ class BrainClientNode(Node):
         primitive_name = payload.get("skill_name") or self.state.registry.name_for(skill_id)
         primitive_id = payload.get("primitive_id") or f"manual_{skill_id}_{int(time.time() * 1000)}"
         reason = payload.get("reason")
+        event_timestamp = payload.get("timestamp")
+        if not isinstance(event_timestamp, (int, float)):
+            event_timestamp = None
 
         self.get_logger().info(f"Manual skill event: {status} {primitive_name} ({skill_id})")
         # The runner mirrors the run into the skill slot (under its slot lock,
@@ -434,18 +439,21 @@ class BrainClientNode(Node):
             status=status,
             skill_id=skill_id,
             reason=reason,
+            timestamp=event_timestamp,
         )
-        self.chat.history.append(
-            {
-                "sender": "task_activated",
-                "text": primitive_name,
-                "timestamp": payload.get("timestamp", time.time()),
-                "taskStatus": status,
-                "primitiveId": primitive_id,
-                "skillId": skill_id,
-                **({"failureReason": reason} if reason else {}),
-            }
-        )
+
+    def _on_skill_status_update(self, msg: String) -> None:
+        """Persist every skill call so the Activity view survives a refresh."""
+        try:
+            payload = json.loads(msg.data)
+        except (json.JSONDecodeError, TypeError):
+            self.get_logger().warn("[BrainClient] Ignoring malformed /brain/skill_status_update JSON.")
+            return
+        entry = task_status_history_entry(payload)
+        if entry is None:
+            self.get_logger().warn("[BrainClient] Ignoring incomplete /brain/skill_status_update payload.")
+            return
+        self.chat.history.append(entry)
 
     # ================= service handlers =================
     def _svc_get_chat_history(self, request, response):

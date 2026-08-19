@@ -21,6 +21,7 @@ from std_srvs.srv import Trigger
 from brain_client.core.state import RunningSkill
 from brain_client.skills.lifecycle import PRIMITIVE_LIFECYCLE_STATUSES, decode_substep_feedback
 from brain_client.skills.types import SkillResult
+from brain_client.transport.activity import successful_code_output
 from brain_client.transport.chat import Sender
 
 
@@ -252,14 +253,15 @@ class PrimitiveRunner:
         if event not in PRIMITIVE_LIFECYCLE_STATUSES:
             self._logger.warn(f"Unknown substep event: {event}")
             return
+        output = substep.get("output")
         self._chat.publish_task_status(
             primitive_name=substep.get("name", ""),
             primitive_id=substep.get("primitive_id"),
             status=event,
             skill_id=substep.get("skill_id"),
             reason=substep.get("reason"),
+            output=output if event == "completed" else None,
         )
-        output = substep.get("output")
         if event == "completed" and output and output.strip():
             self._chat.emit(Sender.SKILL_OUTPUT, output, speak=False)
 
@@ -363,14 +365,14 @@ class PrimitiveRunner:
 
     def _emit_skill_output(self, result, is_code: bool) -> None:
         """Surface a successful code skill's output in the chat (never spoken)."""
-        if is_code and result.success and result.success_type == SkillResult.SUCCESS.value and result.message.strip():
-            self._chat.emit(Sender.SKILL_OUTPUT, result.message, speak=False)
+        output = successful_code_output(result, is_code)
+        if output is not None:
+            self._chat.emit(Sender.SKILL_OUTPUT, output, speak=False)
 
     def _classify_result(self, result, is_code: bool) -> tuple[str | None, str | None]:
         """Map an action result to the brain-facing (status, detail) event."""
         if result.success and result.success_type == SkillResult.SUCCESS.value:
-            output = result.message if is_code and result.message.strip() else None
-            return "completed", output
+            return "completed", successful_code_output(result, is_code)
         if result.success_type == SkillResult.CANCELLED.value:
             return "interrupted", None
         if not result.success or result.success_type == SkillResult.FAILURE.value:

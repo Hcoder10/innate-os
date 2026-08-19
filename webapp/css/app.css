@@ -5708,17 +5708,29 @@ select.skill-input {
   background: rgb(255 255 255 / 4%);
 }
 
-/* The status line (tag · name · status); becomes a click target when a failed
-   run has an expandable error detail below it. */
+/* The status line (tag · name · status); becomes a disclosure when output or
+   a failure detail is available below it. */
 .chat-skill-head {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  border: 0;
 }
 
 .chat-skill.has-detail .chat-skill-head {
   cursor: pointer;
+}
+
+.chat-skill.has-detail .chat-skill-head:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  border-radius: 8px;
 }
 
 .chat-skill-chevron {
@@ -5727,7 +5739,7 @@ select.skill-input {
   opacity: 0.6;
 }
 
-/* Collapsible failure reason / error trace. */
+/* Collapsible skill output or failure reason. */
 .chat-skill-detail {
   max-height: 0;
   overflow: hidden;
@@ -5738,7 +5750,6 @@ select.skill-input {
   white-space: pre-wrap;
   word-break: break-word;
   border-top: 0 solid var(--hairline);
-  transition: max-height 0.2s ease, padding 0.2s ease;
 }
 
 .chat-skill.open .chat-skill-detail {
@@ -6681,8 +6692,80 @@ select.skill-input {
   color: var(--ctl-accent);
 }
 
+.agent-stream-head {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 2px -4px;
+}
+
 .agent-stream-label {
-  margin: 2px 2px -4px;
+  flex: 1;
+  margin: 0;
+}
+
+.agent-compact-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+  padding: 2px 4px 2px 7px;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgb(231 231 234 / 55%);
+  background: rgb(0 0 0 / 20%);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.agent-compact-toggle:hover,
+.agent-compact-toggle:focus-visible {
+  color: #fff;
+  border-color: var(--hairline-strong);
+}
+
+.agent-compact-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.agent-compact-track {
+  position: relative;
+  width: 25px;
+  height: 14px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 12%);
+  transition: background 150ms ease;
+}
+
+.agent-compact-track > span {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgb(231 231 234 / 70%);
+  transition: transform 150ms ease, background 150ms ease;
+}
+
+.agent-compact-toggle.on {
+  color: #d7d2ff;
+  border-color: rgb(64 31 251 / 48%);
+  background: rgb(64 31 251 / 12%);
+}
+
+.agent-compact-toggle.on .agent-compact-track {
+  background: rgb(64 31 251 / 58%);
+}
+
+.agent-compact-toggle.on .agent-compact-track > span {
+  background: #fff;
+  transform: translateX(11px);
 }
 
 /* Over translucent glass the app's --muted grey reads too dim, so the agent
@@ -6710,9 +6793,6 @@ select.skill-input {
   border-color: var(--hairline-strong);
 }
 
-/* Latest thought, shown while the Thoughts block is collapsed (its default). */
-
-
 .agent-stream {
   flex: 1 1 auto;
   min-height: 0;
@@ -6721,6 +6801,26 @@ select.skill-input {
   flex-direction: column;
   gap: 10px;
   padding: 4px 2px;
+}
+
+/* Compact is the onboarding view: finished reasoning and unpaired legacy
+   output disappear, but live processing and every skill-call header remain.
+   Switching to Detailed restores those debugging surfaces. */
+.agent-panel.compact-activity .agent-stream {
+  gap: 6px;
+}
+
+.agent-panel.compact-activity .chat-thoughts:not(.active):not(.open),
+.agent-panel.compact-activity .chat-skill.orphan-output:not(.open) {
+  display: none;
+}
+
+.agent-panel.compact-activity .chat-thoughts:not(.open) .chat-thoughts-list {
+  display: none;
+}
+
+.agent-panel.compact-activity .chat-skill-head {
+  padding-block: 5px;
 }
 
 /* Reading surfaces are copy-paste material — chat history (discussion,

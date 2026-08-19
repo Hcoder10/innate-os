@@ -16,6 +16,7 @@ import time
 
 from brain_client.brain.context import split_tool_narration
 from brain_client.common.enums import StrEnum
+from brain_client.transport.activity import task_status_payload
 
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 
@@ -76,18 +77,19 @@ class ChatManager:
         status: str,
         skill_id: str | None = None,
         reason: str | None = None,
+        output: str | None = None,
+        timestamp: float | None = None,
     ) -> None:
         """Publish a local task-status update for the controller-app UI."""
-        payload = {
-            "primitive_name": primitive_name,
-            "primitive_id": primitive_id,
-            "skill_name": primitive_name,
-            "skill_id": skill_id or primitive_id,
-            "status": status,
-            "timestamp": time.time(),
-        }
-        if reason:
-            payload["reason"] = reason
+        payload = task_status_payload(
+            primitive_name,
+            primitive_id,
+            status,
+            skill_id=skill_id,
+            reason=reason,
+            output=output,
+            timestamp=timestamp,
+        )
         from std_msgs.msg import String  # deferred: keeps the module importable without ROS
 
         self._task_status_pub.publish(String(data=json.dumps(payload)))

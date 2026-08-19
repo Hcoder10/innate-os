@@ -151,9 +151,9 @@ export const FORGET_MEMORY_SERVICE = "/brain/forget_memory";
 export const MEMORY_SEARCH_TOPIC = "/brain/memory_search";
 
 // Skill-execution status (std_msgs/String JSON: {primitive_name|skill_name,
-// status: running|completed|failed|interrupted, primitive_id, ...}), published
-// as the agent runs primitives. Separate from chat_out — the chat surfaces it so
-// operators can see which skills the agent is executing.
+// status: running|completed|failed|interrupted, primitive_id, args?, output?,
+// ...}), published as the agent runs primitives. Successful code-skill output
+// rides the terminal event so the app can keep it inside the matching call.
 export const SKILL_STATUS_UPDATE_TOPIC = "/brain/skill_status_update";
 
 // Per-step ACT inference timing breakdown (std_msgs/String carrying JSON), published

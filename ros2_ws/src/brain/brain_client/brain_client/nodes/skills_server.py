@@ -45,6 +45,7 @@ from brain_client.skills.types import (
     normalize_skill_result,
     swap_run_cancel,
 )
+from brain_client.transport.activity import successful_code_output, task_status_payload
 
 # result status -> (goal-handle finalize method, ExecuteSkill success flag)
 _FINALIZE = {
@@ -297,7 +298,8 @@ class SkillsActionServer(Node):
             # consumers (the web app's external-run banner) clear the banner
             # for the run that just started.
             status, reason = self._terminal_skill_status(result)
-            self._publish_skill_status(run_id, skill_type, name, status, reason, args=inputs)
+            output = successful_code_output(result, entry is not None)
+            self._publish_skill_status(run_id, skill_type, name, status, reason, args=inputs, output=output)
         except Exception as e:
             # Clients stick on "running" forever without a terminal status.
             self._publish_skill_status(run_id, skill_type, name, "failed", str(e) or "internal error", args=inputs)
@@ -330,21 +332,21 @@ class SkillsActionServer(Node):
         status: str,
         reason: str | None = None,
         args: dict | None = None,
+        output: str | None = None,
     ) -> None:
-        payload = {
-            "primitive_name": name,
-            "skill_name": name,
-            "skill_id": skill_type,
-            "primitive_id": run_id,
-            "status": status,
-            "timestamp": time.time(),
-        }
-        if reason:
-            payload["reason"] = reason
-        # The inputs the run was given — "head emotion" alone doesn't say which
-        # emotion, so clients show them alongside the name.
-        if args:
-            payload["args"] = args
+        # Keep successful code-skill output on its authoritative run row. The
+        # legacy chat_out copy remains for older clients and is deduped by the
+        # current webapp. Inputs stay beside the name so a call such as "head
+        # emotion" still says which emotion it received.
+        payload = task_status_payload(
+            name,
+            run_id,
+            status,
+            skill_id=skill_type,
+            reason=reason,
+            args=args,
+            output=output,
+        )
         self._skill_status_pub.publish(String(data=json.dumps(payload)))
 
     def _create_run_node(self):
