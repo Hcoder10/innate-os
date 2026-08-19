@@ -1924,11 +1924,11 @@ def test_a_fault_outliving_the_promotion_keeps_both_sets_recoverable(data_dir, m
     assert recovered.snapshot().memories, "recovery never gave the map its memories back"
 
 
-def test_a_later_promotion_spares_another_maps_stranded_memories(data_dir):
-    # Greptile P1 (store.py:218): a failed promotion for A leaves A's only
-    # memories stranded in .mapping.displaced with A's directory gone. A later
-    # promotion for B -- whose own directory does not exist, so nothing of B's
-    # is displaced -- must not sweep A's set away on its successful way out.
+def test_session_entry_lands_a_stranded_displaced_set_home(data_dir):
+    # A failed promotion for A left A's only memories stranded in
+    # .mapping.displaced with A's directory gone. The next recovery point
+    # gives A its set back -- left in the slot, the stranded set would fail
+    # every later displace into it with ENOTEMPTY.
     store = MemoryStore(data_dir)
     store.switch_map("A.yaml")
     store.add(9.0, 9.0, 0.0, 900.0, b"jpg-a")
@@ -1937,25 +1937,45 @@ def test_a_later_promotion_spares_another_maps_stranded_memories(data_dir):
     (root / "A").rename(root / ".mapping.displaced")  # the state a failed swap leaves
 
     store.use_mapping_session(session_started=222.0)
-    assert (root / ".mapping.displaced").is_dir(), "session entry swept A's stranded memories"
+    assert not (root / ".mapping.displaced").exists(), "the stranded set stayed to poison later saves"
     store.add(3.0, 4.0, 0.0, 2000.0, b"jpg-tour-b")
-
-    assert not (root / "B").is_dir()  # nothing of B's to displace
     assert store.promote_mapping_session("B.yaml", mapping_started=222.0) == 1
-    assert (root / ".mapping.displaced").is_dir(), "B's promotion swept A's only memories"
 
-    # And A is still recoverable from it.
-    (root / ".mapping.displaced").rename(root / "A")
     recovered = MemoryStore(data_dir)
     recovered.switch_map("A.yaml")
     assert [m.x for m in recovered.snapshot().memories] == [9.0]
+    recovered.switch_map("B.yaml")
+    assert [m.x for m in recovered.snapshot().memories] == [3.0]
+
+
+def test_a_stranded_set_never_blocks_a_save_over_an_existing_map(data_dir):
+    # Mid-session strand: a failed save-as-A left A's set in the displaced
+    # slot with A's directory gone, and the user re-saves the tour as B --
+    # whose directory exists. Promotion must land A's set home and use the
+    # cleared slot, not fail the displace with ENOTEMPTY on every save.
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(9.0, 9.0, 0.0, 900.0, b"jpg-a")
+    store.switch_map("B.yaml")
+    store.add(8.0, 8.0, 0.0, 901.0, b"jpg-b")
+    store.use_mapping_session(session_started=222.0)
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-tour")
+
+    root = data_dir / "spatial_memory"
+    (root / "A").rename(root / ".mapping.displaced")  # the state a failed A-save leaves
+
+    assert store.promote_mapping_session("B.yaml", mapping_started=222.0) == 1
+    store.switch_map("B.yaml")
+    assert [m.x for m in store.snapshot().memories] == [1.0]
+    store.switch_map("A.yaml")
+    assert [m.x for m in store.snapshot().memories] == [9.0]
 
 
 def test_a_failed_promotion_never_restores_another_maps_set(data_dir, monkeypatch):
-    # Greptile P1 (store.py:216): B's memories are stranded in
-    # .mapping.displaced. A promotion for A then fails to land, and the restore
-    # must not hand B's set to A -- a foreign coordinate frame in A, and B
-    # stripped of its only copy.
+    # B's memories are stranded in .mapping.displaced and a persistent fault
+    # keeps them from landing home. A promotion for A then fails to land, and
+    # the restore must not hand B's set to A -- a foreign coordinate frame in
+    # A, and B stripped of its only copy.
     store = MemoryStore(data_dir)
     store.switch_map("B.yaml")
     store.add(9.0, 9.0, 0.0, 900.0, b"jpg-b")
@@ -1963,19 +1983,19 @@ def test_a_failed_promotion_never_restores_another_maps_set(data_dir, monkeypatc
     root = data_dir / "spatial_memory"
     (root / "B").rename(root / ".mapping.displaced")  # B stranded by an earlier failure
 
-    store.use_mapping_session(session_started=222.0)
-    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-tour-a")
-
     real_replace = os.replace
 
-    def landing_into_a_fails(src, dst):
-        # Only the tour's landing fails; a restore into A would be free to run,
-        # which is exactly what must not happen with B's set sitting there.
-        if Path(src).name == ".mapping.promote" and Path(dst).name == "A":
+    def replace_with_fault(src, dst):
+        # B's landing home and the tour's landing both fail; a restore into A
+        # would be free to run, which is exactly what must not happen with
+        # B's set sitting there.
+        if Path(dst).name in ("A", "B"):
             raise OSError("disk went away")
         return real_replace(src, dst)
 
-    monkeypatch.setattr(os, "replace", landing_into_a_fails)
+    monkeypatch.setattr(os, "replace", replace_with_fault)
+    store.use_mapping_session(session_started=222.0)
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-tour-a")
     with pytest.raises(OSError):
         store.promote_mapping_session("A.yaml", mapping_started=222.0)
     monkeypatch.undo()

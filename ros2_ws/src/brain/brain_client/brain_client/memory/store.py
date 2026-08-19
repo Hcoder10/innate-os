@@ -199,10 +199,7 @@ class MemoryStore:
             # memoryless if a crash lands between the two.
             target = self._root / Path(map_name).stem
             displaced = self._root / _DISPLACED_TMP
-            # Not a bare rmtree: a set still owed to an absent map survives, and
-            # the displace below then fails on the non-empty dir — a promotion
-            # that refuses to run beats one that eats another map's memories.
-            self._drop_scratch(displaced)
+            self._clear_displaced_slot()
             if target.is_dir():
                 os.replace(target, displaced)
             try:
@@ -237,7 +234,7 @@ class MemoryStore:
         target = _scratch_map_dir(self._root, tmp)
         if target is not None and not target.is_dir() and not _land(tmp, target):
             self._restore_displaced(target)
-        self._drop_scratch(self._root / _DISPLACED_TMP)
+        self._clear_displaced_slot()
 
     def _restore_displaced(self, target: Path) -> None:
         """Give a map back the set displaced from it. Best effort, and only
@@ -250,6 +247,18 @@ class MemoryStore:
         displaced = self._root / _DISPLACED_TMP
         if _scratch_map_dir(self._root, displaced) == target:
             _land(displaced, target)
+
+    def _clear_displaced_slot(self) -> None:
+        """Empty the displaced scratch slot. A set owed to a map whose
+        directory is absent is that map's only memories: land it back home --
+        left in the slot it would fail every later displace with ENOTEMPTY --
+        and sweep whatever remains as spent. A set that will not land (the
+        fault persists) stays put for the next recovery."""
+        displaced = self._root / _DISPLACED_TMP
+        owed = _scratch_map_dir(self._root, displaced)
+        if owed is not None and not owed.is_dir():
+            _land(displaced, owed)
+        self._drop_scratch(displaced)
 
     def _drop_scratch(self, *scratch: Path) -> None:
         """Remove promotion scratch no map is waiting on. One still owed to a
