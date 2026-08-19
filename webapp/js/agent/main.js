@@ -139,7 +139,7 @@ function buildAgentView(root) {
     cameraSwitch,
     ...(micControl ? [micControl] : []),
     panel,
-    createActiveChip(root, agentState, () => setView("brain")),
+    { destroy: () => agentState.destroy() },
     {
       destroy: () => {
         unmounted = true; // a monitor import still in flight must not build into the dead layer
@@ -161,49 +161,6 @@ function buildAgentView(root) {
       for (const part of parts) part.destroy();
       session.destroy();
       root.innerHTML = "";
-    },
-  };
-}
-
-/**
- * Bottom-left "AGENT ACTIVE" chip — shown only while the brain is running.
- * Clicking it opens the Brain monitor: the moment the robot is acting on its
- * own is exactly when you want to see inside.
- * @param {HTMLElement} root
- * @param {ReturnType<typeof import("../teleop/agentState.js").sharedAgentState>} agentState
- * @param {() => void} onWatch
- * @returns {{ destroy: () => void }}
- */
-function createActiveChip(root, agentState, onWatch) {
-  const chip = document.createElement("button");
-  chip.type = "button";
-  chip.className = "agent-active-chip";
-  chip.hidden = true;
-  chip.title = "Open the Brain monitor";
-
-  const dot = document.createElement("span");
-  dot.className = "agent-active-dot";
-  const label = document.createElement("div");
-  label.className = "agent-active-text";
-  const title = document.createElement("span");
-  title.className = "agent-active-title";
-  title.textContent = "Agent active";
-  const sub = document.createElement("span");
-  sub.className = "agent-active-sub";
-  sub.innerHTML = 'Watch its brain <span class="agent-active-arrow">→</span>';
-  label.append(title, sub);
-  chip.append(dot, label);
-  root.append(chip);
-
-  chip.addEventListener("click", onWatch);
-  const unsub = agentState.subscribe((s) => {
-    chip.hidden = !s.brainActive;
-  });
-
-  return {
-    destroy() {
-      unsub();
-      chip.remove();
     },
   };
 }
