@@ -5721,6 +5721,7 @@ select.skill-input {
   color: inherit;
   background: transparent;
   border: 0;
+  cursor: default; /* overrides the global button pointer until a detail exists */
 }
 
 .chat-skill.has-detail .chat-skill-head {
@@ -6759,19 +6760,16 @@ select.skill-input {
   padding: 4px 2px;
 }
 
-/* The Agent activity stream is intentionally compact: finished reasoning and
-   unpaired legacy output disappear, but live processing and every skill-call
-   header remain. Individual skill calls disclose their own details. */
+/* The Agent activity stream is intentionally compact: finished reasoning
+   disappears, and a legacy output row hides only while it can still pair with
+   its status row. Live processing keeps its latest-thought preview and every
+   skill-call header remains. */
 .agent-panel .agent-stream {
   gap: 6px;
 }
 
 .agent-panel .chat-thoughts:not(.active),
 .agent-panel .chat-skill.orphan-output {
-  display: none;
-}
-
-.agent-panel .chat-thoughts:not(.open) .chat-thoughts-list {
   display: none;
 }
 

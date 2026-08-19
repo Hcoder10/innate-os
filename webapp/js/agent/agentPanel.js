@@ -293,13 +293,25 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   let thoughts = null;
   let lastTs = 0;
 
-  /** @typedef {{ wrap: HTMLElement, head: HTMLElement, status: HTMLElement, detail: HTMLElement | null, chevron: HTMLElement | null, inputsText: string, resultText: string, resultLabel: string, roundResult: boolean }} SkillRunView */
+  /** @typedef {{ wrap: HTMLElement, head: HTMLElement, status: HTMLElement, detail: HTMLElement | null, chevron: HTMLElement | null, inputsText: string, resultText: string, resultLabel: string }} SkillRunView */
   /** @typedef {{ text: string, ts: number }} LegacyOutputEcho */
   /** @typedef {{ run: SkillRunView, text: string, ts: number }} OrphanOutput */
   /** Authoritative status outputs awaiting their identical legacy chat copy. @type {LegacyOutputEcho[]} */
   let pendingLegacyOutputs = [];
   /** Legacy chat copies that arrived before their authoritative status event. @type {OrphanOutput[]} */
   let orphanOutputs = [];
+  /** Idle streams get no pruning events, so a timer surfaces a trailing orphan. */
+  const ORPHAN_REVEAL_MS = 1500;
+
+  /** @param {OrphanOutput} orphan */
+  function revealOrphan(orphan) {
+    const index = orphanOutputs.indexOf(orphan);
+    if (index < 0) return;
+    const wasAtBottom = atBottom();
+    orphanOutputs.splice(index, 1);
+    orphan.run.wrap.classList.remove("orphan-output");
+    snapIfAtBottom(wasAtBottom);
+  }
 
   /** Drop bookkeeping only after an entry is too old to match by definition. @param {number} referenceTs */
   function pruneOutputQueues(referenceTs) {
@@ -307,8 +319,11 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       (candidate) => referenceTs - candidate.ts <= SKILL_OUTPUT_LINK_WINDOW_SEC,
     );
     // A legacy output may precede its authoritative status by at most the
-    // one-second cross-topic reorder grace in skillEventsAreAdjacent().
-    orphanOutputs = orphanOutputs.filter((candidate) => referenceTs - candidate.ts <= 1);
+    // one-second cross-topic reorder grace in skillEventsAreAdjacent(); past
+    // that no status is coming, so the row surfaces instead of hiding forever.
+    for (const orphan of orphanOutputs.filter((candidate) => referenceTs - candidate.ts > 1)) {
+      revealOrphan(orphan);
+    }
   }
 
   /** @param {boolean} active */
@@ -397,15 +412,19 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   /** @type {Map<string, SkillRunView>} */
   const skillRuns = new Map();
 
-  /** @param {string} name @param {string} [tagText] @returns {SkillRunView} */
-  function createSkillRow(name, tagText = "skill") {
+  /** @param {string} name @returns {SkillRunView} */
+  function createSkillRow(name) {
     const wrap = document.createElement("div");
     wrap.className = "chat-skill";
-    const head = document.createElement("div");
+    // A real <button> gives the disclosure focus and Enter/Space for free;
+    // tabindex -1 keeps detail-less rows out of the tab order until one exists.
+    const head = document.createElement("button");
+    head.type = "button";
+    head.tabIndex = -1;
     head.className = "chat-skill-head";
     const tag = document.createElement("span");
     tag.className = "chat-skill-tag mono";
-    tag.textContent = tagText;
+    tag.textContent = "skill";
     const nameEl = document.createElement("span");
     nameEl.className = "chat-skill-name";
     nameEl.textContent = name.replace(/_/g, " ");
@@ -424,26 +443,25 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       inputsText: "",
       resultText: "",
       resultLabel: "Output",
-      roundResult: true,
     };
-    const toggleDetail = () => {
+    head.addEventListener("click", () => {
       if (!run.detail) return;
       const wasAtBottom = atBottom();
-      const open = run.wrap.classList.toggle("open");
-      run.head.setAttribute("aria-expanded", String(open));
-      run.detail.setAttribute("aria-hidden", String(!open));
-      run.detail.hidden = !open;
-      run.head.title = open ? "Close skill details" : "Open skill details";
-      if (run.chevron) run.chevron.textContent = open ? "▴" : "▾";
+      setDetailOpen(run, !run.wrap.classList.contains("open"));
       snapIfAtBottom(wasAtBottom);
-    };
-    head.addEventListener("click", toggleDetail);
-    head.addEventListener("keydown", (event) => {
-      if (!run.detail || (event.key !== "Enter" && event.key !== " ")) return;
-      event.preventDefault();
-      toggleDetail();
     });
     return run;
+  }
+
+  /** @param {SkillRunView} run @param {boolean} open */
+  function setDetailOpen(run, open) {
+    if (!run.detail) return;
+    run.wrap.classList.toggle("open", open);
+    run.head.setAttribute("aria-expanded", String(open));
+    run.detail.setAttribute("aria-hidden", String(!open));
+    run.detail.hidden = !open;
+    run.head.title = open ? "Close skill details" : "Open skill details";
+    if (run.chevron) run.chevron.textContent = open ? "▴" : "▾";
   }
 
   /** @param {SkillRunView} run */
@@ -459,8 +477,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       run.head.appendChild(run.chevron);
       run.wrap.appendChild(run.detail);
       run.wrap.classList.add("has-detail");
-      run.head.tabIndex = 0;
-      run.head.setAttribute("role", "button");
+      run.head.removeAttribute("tabindex");
       run.head.setAttribute("aria-controls", run.detail.id);
       run.head.title = "Open skill details";
     }
@@ -470,66 +487,66 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   function renderSkillDetail(run, opts = {}) {
     ensureSkillDetail(run);
     if (!run.detail) return;
-    /** @type {HTMLElement[]} */
-    const sections = [];
-    /** @param {string} label @param {string} text @param {string} kind */
-    const section = (label, text, kind) => {
-      const wrap = document.createElement("div");
-      wrap.className = `chat-skill-detail-section ${kind}`;
-      const labelEl = document.createElement("span");
-      labelEl.className = "chat-skill-detail-label mono";
-      labelEl.textContent = label;
-      const value = document.createElement("div");
-      value.className = `chat-skill-detail-value${kind === "inputs" ? " mono" : ""}`;
-      value.textContent = text;
-      wrap.append(labelEl, value);
-      return wrap;
+    const detail = run.detail;
+    // Update in place — these surfaces are copy-paste material, and a rebuild
+    // would wipe a selection when the terminal status repeats the inputs.
+    /** @param {string} kind @param {string} label @param {string} text */
+    const upsert = (kind, label, text) => {
+      let sectionEl = detail.querySelector(`:scope > .${kind}`);
+      if (!sectionEl) {
+        sectionEl = document.createElement("div");
+        sectionEl.className = `chat-skill-detail-section ${kind}`;
+        const labelEl = document.createElement("span");
+        labelEl.className = "chat-skill-detail-label mono";
+        const value = document.createElement("div");
+        value.className = `chat-skill-detail-value${kind === "inputs" ? " mono" : ""}`;
+        sectionEl.append(labelEl, value);
+        // Inputs always land before the result, so append order is document order.
+        detail.appendChild(sectionEl);
+      }
+      const [labelEl, value] = sectionEl.children;
+      if (labelEl.textContent !== label) labelEl.textContent = label;
+      if (value.textContent !== text) value.textContent = text;
     };
-    if (run.inputsText) sections.push(section("Inputs", run.inputsText, "inputs"));
-    if (run.resultText) {
-      sections.push(
-        section(run.resultLabel, run.roundResult ? roundNums(run.resultText) : run.resultText, "result"),
-      );
-    }
-    run.detail.replaceChildren(...sections);
-    const open = opts.open ?? run.wrap.classList.contains("open");
-    run.wrap.classList.toggle("open", open);
-    run.head.setAttribute("aria-expanded", String(open));
-    run.detail.setAttribute("aria-hidden", String(!open));
-    run.detail.hidden = !open;
-    run.head.title = open ? "Close skill details" : "Open skill details";
-    if (run.chevron) run.chevron.textContent = open ? "▴" : "▾";
+    if (run.inputsText) upsert("inputs", "Inputs", run.inputsText);
+    // Result text renders verbatim: the backend preserves skill output exactly,
+    // and roundNums would corrupt IPs and version strings.
+    if (run.resultText) upsert("result", run.resultLabel, run.resultText);
+    setDetailOpen(run, opts.open ?? run.wrap.classList.contains("open"));
   }
 
-  /** @param {SkillRunView} run @param {string} text @param {{ open?: boolean, label?: string, round?: boolean }} [opts] */
+  /** @param {SkillRunView} run @param {string} text @param {{ open?: boolean, label?: string }} [opts] */
   function attachSkillDetail(run, text, opts = {}) {
     run.resultText = text;
     run.resultLabel = opts.label || "Output";
-    run.roundResult = opts.round !== false;
     renderSkillDetail(run, { open: opts.open });
   }
 
   /** @param {string} text @param {number} ts */
   function addSkillOutput(text, ts) {
-    const wasAtBottom = atBottom();
-    finalizeThoughts();
     pruneOutputQueues(ts);
-
+    // A deduped echo renders nothing, so it must not tear down the live
+    // Thoughts block or advance lastTs — its status row already did both.
     const echoIndex = findMatchingOutputIndex(pendingLegacyOutputs, text, ts);
     if (echoIndex >= 0) {
       pendingLegacyOutputs.splice(echoIndex, 1);
-      lastTs = ts;
       return;
     }
 
-    // Old history may contain output without its status row. Retain a hidden
-    // fallback briefly so a reordered authoritative status can reconcile it,
-    // but never guess which output-less call it belongs to or add standalone clutter.
+    const wasAtBottom = atBottom();
+    finalizeThoughts();
+    // Old history may contain output without its status row. Hide it briefly so
+    // a reordered authoritative status can reconcile it, then surface it as its
+    // own row — unmatched output must not silently disappear.
     const run = createSkillRow("output");
     run.wrap.classList.add("completed", "orphan-output");
+    run.status.textContent = "completed";
     attachSkillDetail(run, text);
     stream.appendChild(run.wrap);
-    orphanOutputs.push({ run, text, ts });
+    /** @type {OrphanOutput} */
+    const orphan = { run, text, ts };
+    orphanOutputs.push(orphan);
+    setTimeout(() => revealOrphan(orphan), ORPHAN_REVEAL_MS);
     lastTs = ts;
     snapIfAtBottom(wasAtBottom);
   }
@@ -572,7 +589,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     // A failed run carries the failure reason / error — show it expanded
     // in-place (collapsible so a long trace can be tucked away).
     if (cls === "failed" && reason) {
-      attachSkillDetail(run, reason, { open: true, label: "Error", round: false });
+      attachSkillDetail(run, reason, { open: true, label: "Error" });
     }
 
     const outputText = typeof output === "string" && output.trim() ? output : "";
@@ -684,7 +701,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     const ts = Number(e?.timestamp) || Date.now() / 1000;
     const sender = String(e?.sender ?? "");
     if (sender === "task_activated") {
-      const name = String(e?.text ?? e?.skill_name ?? e?.skillId ?? "");
+      const name = String(e?.text || e?.skill_name || e?.skillId || "");
       const status = String(e?.taskStatus ?? "");
       if (!name || !status) return;
       const key = String(e?.primitiveId ?? e?.skillId ?? name);
@@ -767,7 +784,9 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     } catch {
       return;
     }
-    const name = String(payload?.primitive_name ?? payload?.skill_name ?? payload?.skill_id ?? "");
+    // || (not ??) so an empty name falls through to the id — a substep may
+    // publish name: "", and the history helper's `or` already skips it.
+    const name = String(payload?.primitive_name || payload?.skill_name || payload?.skill_id || "");
     const status = String(payload?.status ?? "");
     if (!name || !status) return;
     const key = String(payload?.primitive_id ?? payload?.skill_id ?? name);
@@ -826,12 +845,30 @@ function formatSkillArgs(args) {
   const entries = Object.entries(args).filter(([, v]) => v !== null && v !== undefined && v !== "");
   if (entries.length === 0) return "";
   const show = (/** @type {any} */ v) =>
-    typeof v === "number" ? roundNums(String(v)) : typeof v === "object" ? JSON.stringify(v) : String(v);
+    typeof v === "object" ? JSON.stringify(roundDeep(v)) : String(roundDeep(v));
   const line = (/** @type {(v: any) => string} */ value) =>
     entries.length === 1
       ? value(entries[0][1])
       : entries.map(([k, v]) => `${k.replace(/_/g, " ")}: ${value(v)}`).join(" · ");
   return line(show);
+}
+
+/**
+ * Round floats to 2 places wherever they nest, but never touch strings — an IP
+ * or version string must survive verbatim. Cosmetic only.
+ * @param {any} v
+ * @returns {any}
+ */
+function roundDeep(v) {
+  if (typeof v === "number") return Math.round(v * 100) / 100;
+  if (Array.isArray(v)) return v.map(roundDeep);
+  if (v && typeof v === "object") {
+    /** @type {Record<string, any>} */
+    const out = {};
+    for (const [k, x] of Object.entries(v)) out[k] = roundDeep(x);
+    return out;
+  }
+  return v;
 }
 
 /**

@@ -1,11 +1,43 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""Small, dependency-free helpers for Agent activity events."""
+"""Small, ROS-free helpers for Agent activity events."""
 
 from __future__ import annotations
 
 import time
 from typing import Any
+
+from typing_extensions import NotRequired, TypedDict
+
+from brain_client.common.enums import SkillResult
+
+
+class TaskStatusPayload(TypedDict):
+    """The /brain/skill_status_update wire format (JSON on a String topic)."""
+
+    primitive_name: str
+    primitive_id: str | None
+    skill_name: str
+    skill_id: str | None
+    status: str
+    timestamp: float
+    reason: NotRequired[str]
+    args: NotRequired[dict]
+    output: NotRequired[str]
+
+
+class TaskHistoryEntry(TypedDict):
+    """The chat-history shape the webapp replays a skill call from."""
+
+    sender: str
+    text: str
+    timestamp: float
+    taskStatus: str
+    primitiveId: NotRequired[str]
+    skillId: NotRequired[str]
+    args: NotRequired[dict]
+    failureReason: NotRequired[str]
+    output: NotRequired[str]
 
 
 def successful_code_output(result: Any, is_code: bool) -> str | None:
@@ -14,7 +46,7 @@ def successful_code_output(result: Any, is_code: bool) -> str | None:
     if (
         is_code
         and bool(getattr(result, "success", False))
-        and getattr(result, "success_type", None) == "success"
+        and getattr(result, "success_type", None) == SkillResult.SUCCESS.value
         and isinstance(message, str)
         and message.strip()
     ):
@@ -32,9 +64,9 @@ def task_status_payload(
     args: dict | None = None,
     output: str | None = None,
     timestamp: float | None = None,
-) -> dict:
+) -> TaskStatusPayload:
     """Build the JSON object shared by task-status publishers."""
-    payload = {
+    payload: TaskStatusPayload = {
         "primitive_name": primitive_name,
         "primitive_id": primitive_id,
         "skill_name": primitive_name,
@@ -46,12 +78,12 @@ def task_status_payload(
         payload["reason"] = reason
     if args:
         payload["args"] = args
-    if output and output.strip():
+    if isinstance(output, str) and output.strip():
         payload["output"] = output
     return payload
 
 
-def task_status_history_entry(payload: Any) -> dict | None:
+def task_status_history_entry(payload: Any) -> TaskHistoryEntry | None:
     """Convert a live skill-status payload into the chat-history shape."""
     if not isinstance(payload, dict):
         return None
@@ -63,7 +95,7 @@ def task_status_history_entry(payload: Any) -> dict | None:
     timestamp = payload.get("timestamp")
     if not isinstance(timestamp, (int, float)):
         timestamp = time.time()
-    entry = {
+    entry: TaskHistoryEntry = {
         "sender": "task_activated",
         "text": name,
         "timestamp": timestamp,

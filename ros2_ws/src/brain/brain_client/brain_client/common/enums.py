@@ -10,3 +10,11 @@ class StrEnum(str, Enum):
 
     __str__ = str.__str__
     __format__ = str.__format__
+
+
+class SkillResult(Enum):
+    """A skill run's outcome. The values are wire-visible — never change them."""
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+    CANCELLED = "cancelled"

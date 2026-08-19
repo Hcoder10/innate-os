@@ -20,6 +20,10 @@ from brain_client.transport.activity import task_status_payload
 
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 
+# Skill statuses persist here too (~2 entries per run), so an uncapped list grows
+# RSS and the get_chat_history blob without bound over a long autonomous session.
+_MAX_HISTORY_ENTRIES = 1000
+
 
 class Sender(StrEnum):
     """Chat-entry senders — the webapp switches on these exact values."""
@@ -42,6 +46,12 @@ class ChatManager:
     def entry(sender: Sender, text: str) -> dict:
         return {"sender": sender, "text": text, "timestamp": time.time()}
 
+    def append(self, entry: dict) -> None:
+        """Record ``entry`` in the bounded history, dropping the oldest past the cap."""
+        self.history.append(entry)
+        if len(self.history) > _MAX_HISTORY_ENTRIES:
+            del self.history[: len(self.history) - _MAX_HISTORY_ENTRIES]
+
     def emit(self, sender: Sender, text: str, speak: bool | None = None) -> None:
         """Append a chat entry, publish it, and (for robot speech) speak it.
 
@@ -49,7 +59,7 @@ class ChatManager:
         behaviour where thoughts/anticipation were published but not spoken.
         """
         chat_entry = self.entry(sender, text)
-        self.history.append(chat_entry)
+        self.append(chat_entry)
         self._logger.debug(f"chat_out: {chat_entry}")
         from std_msgs.msg import String  # deferred: keeps the module importable without ROS
 

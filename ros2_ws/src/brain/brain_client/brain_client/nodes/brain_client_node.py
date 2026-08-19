@@ -346,7 +346,7 @@ class BrainClientNode(Node):
         if not self.state.is_brain_active:
             self.get_logger().warn("[BrainClient] Brain is not active. Skipping chat_in message.")
             return
-        self.chat.history.append(data)
+        self.chat.append(data)
         self.brain.on_user_message(data["text"])
         self.get_logger().info(f"User message: {data['text']}")
 
@@ -453,7 +453,7 @@ class BrainClientNode(Node):
         if entry is None:
             self.get_logger().warn("[BrainClient] Ignoring incomplete /brain/skill_status_update payload.")
             return
-        self.chat.history.append(entry)
+        self.chat.append(dict(entry))
 
     # ================= service handlers =================
     def _svc_get_chat_history(self, request, response):

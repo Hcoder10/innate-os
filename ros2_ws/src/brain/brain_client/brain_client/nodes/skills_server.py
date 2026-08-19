@@ -334,10 +334,8 @@ class SkillsActionServer(Node):
         args: dict | None = None,
         output: str | None = None,
     ) -> None:
-        # Keep successful code-skill output on its authoritative run row. The
-        # legacy chat_out copy remains for older clients and is deduped by the
-        # current webapp. Inputs stay beside the name so a call such as "head
-        # emotion" still says which emotion it received.
+        # Output rides the terminal status so it stays on the run's own row; the
+        # legacy chat_out echo remains for older clients (the webapp dedupes it).
         payload = task_status_payload(
             name,
             run_id,

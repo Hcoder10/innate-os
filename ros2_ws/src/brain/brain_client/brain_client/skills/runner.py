@@ -253,7 +253,10 @@ class PrimitiveRunner:
         if event not in PRIMITIVE_LIFECYCLE_STATUSES:
             self._logger.warn(f"Unknown substep event: {event}")
             return
+        # Foreign JSON — a non-string output must not abort the status publish.
         output = substep.get("output")
+        if not isinstance(output, str):
+            output = None
         self._chat.publish_task_status(
             primitive_name=substep.get("name", ""),
             primitive_id=substep.get("primitive_id"),

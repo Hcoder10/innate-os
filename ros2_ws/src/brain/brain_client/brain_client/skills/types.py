@@ -21,6 +21,7 @@ from std_msgs.msg import String
 from typing_extensions import Self
 
 from brain_client.common.dynamic_loader import class_name_to_snake_case
+from brain_client.common.enums import SkillResult
 from brain_client.common.logging import UniversalLogger
 from brain_client.common.script_paths import Source
 
@@ -38,12 +39,6 @@ SkillReturn = Union[None, str, "SkillOutput"]
 
 TTS_TOPIC = "/brain/tts"
 TTS_STATUS_TOPIC = "/tts/is_playing"
-
-
-class SkillResult(Enum):
-    SUCCESS = "success"
-    FAILURE = "failure"
-    CANCELLED = "cancelled"
 
 
 class SkillFailed(Exception):
