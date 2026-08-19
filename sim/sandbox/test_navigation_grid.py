@@ -1,10 +1,17 @@
-"""Fast invariant checks for the lidar navigation-grid floor mask.
+"""Fast invariant checks for navigation-grid fusion and environment metadata.
 
 Usage: cd sim && uv run sandbox/test_navigation_grid.py
 """
 
-import _driver_pkg  # noqa: F401
+import sys
+from pathlib import Path
+
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+
+import _driver_pkg  # noqa: F401
+from export_nav_map import DEFAULT_NAVIGATION_ENVIRONMENT, _load_navigation_environment
 from mars_sim_driver.core import _navigation_grid
 
 
@@ -51,9 +58,21 @@ def test_navigation_grid_fusion() -> None:
         raise AssertionError("mismatched navigation-grid shapes were accepted")
 
 
+def test_apartment_navigation_metadata() -> None:
+    environment = _load_navigation_environment()
+
+    assert DEFAULT_NAVIGATION_ENVIRONMENT.name == "navigation.json"
+    assert environment.navigable_samples
+    assert environment.expected_unknown_samples
+    assert environment.exterior_flood_seeds
+    assert environment.exterior_boundary_polylines
+    assert environment.exterior_boundary_half_width_m > 0
+
+
 def main() -> None:
     test_navigation_grid_fusion()
-    print("PASS: lidar geometry is preserved inside and exterior stays unknown")
+    test_apartment_navigation_metadata()
+    print("PASS: navigation grid and environment metadata are valid")
 
 
 if __name__ == "__main__":

@@ -113,6 +113,7 @@ COPY --from=raw /raw/appartement.glb ./viewer/public/models/appartement.glb
 # the nav map -- minutes -- not invalidate CoACD. _driver_pkg.py alone: the
 # only sandbox file the pipeline imports.
 COPY sim/sandbox/_driver_pkg.py ./sandbox/_driver_pkg.py
+COPY sim/environments ./environments
 COPY ros2_ws/src/mars_bot/mars_sim_driver ../ros2_ws/src/mars_bot/mars_sim_driver
 COPY ros2_ws/src/mars_bot/mars_sim ../ros2_ws/src/mars_bot/mars_sim
 # Sampled here too: the nav-map export compiles the ~168 MB world model.

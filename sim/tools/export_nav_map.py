@@ -6,8 +6,10 @@ into navigation mode with it.
 Usage: cd sim && uv run tools/export_nav_map.py
 """
 
+import json
 import sys
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -27,37 +29,66 @@ OCCUPIED_THRESHOLD = 0.65
 # threshold just below it so map_server loads 205 as unknown, not free.
 FREE_THRESHOLD = 0.196
 MIN_SPAWN_COMPONENT_FRACTION = 0.95
-# Representative floor in each region the household search must be able to
-# reach. These are apartment topology checks, not resident locations.
-NAVIGABLE_ROOM_SAMPLES = {
-    "northwest room": (-4.00, 4.00),
-    "south room": (-1.50, -3.00),
-    "northeast room": (-1.00, 3.50),
-}
-REGRESSION_EXTERIOR_GOALS = (
-    (-8.7134, 0.7144),
-    (-7.2134, -1.0356),
-    (1.29, -3.79),
-    (2.29, -3.54),
-    (-1.21, -5.29),
-    (0.29, -5.54),
-    # The visual apartment mesh includes a southwest exterior courtyard. It
-    # looks like authored floor to the ray caster, but is outside the home.
-    (-5.9634, -3.7856),
-    (-5.2134, -3.7856),
-    (-4.93, -1.35),
-)
+DEFAULT_NAVIGATION_ENVIRONMENT = Path(__file__).resolve().parents[1] / "environments" / "apartment" / "navigation.json"
 
-# Two open visual thresholds connect the southwest exterior courtyard to the
-# apartment. Close those semantic boundaries before flood-filling from the
-# exterior seed. The static map then publishes the courtyard as unknown, so
-# Nav2, skill-facing maps, and the web UI all share one indoor boundary.
-EXTERIOR_FLOOD_SEEDS = ((-5.9634, -3.7856),)
-EXTERIOR_BOUNDARY_POLYLINES = (
-    ((-4.7134, -1.5356), (-5.3634, -0.8856), (-5.0634, -0.6856)),
-    ((-3.3634, -3.7856), (-3.5134, -3.6356)),
-)
-EXTERIOR_BOUNDARY_HALF_WIDTH_M = 0.10
+
+@dataclass(frozen=True)
+class NavigationEnvironment:
+    navigable_samples: dict[str, tuple[float, float]]
+    expected_unknown_samples: tuple[tuple[float, float], ...]
+    exterior_flood_seeds: tuple[tuple[float, float], ...]
+    exterior_boundary_polylines: tuple[tuple[tuple[float, float], ...], ...]
+    exterior_boundary_half_width_m: float
+
+
+def _point(value, label: str) -> tuple[float, float]:
+    if not isinstance(value, list) or len(value) != 2 or not all(isinstance(item, int | float) for item in value):
+        raise ValueError(f"{label} must be an [x, y] number pair")
+    return float(value[0]), float(value[1])
+
+
+def _load_navigation_environment(path: Path = DEFAULT_NAVIGATION_ENVIRONMENT) -> NavigationEnvironment:
+    """Load semantic map boundaries owned by the selected environment."""
+    raw = json.loads(path.read_text())
+    if not isinstance(raw, dict):
+        raise ValueError("navigation environment must be an object")
+    samples = raw.get("navigable_samples")
+    unknown_samples = raw.get("expected_unknown_samples")
+    exterior = raw.get("exterior")
+    if not isinstance(samples, dict) or not samples:
+        raise ValueError("navigable_samples must be a non-empty object")
+    if not isinstance(unknown_samples, list) or not unknown_samples:
+        raise ValueError("expected_unknown_samples must be a non-empty list")
+    if not isinstance(exterior, dict):
+        raise ValueError("exterior must be an object")
+
+    flood_seeds = exterior.get("flood_seeds")
+    boundary_polylines = exterior.get("boundary_polylines")
+    if not isinstance(flood_seeds, list) or not flood_seeds:
+        raise ValueError("exterior flood_seeds must be a non-empty list")
+    if not isinstance(boundary_polylines, list) or not boundary_polylines:
+        raise ValueError("exterior boundary_polylines must be a non-empty list")
+    if not all(isinstance(polyline, list) for polyline in boundary_polylines):
+        raise ValueError("every exterior boundary polyline must be a list")
+
+    polylines = tuple(
+        tuple(_point(point, "exterior boundary point") for point in polyline) for polyline in boundary_polylines
+    )
+    if any(len(polyline) < 2 for polyline in polylines):
+        raise ValueError("every exterior boundary polyline must contain at least two points")
+    half_width = exterior.get("boundary_half_width_m")
+    if not isinstance(half_width, int | float) or half_width <= 0:
+        raise ValueError("exterior boundary_half_width_m must be positive")
+
+    return NavigationEnvironment(
+        navigable_samples={
+            str(label): _point(point, f"navigable sample {label!r}") for label, point in samples.items()
+        },
+        expected_unknown_samples=tuple(_point(point, "expected unknown sample") for point in unknown_samples),
+        exterior_flood_seeds=tuple(_point(point, "exterior flood seed") for point in flood_seeds),
+        exterior_boundary_polylines=polylines,
+        exterior_boundary_half_width_m=float(half_width),
+    )
 
 
 def _cell_index(grid: np.ndarray, ox: float, oy: float, x: float, y: float) -> tuple[int, int] | None:
@@ -112,22 +143,22 @@ def _distance_to_segment(
     return np.hypot(x - (start_x + fraction * dx), y - (start_y + fraction * dy))
 
 
-def _apply_indoor_boundary(grid: np.ndarray, ox: float, oy: float) -> np.ndarray:
-    """Turn the authored southwest exterior floor into unknown map space."""
+def _apply_indoor_boundary(grid: np.ndarray, ox: float, oy: float, environment: NavigationEnvironment) -> np.ndarray:
+    """Turn environment-authored exterior floor into unknown map space."""
     rows, cols = grid.shape
     xs = ox + (np.arange(cols) + 0.5) * RESOLUTION
     ys = oy + (np.arange(rows) + 0.5) * RESOLUTION
     cell_x, cell_y = np.meshgrid(xs, ys)
 
     boundary = np.zeros(grid.shape, dtype=bool)
-    for polyline in EXTERIOR_BOUNDARY_POLYLINES:
+    for polyline in environment.exterior_boundary_polylines:
         for start, end in zip(polyline, polyline[1:], strict=False):
-            boundary |= _distance_to_segment(cell_x, cell_y, start, end) <= EXTERIOR_BOUNDARY_HALF_WIDTH_M
+            boundary |= _distance_to_segment(cell_x, cell_y, start, end) <= environment.exterior_boundary_half_width_m
 
     floodable = (grid == 0) & ~boundary
     exterior = np.zeros(grid.shape, dtype=bool)
     pending: deque[tuple[int, int]] = deque()
-    for x, y in EXTERIOR_FLOOD_SEEDS:
+    for x, y in environment.exterior_flood_seeds:
         seed = _cell_index(grid, ox, oy, x, y)
         if seed is None or not floodable[seed]:
             raise RuntimeError(f"southwest exterior seed ({x:.2f}, {y:.2f}) is not known-free")
@@ -154,7 +185,10 @@ def _apply_indoor_boundary(grid: np.ndarray, ox: float, oy: float) -> np.ndarray
                     exterior[next_row, next_col] = True
                     pending.append((next_row, next_col))
 
-    for label, (x, y) in {"spawn": (world.SPAWN_X, world.SPAWN_Y), **NAVIGABLE_ROOM_SAMPLES}.items():
+    for label, (x, y) in {
+        "spawn": (world.SPAWN_X, world.SPAWN_Y),
+        **environment.navigable_samples,
+    }.items():
         cell = _cell_index(grid, ox, oy, x, y)
         if cell is None or exterior[cell] or boundary[cell]:
             raise RuntimeError(f"indoor boundary incorrectly excludes {label} sample ({x:.2f}, {y:.2f})")
@@ -164,7 +198,7 @@ def _apply_indoor_boundary(grid: np.ndarray, ox: float, oy: float) -> np.ndarray
     return result
 
 
-def _validate_navigation_grid(grid: np.ndarray, ox: float, oy: float) -> None:
+def _validate_navigation_grid(grid: np.ndarray, ox: float, oy: float, environment: NavigationEnvironment) -> None:
     """Fail the asset build when apartment safety invariants regress."""
     values = {int(value) for value in np.unique(grid)}
     if not values <= {-1, 0, 100} or not np.any(grid == 0):
@@ -185,11 +219,11 @@ def _validate_navigation_grid(grid: np.ndarray, ox: float, oy: float) -> None:
             f"only {reachable_fraction:.0%} of known-free floor connects to spawn; "
             f"expected at least {MIN_SPAWN_COMPONENT_FRACTION:.0%}"
         )
-    for label, (x, y) in NAVIGABLE_ROOM_SAMPLES.items():
+    for label, (x, y) in environment.navigable_samples.items():
         if _cell_index(grid, ox, oy, x, y) not in reachable:
             raise RuntimeError(f"{label} sample ({x:.2f}, {y:.2f}) is not reachable from spawn")
 
-    for x, y in REGRESSION_EXTERIOR_GOALS:
+    for x, y in environment.expected_unknown_samples:
         if _cell_value(grid, ox, oy, x, y) != -1:
             raise RuntimeError(f"known exterior regression goal ({x:.2f}, {y:.2f}) is not unknown")
 
@@ -206,6 +240,7 @@ def _validate_pgm_roundtrip(grid: np.ndarray, img: np.ndarray) -> None:
 
 
 def main() -> None:
+    environment = _load_navigation_environment()
     sim = VirtualMars()
     # Lidar-consistent map (virtual SLAM at the laser's true height): AMCL
     # localizes against what the lidar actually returns, exactly like a real
@@ -213,8 +248,8 @@ def main() -> None:
     # slab) systematically disagrees with the lidar around furniture and
     # walks AMCL off the map.
     grid, ox, oy = sim.lidar_occupancy_grid(RESOLUTION)
-    grid = _apply_indoor_boundary(grid, ox, oy)
-    _validate_navigation_grid(grid, ox, oy)
+    grid = _apply_indoor_boundary(grid, ox, oy, environment)
+    _validate_navigation_grid(grid, ox, oy, environment)
     # map_server PGM, row 0 at the TOP. The threshold validation is essential:
     # with free_thresh=0.25, conventional gray 205 silently reloads as free.
     img = np.where(grid == 100, PGM_OCCUPIED, np.where(grid == 0, PGM_FREE, PGM_UNKNOWN)).astype(np.uint8)[::-1]
