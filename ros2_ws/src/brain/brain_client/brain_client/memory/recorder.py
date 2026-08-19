@@ -246,6 +246,11 @@ class MemoryRecorder:
                 # could wipe a half-tour this very session staged.
                 if self._mapping_started is not None:
                     self._store.use_mapping_session(self._mapping_started)
+                else:
+                    # Detach meanwhile: the previous map's marks must not keep
+                    # publishing over the growing grid (nor ever, against a
+                    # mars_nav too old to announce sessions).
+                    self._store.switch_map(None)
             else:
                 self._store.switch_map(self._map_name or None)
             self._maybe_record()
