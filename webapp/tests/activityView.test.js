@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Innate Inc
-// Compact Agent-activity helpers — zero dependencies, plain node:
+// Agent-activity helpers — zero dependencies, plain node:
 //   node tests/activityView.test.js
 
 import assert from "node:assert/strict";
 import {
-  COMPACT_ACTIVITY_KEY,
   findMatchingOutputIndex,
-  readCompactActivity,
   skillEventsAreAdjacent,
-  writeCompactActivity,
 } from "../js/agent/activityView.js";
 
 let passed = 0;
@@ -19,31 +16,6 @@ function test(name, fn) {
   passed += 1;
   console.log(`ok - ${name}`);
 }
-
-test("compact mode defaults on and restores an explicit choice", () => {
-  const values = new Map();
-  const storage = {
-    getItem: (key) => values.get(key) ?? null,
-    setItem: (key, value) => values.set(key, value),
-  };
-  assert.equal(readCompactActivity(storage), true);
-  writeCompactActivity(storage, false);
-  assert.equal(values.get(COMPACT_ACTIVITY_KEY), "false");
-  assert.equal(readCompactActivity(storage), false);
-});
-
-test("blocked storage falls back to compact without throwing", () => {
-  const blocked = {
-    getItem() {
-      throw new Error("blocked");
-    },
-    setItem() {
-      throw new Error("blocked");
-    },
-  };
-  assert.equal(readCompactActivity(blocked), true);
-  assert.doesNotThrow(() => writeCompactActivity(blocked, false));
-});
 
 test("nearby cross-topic events pair despite slight reordering", () => {
   assert.equal(skillEventsAreAdjacent(100, 104.9), true);

@@ -5708,8 +5708,8 @@ select.skill-input {
   background: rgb(255 255 255 / 4%);
 }
 
-/* The status line (tag · name · status); becomes a disclosure when output or
-   a failure detail is available below it. */
+/* The status line (tag · name · status); becomes a disclosure when inputs,
+   output, or a failure detail are available below it. */
 .chat-skill-head {
   width: 100%;
   display: flex;
@@ -5735,11 +5735,27 @@ select.skill-input {
 
 .chat-skill-chevron {
   flex: 0 0 auto;
-  font-size: 9px;
-  opacity: 0.6;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  line-height: 1;
+  color: rgb(231 231 234 / 78%);
+  background: rgb(255 255 255 / 5%);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 50%;
+  transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
 }
 
-/* Collapsible skill output or failure reason. */
+.chat-skill.has-detail .chat-skill-head:hover .chat-skill-chevron,
+.chat-skill.open .chat-skill-chevron {
+  color: #fff;
+  background: rgb(64 31 251 / 20%);
+  border-color: rgb(117 105 253 / 60%);
+}
+
+/* Collapsible skill inputs, output, or failure reason. */
 .chat-skill-detail {
   max-height: 0;
   overflow: hidden;
@@ -5759,6 +5775,30 @@ select.skill-input {
   border-top: 1px solid var(--hairline);
 }
 
+.chat-skill-detail-section + .chat-skill-detail-section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+}
+
+.chat-skill-detail-label {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.chat-skill-detail-value {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-skill-detail-section.inputs .chat-skill-detail-value {
+  color: var(--muted);
+}
+
 .chat-skill-tag {
   flex: 0 0 auto;
   font-size: 9px;
@@ -5768,25 +5808,13 @@ select.skill-input {
 }
 
 .chat-skill-name {
-  flex: 0 1 auto;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The run's inputs, trailing the name — which emotion, which position. Takes
-   the slack so the status stays pinned right whether or not there are any. */
-.chat-skill-args {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 11px;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.25;
+  color: var(--text);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .chat-skill-status {
@@ -6692,80 +6720,8 @@ select.skill-input {
   color: var(--ctl-accent);
 }
 
-.agent-stream-head {
-  min-height: 24px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 2px -4px;
-}
-
 .agent-stream-label {
-  flex: 1;
-  margin: 0;
-}
-
-.agent-compact-toggle {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 24px;
-  padding: 2px 4px 2px 7px;
-  font-size: 9px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgb(231 231 234 / 55%);
-  background: rgb(0 0 0 / 20%);
-  border: 1px solid var(--hairline);
-  border-radius: 999px;
-  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
-}
-
-.agent-compact-toggle:hover,
-.agent-compact-toggle:focus-visible {
-  color: #fff;
-  border-color: var(--hairline-strong);
-}
-
-.agent-compact-toggle:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.agent-compact-track {
-  position: relative;
-  width: 25px;
-  height: 14px;
-  border-radius: 999px;
-  background: rgb(255 255 255 / 12%);
-  transition: background 150ms ease;
-}
-
-.agent-compact-track > span {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: rgb(231 231 234 / 70%);
-  transition: transform 150ms ease, background 150ms ease;
-}
-
-.agent-compact-toggle.on {
-  color: #d7d2ff;
-  border-color: rgb(64 31 251 / 48%);
-  background: rgb(64 31 251 / 12%);
-}
-
-.agent-compact-toggle.on .agent-compact-track {
-  background: rgb(64 31 251 / 58%);
-}
-
-.agent-compact-toggle.on .agent-compact-track > span {
-  background: #fff;
-  transform: translateX(11px);
+  margin: 2px 2px -4px;
 }
 
 /* Over translucent glass the app's --muted grey reads too dim, so the agent
@@ -6803,23 +6759,23 @@ select.skill-input {
   padding: 4px 2px;
 }
 
-/* Compact is the onboarding view: finished reasoning and unpaired legacy
-   output disappear, but live processing and every skill-call header remain.
-   Switching to Detailed restores those debugging surfaces. */
-.agent-panel.compact-activity .agent-stream {
+/* The Agent activity stream is intentionally compact: finished reasoning and
+   unpaired legacy output disappear, but live processing and every skill-call
+   header remain. Individual skill calls disclose their own details. */
+.agent-panel .agent-stream {
   gap: 6px;
 }
 
-.agent-panel.compact-activity .chat-thoughts:not(.active):not(.open),
-.agent-panel.compact-activity .chat-skill.orphan-output:not(.open) {
+.agent-panel .chat-thoughts:not(.active),
+.agent-panel .chat-skill.orphan-output {
   display: none;
 }
 
-.agent-panel.compact-activity .chat-thoughts:not(.open) .chat-thoughts-list {
+.agent-panel .chat-thoughts:not(.open) .chat-thoughts-list {
   display: none;
 }
 
-.agent-panel.compact-activity .chat-skill-head {
+.agent-panel .chat-skill-head {
   padding-block: 5px;
 }
 

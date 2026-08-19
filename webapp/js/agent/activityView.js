@@ -2,31 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Innate Inc
 
-export const COMPACT_ACTIVITY_KEY = "innate.agentActivityCompact";
 export const SKILL_OUTPUT_LINK_WINDOW_SEC = 5;
-
-/**
- * Compact is the onboarding default. A saved explicit opt-out restores the
- * fuller debugging stream; unavailable storage must never break the panel.
- * @param {{ getItem: (key: string) => string | null } | null | undefined} storage
- */
-export function readCompactActivity(storage) {
-  try {
-    const saved = storage?.getItem(COMPACT_ACTIVITY_KEY);
-    return saved === null || saved === undefined ? true : saved !== "false";
-  } catch {
-    return true;
-  }
-}
-
-/** @param {{ setItem: (key: string, value: string) => void } | null | undefined} storage @param {boolean} compact */
-export function writeCompactActivity(storage, compact) {
-  try {
-    storage?.setItem(COMPACT_ACTIVITY_KEY, String(compact));
-  } catch {
-    // Private browsing / disabled storage: keep the in-memory toggle working.
-  }
-}
 
 /**
  * Status and chat_out are separate ROS topics, so allow a small amount of
