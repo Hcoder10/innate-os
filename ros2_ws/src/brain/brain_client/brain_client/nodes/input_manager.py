@@ -17,6 +17,7 @@ from std_msgs.msg import Bool, String
 from std_srvs.srv import SetBool
 
 from brain_client.common.logging import UniversalLogger
+from brain_client.inputs.batch_stt import DEFAULT_KEYTERMS
 from brain_client.inputs.manager import InputDeviceManager
 from innate_proxy import ProxyClient
 
@@ -50,6 +51,8 @@ class InputManagerNode(Node):
         self.declare_parameter("stt_backend", "elevenlabs_batch")
         self.declare_parameter("stt_vad_engine", "silero")
         self.declare_parameter("stt_language", "en")
+        # Batch backends only; an empty list disables biasing and its ElevenLabs surcharge.
+        self.declare_parameter("stt_keyterms", list(DEFAULT_KEYTERMS))
         # The batch (silero) and realtime (vendor) VAD knobs are separate on
         # purpose: silero's speech probability and the vendors' sensitivity
         # scales are unrelated, so one number cannot tune both.
@@ -69,6 +72,7 @@ class InputManagerNode(Node):
             "stt_backend": self.get_parameter("stt_backend").value,
             "stt_vad_engine": self.get_parameter("stt_vad_engine").value,
             "stt_language": self.get_parameter("stt_language").value,
+            "stt_keyterms": self.get_parameter("stt_keyterms").value,
             "stt_vad_threshold": self.get_parameter("stt_vad_threshold").value,
             "stt_vad_silence_secs": self.get_parameter("stt_vad_silence_secs").value,
             "stt_realtime_vad_threshold": self.get_parameter("stt_realtime_vad_threshold").value,

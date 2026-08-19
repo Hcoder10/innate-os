@@ -18,8 +18,9 @@ Four backends, selected by the ``stt_backend`` setting:
 The realtime backends stream audio over a WebSocket and let the vendor do the
 voice-activity detection; the batch backends detect utterances locally — Silero
 VAD by default, an RMS energy threshold as fallback (``stt_vad_engine``) — and
-ship each one whole (see ``brain_client.inputs.batch_stt``). The microphone,
-ducking, and reconnect machinery is shared.
+ship each one whole (see ``brain_client.inputs.batch_stt``), biased toward the
+``stt_keyterms`` vocabulary. The microphone, ducking, and reconnect machinery is
+shared.
 
 Uses proxy services via self.proxy (injected by InputManager).
 """
@@ -36,12 +37,14 @@ import time
 from brain_client.brain.transport import pick_rest
 from brain_client.common.logging import UniversalLogger
 from brain_client.inputs.batch_stt import (
+    DEFAULT_KEYTERMS,
     BatchSttSession,
     EnergyDetector,
     Transcriber,
     VoicedDetector,
     elevenlabs_proxy_transcriber,
     gemini_transcriber,
+    sanitize_keyterms,
 )
 from brain_client.inputs.types import InputDevice
 from brain_client.inputs.vad import silero_detector
@@ -287,6 +290,14 @@ class MicroInput(InputDevice):
         # reaches the wire as an empty language code and the session is refused.
         return str(self.proxy.config.get("stt_language") or "en")
 
+    def _stt_keyterms(self) -> list[str]:
+        """Vocabulary the batch backends bias toward; an empty list disables biasing."""
+        configured = self.proxy.config.get("stt_keyterms", DEFAULT_KEYTERMS)
+        terms = sanitize_keyterms(configured)
+        if len(terms) != len(configured):
+            self.logger.warning(f"⚠️ Dropped {len(configured) - len(terms)} stt_keyterms ElevenLabs would reject")
+        return terms
+
     def _connect_via_proxy(self):
         """Connect to the configured STT backend via proxy."""
         backend = str(self.proxy.config.get("stt_backend") or DEFAULT_STT_BACKEND).strip().lower()
@@ -324,7 +335,7 @@ class MicroInput(InputDevice):
     def _connect_elevenlabs_batch(self) -> str:
         """Start a batch-transcription session on ElevenLabs Scribe. Returns the model id."""
         model = self.proxy.config.get("elevenlabs_batch_stt_model", "scribe_v2")
-        transcriber = elevenlabs_proxy_transcriber(self.proxy, model, self._stt_language())
+        transcriber = elevenlabs_proxy_transcriber(self.proxy, model, self._stt_language(), self._stt_keyterms())
         self._start_batch_session(transcriber, model)
         return model
 
@@ -336,7 +347,7 @@ class MicroInput(InputDevice):
         if rest is None:
             raise RuntimeError("no Gemini access: proxy unavailable and GEMINI_API_KEY unset")
 
-        self._start_batch_session(gemini_transcriber(rest, model, self._stt_language()), model)
+        self._start_batch_session(gemini_transcriber(rest, model, self._stt_language(), self._stt_keyterms()), model)
         return model
 
     def _start_batch_session(self, transcriber: Transcriber, model: str) -> None:
