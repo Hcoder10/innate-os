@@ -199,8 +199,11 @@ class MemoryRecorder:
         except (json.JSONDecodeError, TypeError, KeyError, ValueError):
             self._logger.error(f"[Memory] unreadable map-save announcement: {msg.data!r}")
             return
-        if time.time() - stamp > _SAVE_ANNOUNCEMENT_FRESH_SEC:
-            return  # the latch replaying an old save — see _SAVE_ANNOUNCEMENT_FRESH_SEC
+        age = time.time() - stamp
+        if age > _SAVE_ANNOUNCEMENT_FRESH_SEC:
+            # The latch replaying an old save — see _SAVE_ANNOUNCEMENT_FRESH_SEC.
+            self._logger.info(f"[Memory] ignoring a stale save announcement for {map_name} ({age:.0f}s old)")
+            return
         try:
             promoted = self._store.promote_mapping_session(map_name, mapping_started)
         except StaleStageError as error:
