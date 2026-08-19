@@ -986,6 +986,15 @@ log "Enabling and starting services..."
 # List of services to enable/start
 SERVICES=("jetson-perf.service" "zenoh-router.service" "ros-app.service")
 
+# Add bluetooth if available. In RESTART_SERVICES below because bluetoothd reads
+# /etc/bluetooth/main.conf once at startup, so `start` on an already-running
+# daemon would silently keep the old config after configure_hardware.sh replaced
+# it. Ordered before ble-provisioner: restarting bluetoothd drops the GATT
+# application the provisioner registers, and it never re-registers.
+if systemctl list-unit-files bluetooth.service &>/dev/null; then
+    SERVICES+=("bluetooth.service")
+fi
+
 # Add ble-provisioner if the service file exists
 if [ -f "/etc/systemd/system/ble-provisioner.service" ]; then
     SERVICES+=("ble-provisioner.service")
@@ -1013,18 +1022,13 @@ if [ -f "/etc/systemd/system/innate-port-redirect.service" ]; then
     SERVICES+=("innate-port-redirect.service")
 fi
 
-# Add bluetooth if available
-if systemctl list-unit-files bluetooth.service &>/dev/null; then
-    SERVICES+=("bluetooth.service")
-fi
-
 # zenoh-router and ros-app must be *restarted* (not just started) after a
 # rebuild: `systemctl start` is a no-op when they're already running, which
 # leaves the long-lived Zenoh router holding stale liveliness tokens from the
 # previous node generation and the old node binaries in place — surfacing as
 # `TypeHashNotSupported` drops and behavior-goal-acceptance timeouts. Restart
 # the router before the nodes so the fresh graph comes up against a fresh router.
-RESTART_SERVICES=("zenoh-router.service" "ros-app.service" "innate-port-redirect.service")
+RESTART_SERVICES=("bluetooth.service" "zenoh-router.service" "ros-app.service" "innate-port-redirect.service")
 
 # Always enable services (so they start on boot after reboot)
 # But only start/restart them if reboot is not required
