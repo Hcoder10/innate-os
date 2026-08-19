@@ -1761,10 +1761,41 @@ export function createMap(root, opts = {}) {
   fit();
   render();
 
+  /** Everything anchored to the current map frame is gone (map or robot
+   * switch): drop it. AMCL keeps streaming its stale pose across a switch, so
+   * "wait for the next fix" can't work; the stale stub the trail regrows from
+   * is wiped by the jump detector when re-localization lands. */
+  function dropFrameState() {
+    amclPose = null;
+    odomAtAmcl = null;
+    trail.length = 0;
+    // The memory layer swaps itself when the positions payload names the new
+    // map; the search verdict and popup belong to the old frame — drop now.
+    closeMemPopup();
+    hideMemSearchCard();
+    memSearch = null;
+    pose = composedPose();
+  }
+
   syncLayerSubs();
   ensureMapLatch();
   const unsubMap = ros.subscribe(MAP_TOPIC, onMap, 250, "nav_msgs/msg/OccupancyGrid");
   if (lastMapMsg) onMap(lastMapMsg);
+  // ensureMapLatch clears the module cache on a robot switch, but a MOUNTED
+  // widget still shows its rasterized grid and anchors — until the new robot
+  // publishes, or forever when it has no map publisher. Blank back to
+  // "waiting for /map" instead.
+  let gridIp = ros.ip;
+  const unsubConn = ros.onStateChange((_state, ip) => {
+    const switched = ip !== gridIp;
+    gridIp = ip;
+    if (!switched || !grid) return;
+    grid = null;
+    gridCells = null;
+    gridRev++;
+    dropFrameState();
+    draw();
+  });
   const unsubOdom = ros.subscribe(ODOM_TOPIC, onOdom, 100, "nav_msgs/msg/Odometry");
   const unsubAmcl = ros.subscribe(AMCL_POSE_TOPIC, onAmcl, 0, "geometry_msgs/msg/PoseWithCovarianceStamped");
   const unsubPlans = PLAN_TOPICS.map((topic) => ros.subscribe(topic, (msg) => onPlan(topic, msg), 250, "nav_msgs/msg/Path"));
@@ -1839,22 +1870,10 @@ export function createMap(root, opts = {}) {
       trail.length = 0;
       draw();
     },
-    /**
-     * The active map switched: the AMCL anchor and trail belong to the old
-     * map's frame — drop both. (AMCL keeps streaming its stale pose across a
-     * switch, so "wait for the next fix" can't work; the stale stub the trail
-     * regrows from is wiped by the jump detector when re-localization lands.)
-     */
+    /** The active map switched: the grid replays, but everything anchored to
+     * the old frame must not survive into the new one (see dropFrameState). */
     mapChanged() {
-      amclPose = null;
-      odomAtAmcl = null;
-      trail.length = 0;
-      // The memory layer swaps itself when the positions payload names the new
-      // map; the search verdict and popup belong to the old frame — drop now.
-      closeMemPopup();
-      hideMemSearchCard();
-      memSearch = null;
-      pose = composedPose();
+      dropFrameState();
       draw();
     },
     /** The robot's clock in epoch seconds (see memClockSkew) — memory stamps
@@ -1892,6 +1911,7 @@ export function createMap(root, opts = {}) {
       document.removeEventListener("keydown", onKeyDown);
       ro.disconnect();
       unsubMap();
+      unsubConn();
       unsubOdom();
       unsubAmcl();
       for (const unsub of unsubPlans) unsub();
