@@ -1921,7 +1921,6 @@ export function createMap(root, opts = {}) {
     },
     /** Gallery click: centre the view on a memory and open its popup. @param {number} id */
     focusMemory(id) {
-      if (mappingMode) return; // the coordinates belong to the finished map, and Go-here mid-mapping is wrong
       const m = memState?.memories.find((mem) => mem.id === id);
       if (!m) return;
       panCenter = { x: m.x, y: m.y };
