@@ -351,7 +351,7 @@ def test_forget_removes_the_memory_and_its_image(data_dir):
     added = store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
     assert added is not None
     # The truncated digest from /brain/memory_positions — what a client sends.
-    assert store.forget(added.id, store.fingerprint[:12]) == added
+    assert store.forget(added.id, store.snapshot().fingerprint[:12]) == added
     path = store.image_path(added.id)
     assert path is not None and not path.exists()
     assert store.snapshot().memories == ()

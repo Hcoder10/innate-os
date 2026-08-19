@@ -281,12 +281,6 @@ class MemoryStore:
         with self._lock:
             return MemorySnapshot(self._map_name, self._revision, tuple(self._memories), self._fingerprint)
 
-    @property
-    def fingerprint(self) -> str:
-        """Identity of the loaded map's content — changes exactly when the memories wipe."""
-        with self._lock:
-            return self._fingerprint
-
     def image_path(self, memory_id: int) -> Path | None:
         with self._lock:
             return self._dir / f"{memory_id}.jpg" if self._dir is not None else None
