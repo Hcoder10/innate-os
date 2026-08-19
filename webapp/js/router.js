@@ -38,6 +38,7 @@ const ROUTES = [
   { path: "/teleop", key: "teleop", load: () => import("./teleop/main.js") },
   { path: "/nav", key: "nav", load: () => import("./nav/main.js") },
   { path: "/logging", key: "logging", load: () => import("./logging/main.js") },
+  { path: "/expression", key: "expression", load: () => import("./expression/main.js") },
   { path: "/datasets", key: "datasets", load: () => import("./datasets/main.js") },
   { path: "/collect", key: "collect", load: () => import("./collect/main.js") },
   { path: "/training", key: "training", load: () => import("./training/main.js") },

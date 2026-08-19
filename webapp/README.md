@@ -10,6 +10,11 @@ same modules:
   global costmap / traveled-path overlays, telemetry panels (pose, velocity,
   lidar, nav state, per-topic receive rates), and live strip charts (commanded
   vs measured velocity, nearest obstacle).
+- **Expression** (`/expression`) — the Expression Studio: author MARS body
+  language on semantic pose axes (approach, turn, rise, expand, reach,
+  attend), preview it on the full-robot 3D model, apply it to the live arm +
+  head, and score poses with blind VLM judges that are never told the target
+  emotion.
 - **Collect** (`collect/`) — record episodes (learned skills) and one-shot
   recorded movements; reuses the teleop cockpit with a recording HUD.
 - **Datasets** (`datasets/`) — browse a skill's episodes and replay them
@@ -68,7 +73,7 @@ js/
   shell.js              icon rail on every page
   railLayout.js         the rail's grouped roster (pure — tests/railLayout.test.js)
   teleop/               teleop modules (joystick, keyboard, head tilt, TTS, arm)
-  nav/ collect/ datasets/ training/ logging/      per-page modules
+  nav/ collect/ datasets/ training/ logging/ expression/      per-page modules
 ```
 
 ## Robot interface (rosbridge `ws://<robot>:9090`, rws)
