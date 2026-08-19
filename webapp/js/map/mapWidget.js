@@ -29,6 +29,46 @@ import {
 } from "../constants.js";
 import { MEMORY_COLOR, SEARCH_REPLAY_FRESH_S, ageAlpha, ageText, headerSkew, memoryImageUrl, parseMemories, parseSearch, withAlpha } from "./memories.js";
 
+// The /map grid rides ONE session-lived subscription instead of one per mount.
+// The topic is latched, and rws replays the full grid — hundreds of KB of JSON
+// for an apartment — to every new subscriber, so re-subscribing on each page
+// switch re-downloaded an unchanged map. The permanent handler below pins
+// rosClient's ref-count for the topic above zero, so widgets add and remove
+// their own handlers through the ordinary ros.subscribe without ever tearing
+// the upstream subscription down; a newly mounted widget paints the cached
+// message synchronously. Map changes (SLAM updates, a map switch) keep flowing
+// to the cache, and outside those the topic is silent, so the standing
+// subscription costs nothing. Started on first widget mount, so sessions that
+// never show a map never subscribe.
+/** @type {any} */
+let lastMapMsg = null;
+/** @type {string | null} */
+let lastMapIp = null;
+let mapLatchStarted = false;
+
+function ensureMapLatch() {
+  if (mapLatchStarted) return;
+  mapLatchStarted = true;
+  ros.subscribe(
+    MAP_TOPIC,
+    (msg) => {
+      lastMapMsg = msg;
+      lastMapIp = ros.ip;
+    },
+    250,
+    "nav_msgs/msg/OccupancyGrid",
+  );
+  // The cache is one robot's grid: after connecting to a different robot it
+  // must not paint the old map while the new one latches (or never does, when
+  // that robot has no map publisher yet).
+  ros.onStateChange((_state, ip) => {
+    if (ip !== lastMapIp) {
+      lastMapMsg = null;
+      lastMapIp = null;
+    }
+  });
+}
+
 // Overlay palette — exported so the Nav page legend shows the same colors.
 // The robot is deliberately far from the costmap ramp (blue → amber → red):
 // it used to be the same amber as the inscribed band and vanished into it.
@@ -1721,8 +1761,60 @@ export function createMap(root, opts = {}) {
   fit();
   render();
 
+  /** Everything anchored to the current map frame is gone (map or robot
+   * switch): drop it. AMCL keeps streaming its stale pose across a switch, so
+   * "wait for the next fix" can't work; the stale stub the trail regrows from
+   * is wiped by the jump detector when re-localization lands. */
+  function dropFrameState() {
+    amclPose = null;
+    odomAtAmcl = null;
+    trail.length = 0;
+    // The memory layer swaps itself when the positions payload names the new
+    // map; the search verdict and popup belong to the old frame — drop now.
+    closeMemPopup();
+    hideMemSearchCard();
+    memSearch = null;
+    pose = composedPose();
+  }
+
   syncLayerSubs();
+  ensureMapLatch();
   const unsubMap = ros.subscribe(MAP_TOPIC, onMap, 250, "nav_msgs/msg/OccupancyGrid");
+  if (lastMapMsg) onMap(lastMapMsg);
+  // ensureMapLatch clears the module cache on a robot switch, but a MOUNTED
+  // widget still shows everything it rasterized from the old robot — grid,
+  // costmaps, scan, route, memories — until the new robot re-publishes each
+  // topic, or forever where it doesn't. Blank back to "waiting for /map".
+  // (A same-robot map switch is different: there the grid replays and the
+  // memory feed swaps itself, so mapChanged() keeps them — see onMemories.)
+  let gridIp = ros.ip;
+  const unsubConn = ros.onStateChange((_state, ip) => {
+    const switched = ip !== gridIp;
+    gridIp = ip;
+    if (!switched) return;
+    grid = null;
+    gridCells = null;
+    gridRev++;
+    costGrid = null;
+    localGrid = null;
+    scanMsg = null;
+    plan = null;
+    activePlanTopic = null;
+    goalMarker = null;
+    goalIsCommanded = false;
+    odomPose = null;
+    mappingPose = null;
+    // Forget "known" memories too, so the new robot's first payload adopts
+    // silently instead of pulsing its whole store as new.
+    memState = null;
+    memKnown = null;
+    memPulses.clear();
+    memPolyCache.clear();
+    setMemHover(null);
+    memSearchSeen = false;
+    dropFrameState();
+    draw();
+  });
   const unsubOdom = ros.subscribe(ODOM_TOPIC, onOdom, 100, "nav_msgs/msg/Odometry");
   const unsubAmcl = ros.subscribe(AMCL_POSE_TOPIC, onAmcl, 0, "geometry_msgs/msg/PoseWithCovarianceStamped");
   const unsubPlans = PLAN_TOPICS.map((topic) => ros.subscribe(topic, (msg) => onPlan(topic, msg), 250, "nav_msgs/msg/Path"));
@@ -1797,22 +1889,10 @@ export function createMap(root, opts = {}) {
       trail.length = 0;
       draw();
     },
-    /**
-     * The active map switched: the AMCL anchor and trail belong to the old
-     * map's frame — drop both. (AMCL keeps streaming its stale pose across a
-     * switch, so "wait for the next fix" can't work; the stale stub the trail
-     * regrows from is wiped by the jump detector when re-localization lands.)
-     */
+    /** The active map switched: the grid replays, but everything anchored to
+     * the old frame must not survive into the new one (see dropFrameState). */
     mapChanged() {
-      amclPose = null;
-      odomAtAmcl = null;
-      trail.length = 0;
-      // The memory layer swaps itself when the positions payload names the new
-      // map; the search verdict and popup belong to the old frame — drop now.
-      closeMemPopup();
-      hideMemSearchCard();
-      memSearch = null;
-      pose = composedPose();
+      dropFrameState();
       draw();
     },
     /** The robot's clock in epoch seconds (see memClockSkew) — memory stamps
@@ -1850,6 +1930,7 @@ export function createMap(root, opts = {}) {
       document.removeEventListener("keydown", onKeyDown);
       ro.disconnect();
       unsubMap();
+      unsubConn();
       unsubOdom();
       unsubAmcl();
       for (const unsub of unsubPlans) unsub();

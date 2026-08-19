@@ -22,21 +22,23 @@ import { SIM_SECTIONS } from "./railLayout.js";
 
 /**
  * @typedef {{ destroy: () => void }} PageView
- * @typedef {{ path: string, key: string, load: () => Promise<{ mount: (stage: HTMLElement) => PageView | Promise<PageView> }> }} Route
+ * @typedef {{ path: string, key: string, warm?: boolean, load: () => Promise<{ mount: (stage: HTMLElement) => PageView | Promise<PageView> }> }} Route
  */
 
 // Agent is the site root; every other section lives at /<key>. `key` matches
 // the shell's section keys so setActive can highlight the right rail link.
 // /brain is an alias into the Agent page (which opens its Brain monitor when
 // mounted at that path, then settles the URL at the root) — old bookmarks keep
-// working and the rail highlights Agent.
+// working and the rail highlights Agent. `warm` marks the routes prefetchRoutes
+// preloads after first mount (the flag lives here so renaming a key can't
+// silently detach it).
 /** @type {Route[]} */
 const ROUTES = [
-  { path: "/", key: "agent", load: () => import("./agent/main.js") },
-  { path: "/agent", key: "agent", load: () => import("./agent/main.js") },
-  { path: "/brain", key: "agent", load: () => import("./agent/main.js") },
-  { path: "/teleop", key: "teleop", load: () => import("./teleop/main.js") },
-  { path: "/nav", key: "nav", load: () => import("./nav/main.js") },
+  { path: "/", key: "agent", warm: true, load: () => import("./agent/main.js") },
+  { path: "/agent", key: "agent", warm: true, load: () => import("./agent/main.js") },
+  { path: "/brain", key: "agent", warm: true, load: () => import("./agent/main.js") },
+  { path: "/teleop", key: "teleop", warm: true, load: () => import("./teleop/main.js") },
+  { path: "/nav", key: "nav", warm: true, load: () => import("./nav/main.js") },
   { path: "/logging", key: "logging", load: () => import("./logging/main.js") },
   { path: "/datasets", key: "datasets", load: () => import("./datasets/main.js") },
   { path: "/collect", key: "collect", load: () => import("./collect/main.js") },
@@ -84,8 +86,19 @@ const configPromise = getConfig();
  */
 async function render(route) {
   const seq = ++navSeq;
-  if ((await configPromise)?.simControls && !SIM_SECTIONS.has(route.key)) route = ROUTES[0];
-  if (seq !== navSeq) return; // superseded while awaiting config
+  // Start the page's module graph downloading before the sim gate resolves: the
+  // gate only ever redirects a non-sim section, so on every other load waiting
+  // for /config.json first cost the page a round trip it never needed.
+  let pending = route.load();
+  if ((await configPromise)?.simControls && !SIM_SECTIONS.has(route.key)) {
+    void pending.catch(() => {}); // the speculative load lost the gate; don't strand its rejection
+    route = ROUTES[0];
+    pending = route.load();
+  }
+  if (seq !== navSeq) {
+    void pending.catch(() => {}); // superseded while awaiting config; don't strand the load's rejection
+    return;
+  }
   // Destroy BEFORE building the next page: the outgoing destroy() stops running
   // skills/drive and frees socket-bound panels, and clears the stage.
   if (currentView) {
@@ -95,7 +108,7 @@ async function render(route) {
   currentKey = route.key;
   shell.setActive(route.key);
   try {
-    const mod = await route.load();
+    const mod = await pending;
     if (seq !== navSeq) return; // a newer navigation superseded this one
     currentView = await mod.mount(stage);
     if (seq !== navSeq && currentView) {
@@ -115,13 +128,20 @@ async function render(route) {
 
 // Boot splash lives in index.html so it paints before this module's graph
 // loads; drop it once the first page mounts. Fade then remove; a fallback
-// timer covers a missed transitionend (reduced-motion, pre-paint start).
+// timer covers a missed transitionend (a pre-paint start).
 function dismissBootSplash() {
   const splash = document.getElementById("boot-splash");
   if (!splash) return;
+  // Reduced motion turns the fade into `transition: none` (app.css), so there is
+  // no transitionend to wait for and the fallback timer would hold an opaque
+  // cover over a page that is already up. Drop it now instead.
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    splash.remove();
+    return;
+  }
   splash.classList.add("is-leaving");
   splash.addEventListener("transitionend", () => splash.remove(), { once: true });
-  setTimeout(() => splash.remove(), 600);
+  setTimeout(() => splash.remove(), 400); // fallback ≥ the 0.2s fade in app.css
 }
 
 /**
@@ -195,16 +215,22 @@ if (connectTarget) {
   });
 }
 
-// Render the page for the URL we loaded at (deep link or refresh), then prefetch
-// the other route modules while idle so later switches are instant.
-void render(routeFor(location.pathname));
-prefetchRoutes();
+// Render the page for the URL we loaded at (deep link or refresh), then warm the
+// routes a session actually switches to, so those rail clicks are instant.
+void render(routeFor(location.pathname)).then(prefetchRoutes);
 
-function prefetchRoutes() {
+// Only the `warm` cockpit neighbours: warming all twelve routes pulled ~140 KB
+// (and a long tail of requests) off the robot's uplink on every load, mostly for
+// pages the session never opens. An unwarmed route is one dynamic import away
+// (~50 ms on a LAN) — cold-open cost, not correctness. Strictly after the first
+// page has mounted, and one route at a time: the browser counts the main thread
+// as idle while the first page still waits on the network, so an earlier idle
+// callback put the warm-up on the same six connections as the page the user
+// asked for.
+async function prefetchRoutes() {
   const idle = /** @type {any} */ (window).requestIdleCallback || ((/** @type {() => void} */ fn) => setTimeout(fn, 1500));
-  idle(() => {
-    for (const route of ROUTES) {
-      if (route.key !== currentKey) route.load().catch(() => {});
-    }
-  });
+  await new Promise((resolve) => idle(resolve));
+  for (const route of ROUTES) {
+    if (route.warm && route.key !== currentKey) await route.load().catch(() => {});
+  }
 }

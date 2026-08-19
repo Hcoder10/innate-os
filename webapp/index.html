@@ -11,6 +11,40 @@
     <link rel="stylesheet" href="/css/app.css" />
     <link rel="stylesheet" href="/css/calibration.css" />
     <link rel="stylesheet" href="/css/brain.css" />
+    <!-- Every module the first paint of the default route needs, named here so the browser
+         fetches them all at once. Without it the app's import graph is discovered one level
+         at a time — five serial round trips before the page module is even requested, which
+         is most of a cold load over the robot's WiFi. Nothing breaks if an entry goes stale
+         (a missing one is just not preloaded, a dead one is a wasted request);
+         `node tests/preload.test.js` recomputes the graph and reports the drift. -->
+    <link rel="modulepreload" href="/js/rosClient.js" />
+    <link rel="modulepreload" href="/js/shell.js" />
+    <link rel="modulepreload" href="/js/config.js" />
+    <link rel="modulepreload" href="/js/railLayout.js" />
+    <link rel="modulepreload" href="/js/constants.js" />
+    <link rel="modulepreload" href="/js/teleop/agentState.js" />
+    <link rel="modulepreload" href="/js/agentIndicator.js" />
+    <link rel="modulepreload" href="/js/appPromo.js" />
+    <link rel="modulepreload" href="/js/armAlert.js" />
+    <link rel="modulepreload" href="/js/armReboot.js" />
+    <link rel="modulepreload" href="/js/pressActivate.js" />
+    <link rel="modulepreload" href="/js/ttsAudio.js" />
+    <link rel="modulepreload" href="/js/micAudioState.js" />
+    <link rel="modulepreload" href="/js/agent/main.js" />
+    <link rel="modulepreload" href="/js/agent/agentPanel.js" />
+    <link rel="modulepreload" href="/js/agent/challengePanel.js" />
+    <link rel="modulepreload" href="/js/agent/challengeIntro.js" />
+    <link rel="modulepreload" href="/js/agent/micStream.js" />
+    <link rel="modulepreload" href="/js/agent/agentMicControl.js" />
+    <link rel="modulepreload" href="/js/pageMount.js" />
+    <link rel="modulepreload" href="/js/robotSession.js" />
+    <link rel="modulepreload" href="/js/webrtcSession.js" />
+    <link rel="modulepreload" href="/js/webrtcConfig.js" />
+    <link rel="modulepreload" href="/js/clipboard.js" />
+    <link rel="modulepreload" href="/js/teleop/videoStage.js" />
+    <link rel="modulepreload" href="/js/teleop/cameraSwitch.js" />
+    <link rel="modulepreload" href="/js/teleop/telemetry.js" />
+    <link rel="modulepreload" href="/js/teleop/connectPanel.js" />
   </head>
   <body>
     <main id="stage" class="stage"></main>

@@ -22,7 +22,10 @@ is read, and Range is honoured. Everything is no-cache — the browser revalidat
 every load, but revalidation is a cheap conditional request. The sim 3D assets come off
 container-image layers, whose mtimes are whatever the build produced; the host-side
 geometry is stamped with one install mtime (see ensure_sim_assets) so the validator does
-not degrade to size-only. (No on-the-fly compression — see TODO(INN-674).)
+not degrade to size-only. Text assets are gzipped on the way out and the bytes kept in a
+small mtime-keyed cache, so the zero-build app ships ~4x fewer bytes without a build step
+(see _gzipped). The dynamic JSON in media_routes (joints, run logs) is still uncompressed —
+it needs its own path, since there is no file identity to key a cache on.
 
 Run:        python3 proxy/https_server.py        # https://<robot>:443 + http://<robot>:80
 Persist:    launched on boot in the `console-webapp` tmux window
@@ -30,15 +33,18 @@ Persist:    launched on boot in the `console-webapp` tmux window
 """
 
 import asyncio
+import gzip
 import json
 import logging
 import mimetypes
 import os
 import posixpath
+import re
 import shutil
 import ssl
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import aiohttp
@@ -197,15 +203,117 @@ def _safe_resolve(path: Path) -> "Path | None":
         return None
 
 
-def _serve_static(path: Path) -> web.FileResponse:
-    """Serve a file no-cache via FileResponse: sendfile on the cleartext port,
-    native mtime+size ETag, bodyless 304, and Range.
+# Text assets are gzipped on the way out — the app is zero-build, so there are no
+# precompressed build siblings to sendfile, and the alternative is shipping ~1.8 MB
+# of source per cold load. Compressed bytes are cached in memory keyed by the file's
+# identity, so each file is deflated once per edit, not once per request — which is
+# why this isn't aiohttp's enable_compression: that re-deflates every response on
+# the event loop shared with the /ws teleop relay, and can't give the gzip
+# representation its own ETag/304 path.
+COMPRESSIBLE = {".js", ".css", ".html", ".json", ".svg", ".md", ".urdf", ".obj", ".stl"}
+GZIP_MIN_BYTES = 1024  # below this the gzip framing eats the saving
+GZIP_MAX_BYTES = 4 * 1024 * 1024  # a mesh this large stays a sendfile rather than a cache entry
+GZIP_CACHE_BUDGET = 24 * 1024 * 1024  # the whole app compresses to well under this; the cap bounds a Jetson's RSS
 
-    No on-the-fly gzip anywhere in the server (the compress middleware was
-    removed). TODO(INN-674): bring compression back — static via precompressed
-    .br/.gz build siblings that FileResponse sendfiles, dynamic JSON
-    (joints/logs) via its own path."""
-    return web.FileResponse(path, headers={"Content-Type": _content_type(path), "Cache-Control": "no-cache"})
+# (path, mtime_ns, size) -> gzipped bytes. Insertion-ordered, evicted oldest-first.
+# _gzipped runs on executor threads (asyncio.to_thread), and a cold load is many
+# concurrent misses — the byte counter and the eviction loop race without the lock.
+_GZIP_CACHE: "dict[tuple[str, int, int], bytes]" = {}
+_gzip_cache_bytes = 0
+_gzip_lock = threading.Lock()
+
+
+def _gzipped(path: Path, stat: os.stat_result) -> bytes:
+    """The file's gzipped bytes, from the cache when its identity is unchanged.
+
+    mtime=0 keeps the output byte-identical across calls, so a cache miss after a
+    restart cannot change what a revalidating browser is holding."""
+    global _gzip_cache_bytes
+    key = (str(path), stat.st_mtime_ns, stat.st_size)
+    with _gzip_lock:
+        hit = _GZIP_CACHE.get(key)
+    if hit is not None:
+        return hit
+    body = gzip.compress(path.read_bytes(), compresslevel=6, mtime=0)
+    with _gzip_lock:
+        if key not in _GZIP_CACHE:  # a concurrent miss compressed it too; count it once
+            _GZIP_CACHE[key] = body
+            _gzip_cache_bytes += len(body)
+        while _gzip_cache_bytes > GZIP_CACHE_BUDGET and len(_GZIP_CACHE) > 1:
+            _gzip_cache_bytes -= len(_GZIP_CACHE.pop(next(iter(_GZIP_CACHE))))
+    return body
+
+
+def _matches_etag(header: str, etag: str) -> bool:
+    return any(t.strip().removeprefix("W/") in (etag, "*") for t in header.split(","))
+
+
+def _accepts_gzip(header: str) -> bool:
+    """Whether Accept-Encoding allows gzip. An explicit gzip token outranks a
+    wildcard, and q=0 on the winning token is a rejection — a substring test
+    would read `gzip;q=0` as acceptance and serve bytes the client can't decode."""
+    q: dict[str, float] = {}
+    for token in header.split(","):
+        coding, _, params = token.partition(";")
+        params = params.strip()
+        try:
+            weight = float(params[2:]) if params.startswith("q=") else 1.0
+        except ValueError:
+            weight = 0.0
+        q[coding.strip().lower()] = weight
+    winner = q.get("gzip", q.get("*"))
+    return winner is not None and winner > 0
+
+
+def _gzip_candidate(path: Path, request: web.Request) -> "os.stat_result | None":
+    """The file's stat when this request should be answered gzipped, else None —
+    Range wants offsets into the file itself, and everything else FileResponse
+    serves better as-is."""
+    if path.suffix not in COMPRESSIBLE or "Range" in request.headers:
+        return None
+    if not _accepts_gzip(request.headers.get("Accept-Encoding", "")):
+        return None
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return stat if GZIP_MIN_BYTES <= stat.st_size <= GZIP_MAX_BYTES else None
+
+
+# A vendor filename that names its version, e.g. three.module.min.r160.js — the
+# segment before the extension starts with a digit (an optional r/v prefix allowed).
+_VENDOR_VERSIONED = re.compile(r"\.[rv]?\d[\w.]*\.\w+$")
+
+
+async def _serve_static(path: Path, request: web.Request) -> web.StreamResponse:
+    """Serve a file gzipped from the cache where that pays, else FileResponse
+    (sendfile, native mtime+size ETag, bodyless 304, Range). no-cache except the
+    immutable vendor libraries.
+
+    A gzipped body is a different representation of the same file, so it carries
+    its own ETag — a client that stops sending Accept-Encoding revalidates against
+    the identity ETag and gets the plain file back, never a mislabelled body."""
+    # public/vendor holds pinned libraries whose filenames carry their version
+    # (three.module.min.r160.js): a bump is a new URL, so browsers may cache
+    # these for good without `immutable` ever pinning a stale copy — which is
+    # why an unversioned vendor file gets no-cache like everything else (the
+    # zero-build app's "deploy" is a file edit).
+    vendored = path.is_relative_to(ROOT / "public" / "vendor") and _VENDOR_VERSIONED.search(path.name)
+    cache = "public, max-age=31536000, immutable" if vendored else "no-cache"
+    headers = {"Content-Type": _content_type(path), "Cache-Control": cache}
+    if path.suffix in COMPRESSIBLE:
+        # Declared on the identity representation too — the two answers for one
+        # URL must agree on Vary or an intermediary can't negotiate them.
+        headers["Vary"] = "Accept-Encoding"
+    stat = _gzip_candidate(path, request)
+    if stat is None:
+        return web.FileResponse(path, headers=headers)
+    etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}-gz"'
+    headers |= {"ETag": etag}
+    if _matches_etag(request.headers.get("If-None-Match", ""), etag):
+        return web.Response(status=304, headers=headers)
+    body = await asyncio.to_thread(_gzipped, path, stat)
+    return web.Response(body=body, headers=headers | {"Content-Encoding": "gzip"})
 
 
 async def static_handler(request: web.Request) -> web.StreamResponse:
@@ -226,7 +334,7 @@ async def static_handler(request: web.Request) -> web.StreamResponse:
     # Refuse anything that escapes the app root (or the TLS keys, defensively).
     if body_path is None or not body_path.is_relative_to(ROOT) or body_path.suffix == ".pem":
         raise web.HTTPNotFound(text="not found")
-    return _serve_static(body_path)
+    return await _serve_static(body_path, request)
 
 
 async def sim_viewer_handler(request: web.Request) -> web.StreamResponse:
@@ -237,7 +345,7 @@ async def sim_viewer_handler(request: web.Request) -> web.StreamResponse:
         target = _safe_resolve(base / clean[len(prefix) :])
         if target is None or not target.is_file() or not target.is_relative_to(base.resolve()):
             raise web.HTTPNotFound(text="not found")
-        return _serve_static(target)
+        return await _serve_static(target, request)
     raise web.HTTPNotFound(text="not found")
 
 
@@ -316,7 +424,7 @@ async def armsdk_model(request: web.Request) -> web.StreamResponse:
     target = _model_target(request.match_info["tail"])
     if target is None:
         raise web.HTTPNotFound(text="not found")
-    return _serve_static(target)
+    return await _serve_static(target, request)
 
 
 async def _pump(src: "web.WebSocketResponse | aiohttp.ClientWebSocketResponse", dst) -> None:

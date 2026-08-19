@@ -7,7 +7,7 @@
 import { ros } from "./rosClient.js";
 import { initTtsAudio } from "./ttsAudio.js";
 import { getConfig } from "./config.js";
-import { createAgentState } from "./teleop/agentState.js";
+import { sharedAgentState } from "./teleop/agentState.js";
 import { createAgentIndicator } from "./agentIndicator.js";
 import { createArmAlert } from "./armAlert.js";
 import { maybeShowAppPromo } from "./appPromo.js";
@@ -164,7 +164,7 @@ export function initShell(navigate) {
   // A running agent shows a top-center "running" pill, linking back to the Agent
   // page to take control. It's persistent (built once); setActive hides it while
   // the Agent page — which has its own Start/Stop — is open.
-  const agentIndicator = createAgentIndicator(createAgentState(ros), "/");
+  const agentIndicator = createAgentIndicator(sharedAgentState(), "/");
 
   // A servo latched into (overcurrent) protection shows a discrete amber card
   // with the reboot remedy, on every page. Real robots only — the sim's arm
