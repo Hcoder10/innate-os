@@ -818,8 +818,14 @@ export class SimScene {
     let distance = TOP_FALLBACK_HEIGHT_M;
     if (bounds) {
       const size = bounds.getSize(new THREE.Vector3());
-      const fov = (this.camera.fov * Math.PI) / 180;
-      distance = (Math.max(size.x, size.y) / 2 / Math.tan(fov / 2)) * TOP_FIT_MARGIN;
+      // Each world axis against the FOV it actually falls under -- looking down
+      // with up=+Z puts world X across the screen and Y up it. Fitting both to
+      // the vertical FOV (what frameLayout does, for a stage it knows is
+      // landscape) crops the apartment sideways on a stage narrower than tall.
+      const vFov = (this.camera.fov * Math.PI) / 180;
+      const hFov = 2 * Math.atan(Math.tan(vFov / 2) * this.camera.aspect);
+      const fit = Math.max(size.x / 2 / Math.tan(hFov / 2), size.y / 2 / Math.tan(vFov / 2));
+      distance = fit * TOP_FIT_MARGIN;
     }
     this.cameraTween = {
       fromPos: this.camera.position.clone(),
