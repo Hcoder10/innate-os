@@ -13,6 +13,7 @@
 # Core
 numpy<2
 opencv-python
+Pillow
 
 # Networking/API
 pydantic

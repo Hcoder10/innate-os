@@ -1,0 +1,80 @@
+"""Household Orders: find three residents and collect their DoorDash orders."""
+
+from mars_sim_driver.challenges import Challenge, Drop, EventSeen, Goal, SkillDone
+
+from .runtime import HouseholdOrdersRuntime, Resident
+
+RESIDENT_DIALOGUE_RADIUS_M = 2.0
+
+# Orders are deliberately challenge-private: the public roster contains only
+# CHALLENGE.brief, while these facts stay inside this package and are disclosed
+# by each resident through dialogue. Confirmation accepts the exact disclosed
+# order plus a small allowlist of complete paraphrases, keeping verification
+# deterministic and preventing appended contradictions from passing.
+RESIDENTS = [
+    Resident(
+        id="alex",
+        name="Alex",
+        prop="resident_alex",
+        order=(
+            "From Chipotle, I'd like a chicken burrito bowl with brown rice, black beans, mild salsa, and no cheese."
+        ),
+        accepted_readbacks=("Chipotle chicken bowl with brown rice, black beans, mild salsa, and without cheese.",),
+        radius_m=RESIDENT_DIALOGUE_RADIUS_M,
+    ),
+    Resident(
+        id="blake",
+        name="Blake",
+        prop="resident_blake",
+        order=(
+            "From Sweetgreen, I'd like the Harvest Bowl with roasted chicken, "
+            "no goat cheese, and the balsamic vinaigrette on the side."
+        ),
+        radius_m=RESIDENT_DIALOGUE_RADIUS_M,
+    ),
+    Resident(
+        id="casey",
+        name="Casey",
+        prop="resident_casey",
+        order="From Shake Shack, I'd like a ShackBurger with no pickles, cheese fries, and a vanilla shake.",
+        radius_m=RESIDENT_DIALOGUE_RADIUS_M,
+    ),
+]
+
+CHALLENGE = Challenge(
+    id="household_orders",
+    title="Household Orders",
+    brief=(
+        "Three residents are waiting in different rooms. Find each resident, ask for their DoorDash order, "
+        "and repeat the full order back until they confirm it. You may visit them in any order. Once all "
+        "three orders are confirmed, submit them together with the place_doordash_order skill."
+    ),
+    # Keep each resident on clear, navigable floor in a different room. These
+    # points leave enough clearance for the robot to approach without putting
+    # a resident inside bedroom furniture or beyond the apartment walls.
+    setup=[
+        Drop("resident_alex", -4.59, 4.34, yaw_deg=0),
+        Drop("resident_blake", -0.74, -2.76, yaw_deg=180),
+        Drop("resident_casey", -0.64, 2.89, yaw_deg=-90),
+    ],
+    runtime=HouseholdOrdersRuntime(RESIDENTS),
+    goals=[
+        Goal(
+            "Get Alex to confirm the order",
+            EventSeen("resident_order_confirmed", {"resident": "alex"}),
+            parallel_group="residents",
+        ),
+        Goal(
+            "Get Blake to confirm the order",
+            EventSeen("resident_order_confirmed", {"resident": "blake"}),
+            parallel_group="residents",
+        ),
+        Goal(
+            "Get Casey to confirm the order",
+            EventSeen("resident_order_confirmed", {"resident": "casey"}),
+            parallel_group="residents",
+        ),
+        Goal("Submit all three orders to DoorDash", SkillDone("place_doordash_order")),
+    ],
+    time_limit_s=900,
+)
