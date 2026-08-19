@@ -98,6 +98,25 @@ def _tonemap(rgb: np.ndarray) -> np.ndarray:
     return _TONEMAP_LUT[rgb]
 
 
+def _navigation_grid(base_grid: np.ndarray, seen_free: np.ndarray, seen_occ: np.ndarray) -> np.ndarray:
+    """Clip a lidar-authored map to the apartment's authored floor.
+
+    Lidar remains the sole source of free/occupied geometry inside the
+    apartment so AMCL and Nav2 see the same thin walls and furniture legs.
+    ``base_grid`` contributes only its known-vs-unknown footprint: a beam may
+    cross the simulator's infinite ground plane, but it cannot turn a cell
+    without authored apartment floor into navigable space.
+    """
+    if base_grid.shape != seen_free.shape or base_grid.shape != seen_occ.shape:
+        raise ValueError("navigation-grid inputs must have identical shapes")
+
+    grid = np.full(base_grid.shape, -1, dtype=np.int8)
+    interior = base_grid != -1
+    grid[seen_free & interior] = 0
+    grid[seen_occ & interior] = 100  # lidar endpoint wins over a grazing clear
+    return grid
+
+
 def _camera_quat(forward, up) -> np.ndarray:
     z = -np.array(forward, dtype=float)
     y = np.array(up, dtype=float)
@@ -494,6 +513,14 @@ class VirtualMars:
         robot-height slab and projected (height-exact: a probe-ray scheme
         loses any wall taller than the probe start). Free vs unknown =
         downward floor rays, with the robot parked out of bounds."""
+        if self._lidar_groups is None:
+            # The decomposed collision rooms deliberately omit floor faces;
+            # without the authored visual rooms there is no trustworthy way
+            # to distinguish apartment floor from the infinite ground plane.
+            # Refuse an unsafe map instead of silently making exterior ground
+            # navigable (or returning an unusable all-unknown grid).
+            raise RuntimeError("navigation-map export requires the authored apartment_visual room meshes")
+
         wall_min, wall_top = 0.10, 1.4  # above rugs/thresholds; below ceilings
 
         # Apartment bounds from its geoms' bounding spheres.
@@ -519,13 +546,22 @@ class VirtualMars:
 
         grid = np.full(n, -1, dtype=np.int8)
         origins = np.column_stack([gx.ravel(), gy.ravel(), np.full(n, wall_top)])
+        # The infinite ground plane exists so the robot has something to
+        # contact, but it is not apartment floor.  When visual rooms are
+        # available, the lidar group selects only their authored surfaces and
+        # excludes that plane entirely.  The ray also excludes world body 0,
+        # which owns the coplanar ground plane.  The apartment body check
+        # remains important for any future static scenery that shares the
+        # selected visual group.
+        floor_groups = self._lidar_groups
         # mj_multiRay shares one origin, so cast per cell (one-time, ~40k rays, ~1s).
         geomid_out = np.zeros(1, dtype=np.int32)
         down = np.array([0.0, 0.0, -1.0])
         for i in range(n):
-            d = mujoco.mj_ray(self.model, self.data, origins[i], down, None, 1, -1, geomid_out)
-            if geomid_out[0] != -1 and d >= 0:
-                grid[i] = 0  # something below: inside the world
+            d = mujoco.mj_ray(self.model, self.data, origins[i], down, floor_groups, 1, 0, geomid_out)
+            hit = int(geomid_out[0])
+            if hit != -1 and d >= 0 and self.model.geom_bodyid[hit] == apt:
+                grid[i] = 0  # an authored apartment surface below: interior floor
         grid = grid.reshape(height, width)
         grid[self._rasterize_static_slab(wall_min, wall_top, xmin, ymin, width, height, resolution)] = 100
 
@@ -540,17 +576,17 @@ class VirtualMars:
         n_rays: int = 720,
         max_range: float = 12.0,
     ) -> tuple[np.ndarray, float, float]:
-        """Rasterize the world the way the robot's own lidar would map it --
-        a virtual SLAM pass with perfect poses. Horizontal rays are cast at
-        the laser mount height against the same visual surfaces lidar_scan()
-        hits, from a grid of reachable floor positions; beams clear free
-        space, endpoints mark obstacles, everything unseen stays unknown.
+        """Rasterize a lidar-consistent map clipped to authored floor.
 
-        This is the nav map that keeps AMCL consistent: a real robot
-        localizes against a map made BY its lidar, so at shin height a couch
-        is legs and a gap, not the solid footprint occupancy_grid() rasterizes
-        from collision geometry. Returns (grid, origin_x, origin_y) like
-        occupancy_grid()."""
+        A virtual SLAM pass casts horizontal rays at the real laser height
+        against the same visual surfaces ``lidar_scan()`` hits.  Lidar beams
+        establish observable free space and obstacle endpoints.  The collision
+        grid is used only to clip those observations to authored apartment
+        floor; its thicker robot-height furniture projection is deliberately
+        not fused into the localization map.
+
+        Returns (grid, origin_x, origin_y) like ``occupancy_grid()``.
+        """
         # Reachable-floor candidates for scan origins (also fixes the bounds).
         base_grid, xmin, ymin = self.occupancy_grid(resolution)
         height, width = base_grid.shape
@@ -627,10 +663,7 @@ class VirtualMars:
             self.data.qpos[:] = saved
             mujoco.mj_forward(self.model, self.data)
 
-        grid = np.full((height, width), -1, dtype=np.int8)
-        grid[seen_free] = 0
-        grid[seen_occ] = 100  # occupied wins over any grazing clear
-        return grid, float(xmin), float(ymin)
+        return _navigation_grid(base_grid, seen_free, seen_occ), float(xmin), float(ymin)
 
     def _rasterize_static_slab(
         self, zlo: float, zhi: float, xmin: float, ymin: float, width: int, height: int, resolution: float
