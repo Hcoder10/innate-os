@@ -8,7 +8,8 @@ robot. :class:`Endpointer` runs a voiced/unvoiced detector — Silero VAD
 (``brain_client.inputs.vad``) or the energy fallback — over the PCM stream and
 closes an utterance after enough silence; :class:`BatchSttSession` then ships
 the whole clip as WAV through a vendor transcriber — ElevenLabs Scribe batch or
-Gemini ``generateContent``.
+Gemini ``generateContent``. Both bias toward the ``keyterms`` vocabulary: Scribe
+takes a parameter, Gemini gets the words in its prompt.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import queue
 import threading
 import wave
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
 from brain_client.brain.transport import GENERATE_PATH
@@ -171,15 +172,80 @@ class Endpointer:
 TRANSCRIBE_TIMEOUT_SECS = 30.0
 
 
+# ---------- Keyterms ----------
+
+# The robot's own name and the phrases it is actually given. Biasing costs +20%
+# on every ElevenLabs transcription, so the list stays short; an empty
+# stt_keyterms turns it (and the surcharge) off.
+DEFAULT_KEYTERMS: tuple[str, ...] = (
+    "MARS",
+    "hey MARS",
+    "go forwards",
+    "go forward",
+    "go backwards",
+    "go backward",
+    "go straight",
+    "turn left",
+    "turn right",
+    "turn around",
+    "stop",
+    "come here",
+    "follow me",
+    "pick up",
+    "put it down",
+    "drop it",
+    "open the gripper",
+    "close the gripper",
+    "raise the arm",
+    "lower the arm",
+    "take a picture",
+    "what do you see",
+    "go to the kitchen",
+    "go back to the charger",
+    "explore the room",
+    "wave",
+)
+
+_KEYTERM_FORBIDDEN_CHARS = frozenset("<>{}[]\\")
+
+
+def sanitize_keyterms(terms: Iterable[str] | str) -> list[str]:
+    """Vendor-legal, whitespace-normalized, de-duplicated keyterms, in input order.
+
+    ElevenLabs' limits are under 50 characters, at most 5 words, 1000 terms. It
+    rejects the whole request over one illegal term, so a settings.yaml typo has
+    to cost its own term rather than all transcription.
+    """
+    kept: list[str] = []
+    seen: set[str] = set()
+    # A bare string would otherwise be iterated into single-letter keyterms.
+    for raw in [terms] if isinstance(terms, str) else terms:
+        term = " ".join(str(raw).split())
+        if not term or term in seen or len(term) >= 50 or len(term.split()) > 5:
+            continue
+        if _KEYTERM_FORBIDDEN_CHARS & set(term):
+            continue
+        seen.add(term)
+        kept.append(term)
+    return kept[:1000]
+
+
 # ---------- ElevenLabs Scribe batch ----------
 
 ELEVENLABS_PROXY_ENDPOINT = "v1/speech-to-text"
 
 
-def elevenlabs_proxy_transcriber(proxy: ProxyClient, model: str, language: str) -> Transcriber:
+def elevenlabs_proxy_transcriber(
+    proxy: ProxyClient, model: str, language: str, keyterms: Sequence[str] = ()
+) -> Transcriber:
+    form: dict[str, Any] = {"model_id": model, "language_code": language}
+    if keyterms:
+        # One repeated form field per term — the vendor SDK passes keyterms as a
+        # raw list, unlike its other list params, which it JSON-encodes.
+        form["keyterms"] = list(keyterms)
+
     def transcribe(wav: bytes) -> str:
         files = {"file": ("utterance.wav", wav, "audio/wav")}
-        form = {"model_id": model, "language_code": language}
         with proxy.request_stream(
             "elevenlabs", ELEVENLABS_PROXY_ENDPOINT, files=files, form=form, timeout=TRANSCRIBE_TIMEOUT_SECS
         ) as resp:
@@ -200,7 +266,7 @@ NO_SPEECH = "NO_SPEECH"
 _GEMINI_PROMPT = (
     "Transcribe the speech in this audio verbatim. Reply with only the "
     "transcript text - no quotes, labels, or commentary. The speaker's "
-    "language is most likely {language}. If the audio contains no "
+    "language is most likely {language}.{keyterms} If the audio contains no "
     f"intelligible human speech, reply with exactly {NO_SPEECH}."
 )
 
@@ -211,7 +277,10 @@ def _says_no_speech(text: str) -> bool:
     return text.strip("'\".,!? \t") == NO_SPEECH
 
 
-def gemini_transcriber(rest: GeminiRest, model: str, language: str) -> Transcriber:
+def gemini_transcriber(rest: GeminiRest, model: str, language: str, keyterms: Sequence[str] = ()) -> Transcriber:
+    hint = f" These words are likely, so prefer them over similar-sounding ones: {', '.join(keyterms)}."
+    prompt = _GEMINI_PROMPT.format(language=language, keyterms=hint if keyterms else "")
+
     def transcribe(wav: bytes) -> str:
         body: dict[str, Any] = {
             "contents": [
@@ -219,7 +288,7 @@ def gemini_transcriber(rest: GeminiRest, model: str, language: str) -> Transcrib
                     "role": "user",
                     "parts": [
                         {"inlineData": {"mimeType": "audio/wav", "data": base64.b64encode(wav).decode()}},
-                        {"text": _GEMINI_PROMPT.format(language=language)},
+                        {"text": prompt},
                     ],
                 }
             ],

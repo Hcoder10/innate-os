@@ -5759,10 +5759,22 @@ select.skill-input {
 }
 
 .chat-skill-name {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   font-size: 12px;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The run's inputs, trailing the name — which emotion, which position. Takes
+   the slack so the status stays pinned right whether or not there are any. */
+.chat-skill-args {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5884,6 +5896,418 @@ select.skill-input {
   padding: 0;
 }
 
+.agent-mic-control {
+  --agent-mic-level: 0;
+  --agent-mic-active: #e0dcff;
+  --agent-mic-active-edge: rgb(151 135 255 / 68%);
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform: translateX(-50%);
+}
+
+.agent-mic-button {
+  --agent-mic-inner-wave-scale: 2.62;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 184px;
+  height: 184px;
+  padding: 0;
+  color: rgb(255 255 255 / 88%);
+  background:
+    radial-gradient(
+      circle,
+      rgb(255 255 255 / calc(8% + var(--agent-mic-level) * 28%)) 0 12%,
+      rgb(255 255 255 / calc(var(--agent-mic-level) * 16%)) 28%,
+      transparent 58%
+    ),
+    rgb(8 8 10 / 48%);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1.25px solid rgb(255 255 255 / 28%);
+  border-radius: 50%;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 10%),
+    0 14px 38px rgb(0 0 0 / 24%);
+  cursor: pointer;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform 150ms cubic-bezier(0.645, 0.045, 0.355, 1),
+    color 150ms ease,
+    border-color 150ms ease;
+}
+
+.agent-mic-button::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  width: 68px;
+  height: 68px;
+  border: 1.5px solid rgb(255 255 255 / 58%);
+  border-radius: 50%;
+  background: rgb(245 245 248 / 38%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 24%),
+    0 8px 28px rgb(0 0 0 / 28%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition:
+    transform 150ms ease,
+    border-color 150ms ease,
+    background-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.agent-mic-button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgb(255 255 255 / 12%) 0,
+    rgb(255 255 255 / 4%) 38%,
+    transparent 68%
+  );
+  box-shadow:
+    inset 0 0 30px rgb(255 255 255 / 6%),
+    0 0 36px rgb(255 255 255 / 10%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+
+.agent-mic-outer-waves,
+.agent-mic-inner-waves {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.agent-mic-outer-waves {
+  inset: 0;
+  transition: opacity 100ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.agent-mic-outer-wave,
+.agent-mic-inner-wave {
+  position: absolute;
+  border-radius: 50%;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.agent-mic-outer-wave {
+  inset: 0;
+  background: radial-gradient(
+    circle closest-side,
+    transparent 0 78%,
+    rgb(255 255 255 / 64%) 83%,
+    rgb(255 255 255 / 30%) 91%,
+    rgb(255 255 255 / 8%) 97%,
+    transparent 100%
+  );
+}
+
+.agent-mic-icon {
+  position: relative;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  background: currentColor;
+  mask: url("/js/agent/icons/mic.svg") center / contain no-repeat;
+  -webkit-mask: url("/js/agent/icons/mic.svg") center / contain no-repeat;
+  opacity: 0.84;
+  pointer-events: none;
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.agent-mic-inner-waves {
+  inset: 2px;
+  z-index: 1;
+  border-radius: 50%;
+  overflow: hidden;
+  transition: opacity 160ms ease;
+}
+
+.agent-mic-inner-wave {
+  top: 50%;
+  left: 50%;
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle closest-side,
+    transparent 0 72%,
+    rgb(255 255 255 / 38%) 80%,
+    rgb(224 220 255 / 20%) 89%,
+    transparent 100%
+  );
+  transform: translate(-50%, -50%);
+}
+
+.agent-mic-hover-glow {
+  position: absolute;
+  z-index: 1;
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgb(255 255 255 / 34%), rgb(255 255 255 / 12%) 54%, transparent 76%);
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.96);
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+  will-change: transform, opacity;
+}
+
+.agent-mic-waveform {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 100ms ease;
+}
+
+.agent-mic-waveform-bar {
+  width: 2px;
+  height: 22px;
+  border-radius: 2px;
+  background: currentColor;
+  transform: scaleY(var(--agent-wave, 0.12));
+  transition: transform 70ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.agent-mic-label {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgb(255 255 255 / 72%);
+  text-shadow: 0 1px 8px rgb(0 0 0 / 70%);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agent-mic-control:not(.listening):not(.waiting):not(.unavailable) .agent-mic-button:hover {
+    color: #fff;
+    border-color: rgb(255 255 255 / 48%);
+  }
+
+  .agent-mic-control:not(.listening):not(.waiting):not(.unavailable) .agent-mic-button:hover::before {
+    transform: scale(1.07);
+  }
+
+  .agent-mic-control:not(.listening):not(.waiting):not(.unavailable) .agent-mic-button:hover::after {
+    opacity: 0.62;
+  }
+
+  .agent-mic-control:not(.listening):not(.waiting):not(.unavailable) .agent-mic-button:hover .agent-mic-icon {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+
+  .agent-mic-control:not(.listening):not(.waiting):not(.unavailable) .agent-mic-button:hover .agent-mic-hover-glow {
+    opacity: 1;
+    transform: scale(1.07);
+  }
+
+  .agent-mic-control:not(.listening):not(.waiting):not(.unavailable):has(.agent-mic-button:hover)
+    .agent-mic-outer-waves {
+    opacity: 0;
+  }
+
+  .agent-mic-control:not(.listening):not(.waiting):not(.unavailable):has(.agent-mic-button:hover)
+    .agent-mic-outer-wave {
+    animation-play-state: paused;
+  }
+}
+
+.agent-mic-control:not(.listening):not(.waiting):not(.unavailable) .agent-mic-outer-waves {
+  opacity: 1;
+}
+
+.agent-mic-control:not(.listening):not(.waiting):not(.unavailable) .agent-mic-outer-wave {
+  animation: agent-mic-outer-wave 1.8s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}
+
+.agent-mic-control.waiting .agent-mic-button {
+  color: rgb(255 255 255 / 54%);
+  background: rgb(8 8 10 / 34%);
+  border-color: rgb(255 255 255 / 16%);
+  cursor: wait;
+  transform: scale(0.96);
+}
+
+.agent-mic-control.waiting .agent-mic-button::before {
+  background: rgb(190 190 198 / 20%);
+  border-color: rgb(255 255 255 / 28%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 10%),
+    0 6px 20px rgb(0 0 0 / 20%);
+}
+
+.agent-mic-control.waiting .agent-mic-button::after {
+  opacity: 0.2;
+}
+
+.agent-mic-control.waiting .agent-mic-icon {
+  opacity: 0.58;
+  transform: scale(0.94);
+}
+
+.agent-mic-control.waiting .agent-mic-label {
+  color: rgb(255 255 255 / 56%);
+}
+
+.agent-mic-control.unavailable .agent-mic-button {
+  color: rgb(255 255 255 / 40%);
+  background: rgb(8 8 10 / 26%);
+  border-color: rgb(255 255 255 / 12%);
+  cursor: not-allowed;
+}
+
+.agent-mic-control.unavailable .agent-mic-button::before {
+  background: rgb(190 190 198 / 14%);
+  border: 1px solid rgb(255 255 255 / 22%);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 4%),
+    0 6px 20px rgb(0 0 0 / 16%);
+}
+
+.agent-mic-control.unavailable .agent-mic-button::after {
+  opacity: 0.12;
+}
+
+.agent-mic-control.unavailable .agent-mic-icon {
+  mask: url("/js/agent/icons/mic-disabled.svg") center / contain no-repeat;
+  -webkit-mask: url("/js/agent/icons/mic-disabled.svg") center / contain no-repeat;
+}
+
+.agent-mic-control.unavailable .agent-mic-label {
+  color: rgb(255 255 255 / 44%);
+}
+
+.agent-mic-control.listening .agent-mic-button {
+  color: var(--agent-mic-active);
+  border-color: rgb(255 255 255 / 16%);
+  transform: scale(0.9);
+  transition:
+    transform 130ms cubic-bezier(0.215, 0.61, 0.355, 1),
+    color 150ms ease,
+    border-color 150ms ease;
+}
+
+.agent-mic-control.listening .agent-mic-button::after {
+  opacity: 1;
+  transition-duration: 120ms;
+  transition-timing-function: cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.agent-mic-control.listening .agent-mic-button::before {
+  background: rgb(64 31 251 / 32%);
+  border-color: var(--agent-mic-active-edge);
+  transform: scale(1.08);
+  transition:
+    transform 130ms cubic-bezier(0.215, 0.61, 0.355, 1),
+    border-color 150ms ease,
+    background-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.agent-mic-control.listening .agent-mic-icon {
+  opacity: 0;
+  transform: scale(0.8);
+}
+
+.agent-mic-control.listening .agent-mic-waveform {
+  opacity: 1;
+}
+
+.agent-mic-control.listening .agent-mic-inner-waves {
+  opacity: 1;
+}
+
+.agent-mic-control.listening .agent-mic-inner-wave {
+  animation: agent-mic-inner-wave 2.7s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}
+
+.agent-mic-outer-wave:nth-child(2) {
+  animation-delay: -0.6s;
+}
+
+.agent-mic-outer-wave:nth-child(3) {
+  animation-delay: -1.2s;
+}
+
+.agent-mic-inner-wave:nth-child(2) {
+  animation-delay: -0.9s;
+}
+
+.agent-mic-inner-wave:nth-child(3) {
+  animation-delay: -1.8s;
+}
+
+@keyframes agent-mic-outer-wave {
+  0% {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  14% {
+    opacity: 0.5;
+  }
+  65% {
+    opacity: 0.18;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.2);
+  }
+}
+
+@keyframes agent-mic-inner-wave {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  14% {
+    opacity: 0.42;
+  }
+  72% {
+    opacity: 0.14;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(var(--agent-mic-inner-wave-scale));
+  }
+}
+
+.agent-mic-button:focus-visible {
+  outline: 2px solid var(--ctl-accent);
+  outline-offset: 5px;
+}
+
+.agent-cockpit.brain-open .agent-mic-control {
+  display: none;
+}
+
 .agent-panel {
   position: absolute;
   top: 14px;
@@ -5962,6 +6386,37 @@ select.skill-input {
      float over it (they live on Teleop/Collect anyway). */
   .agent-cockpit .sim-debug-stack {
     display: none !important; /* the stage sets display inline */
+  }
+
+  .agent-mic-control {
+    left: 50%;
+    top: 8vh;
+    bottom: auto;
+  }
+
+  .agent-mic-button {
+    --agent-mic-inner-wave-scale: 2.03;
+    width: 144px;
+    height: 144px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-mic-button,
+  .agent-mic-button::before,
+  .agent-mic-button::after,
+  .agent-mic-outer-waves,
+  .agent-mic-inner-waves,
+  .agent-mic-hover-glow,
+  .agent-mic-icon,
+  .agent-mic-waveform,
+  .agent-mic-waveform-bar {
+    transition: none;
+  }
+
+  .agent-mic-control:not(.listening) .agent-mic-outer-wave,
+  .agent-mic-control.listening .agent-mic-inner-wave {
+    animation: none;
   }
 }
 
@@ -6328,37 +6783,6 @@ select.skill-input {
   color: var(--ctl-accent-hover);
   background: var(--ctl-glass-hover);
   border-color: var(--ctl-edge-accent-hover);
-}
-
-/* Sim only: talk to the agent. The ring brightens with --mic-level (0..1, set
-   per audio chunk) so a live microphone is visibly being heard. */
-.agent-compose-mic {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  color: var(--ctl-text);
-  background: var(--ctl-glass);
-  border: 1px solid var(--hairline-strong);
-  border-radius: 11px;
-  box-shadow: var(--ctl-sheen);
-  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
-}
-
-.agent-compose-mic:hover:not(:disabled) {
-  color: var(--ctl-accent);
-  background: var(--ctl-glass-hover);
-}
-
-.agent-compose-mic:disabled {
-  opacity: 0.5;
-}
-
-.agent-compose-mic.active {
-  color: var(--ctl-accent);
-  border-color: var(--ctl-edge-accent-hover);
-  box-shadow: 0 0 0 calc(3px * var(--mic-level, 0)) var(--accent-dim);
 }
 
 /* Bottom-left "agent active" chip — only while the brain is running. */

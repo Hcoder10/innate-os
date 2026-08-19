@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from brain_client.common.enums import StrEnum
 from brain_client.perception import pose as pose_math
 from brain_client.perception.pose import Pose
+from brain_client.state.battery import Battery
 
 
 class EventKind(StrEnum):
@@ -60,6 +61,7 @@ def observation_text(
     *,
     uptime_s: int,
     pose: Pose | None,
+    battery: Battery | None,
     running_skill: str | None,
     guidance: str,
     events: list[Event],
@@ -69,6 +71,8 @@ def observation_text(
     status = f"[t+{uptime_s}s]"
     if pose is not None:
         status += f" pose: x={pose[0]:.2f}m y={pose[1]:.2f}m heading={math.degrees(pose[2]):.0f}°"
+    if battery is not None:
+        status += f" | battery: {battery.percentage:.0%}"
     if running_skill:
         status += f" | running skill: {running_skill}"
     lines = [status]

@@ -30,16 +30,26 @@ import {
  * @param {HTMLElement} root cockpit root — the panel mounts as a right-edge overlay.
  * @param {import("../rosClient.js").RosClient} rosClient
  * @param {ReturnType<typeof import("../teleop/agentState.js").sharedAgentState>} agentState
- * @param {{ onView: (view: "live" | "brain") => void, mic?: boolean }} opts
+ * @param {{
+ *   onView: (view: "live" | "brain") => void,
+ *   enableMic?: boolean,
+ *   onMicState?: (state: {on: boolean, busy: boolean, level: number, waveform: number[], error: string | null}) => void
+ * }} opts
  *   onView is the stage-view switch, owned by the page; setView reflects a flip
- *   the page made itself (chip, Esc). mic adds the talk-to-the-agent toggle —
- *   sim only, where the browser is the robot's microphone (see micStream.js).
- * @returns {{ destroy: () => void, setView: (view: "live" | "brain") => void }}
+ *   the page made itself (chip, Esc). enableMic connects the browser microphone
+ *   in sim, where the robot has no physical microphone (see micStream.js).
+ * @returns {{
+ *   destroy: () => void,
+ *   setView: (view: "live" | "brain") => void,
+ *   startMic: () => Promise<void>,
+ *   stopMic: () => void
+ * }}
  */
 export function createAgentPanel(root, rosClient, agentState, opts) {
   const selfOrigin = crypto.randomUUID?.() ?? `web-${Date.now()}-${Math.random()}`;
-  /** @type {ReturnType<typeof createMicStream> | null} */
-  let mic = null;
+  const mic = opts.enableMic
+    ? createMicStream(rosClient, (state) => opts.onMicState?.(state))
+    : null;
 
   const panel = document.createElement("section");
   panel.className = "overlay agent-panel";
@@ -140,8 +150,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   send.className = "agent-compose-send";
   send.textContent = "Send";
   send.title = CHAT_IN_TOPIC;
-  const micButton = opts.mic ? createMicButton() : null;
-  form.append(input, ...(micButton ? [micButton] : []), send);
+  form.append(input, send);
 
   panel.append(head, controls, activeSkill, streamLabel, stream, form);
   root.append(panel);
@@ -360,11 +369,12 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     snapIfAtBottom(wasAtBottom);
   }
 
-  /** @type {Map<string, { wrap: HTMLElement, head: HTMLElement, status: HTMLElement, hasDetail: boolean }>} */
+  /** @type {Map<string, { wrap: HTMLElement, head: HTMLElement, args: HTMLElement, status: HTMLElement, hasDetail: boolean }>} */
   const skillRuns = new Map();
 
-  /** @param {string} key @param {string} name @param {string} status @param {number} ts @param {string} [reason] */
-  function addSkillRun(key, name, status, ts, reason) {
+  /** @param {string} key @param {string} name @param {string} status @param {number} ts @param {string} [reason]
+   *  @param {any} [args] */
+  function addSkillRun(key, name, status, ts, reason, args) {
     const wasAtBottom = atBottom();
     const cls = ["running", "completed", "failed", "interrupted"].includes(status) ? status : "running";
     // Reflect the running primitive in the Active Skill readout.
@@ -389,17 +399,26 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       const nameEl = document.createElement("span");
       nameEl.className = "chat-skill-name";
       nameEl.textContent = name.replace(/_/g, " ");
+      const argsEl = document.createElement("span");
+      argsEl.className = "chat-skill-args mono";
       const statusEl = document.createElement("span");
       statusEl.className = "chat-skill-status mono";
       statusEl.title = SKILL_STATUS_UPDATE_TOPIC;
-      head.append(tag, nameEl, statusEl);
+      head.append(tag, nameEl, argsEl, statusEl);
       wrap.append(head);
       stream.appendChild(wrap);
-      run = { wrap, head, status: statusEl, hasDetail: false };
+      run = { wrap, head, args: argsEl, status: statusEl, hasDetail: false };
       skillRuns.set(key, run);
     }
     run.wrap.className = `chat-skill ${cls}`;
     if (run.hasDetail) run.wrap.classList.add("has-detail");
+    // Terminal updates repeat the inputs; keep the last non-empty rendering so
+    // a publisher that omits them can't blank args the run already showed.
+    const inputs = formatSkillArgs(args);
+    if (inputs.text) {
+      run.args.textContent = inputs.text;
+      run.args.title = inputs.full;
+    }
     run.status.textContent = cls;
 
     // A failed run carries the failure reason / error — show it expanded
@@ -436,36 +455,13 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     if (id) await withApplying(() => agentState.setDirective(id));
   }
 
-  /** Talk to the agent: the browser's mic, streamed to the sim as the robot's
-   *  own (micStream.js). Turning it on starts an idle agent, as sending does. */
-  function createMicButton() {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "agent-compose-mic";
-    button.title = "Talk to the agent";
-    button.setAttribute("aria-label", "Talk to the agent");
-    button.setAttribute("aria-pressed", "false");
-    button.innerHTML =
-      '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" ' +
-      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-      '<rect x="9" y="3" width="6" height="11" rx="3"/>' +
-      '<path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/>' +
-      "</svg>";
+  async function startMic() {
+    await startIfIdle();
+    await mic?.start();
+  }
 
-    mic = createMicStream(rosClient, (state) => {
-      button.classList.toggle("active", state.on);
-      button.disabled = state.busy;
-      button.setAttribute("aria-pressed", String(state.on));
-      button.title = state.error ?? (state.on ? "Listening — click to stop" : "Talk to the agent");
-      // The ring tracks speech level so it is obvious the mic is being heard.
-      button.style.setProperty("--mic-level", state.on ? String(Math.min(1, state.level * 6)) : "0");
-    });
-
-    button.addEventListener("click", async () => {
-      await startIfIdle();
-      await mic?.toggle();
-    });
-    return button;
+  function stopMic() {
+    mic?.stop();
   }
 
   async function submit() {
@@ -543,7 +539,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       const status = String(e?.taskStatus ?? "");
       if (!name || !status) return;
       const key = String(e?.primitiveId ?? e?.skillId ?? name);
-      addSkillRun(key, name, status, ts, typeof e?.failureReason === "string" ? e.failureReason : "");
+      addSkillRun(key, name, status, ts, typeof e?.failureReason === "string" ? e.failureReason : "", e?.args);
       return;
     }
     const text = String(e?.text ?? "");
@@ -615,11 +611,13 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     if (!name || !status) return;
     const key = String(payload?.primitive_id ?? payload?.skill_id ?? name);
     const reason = typeof payload?.reason === "string" ? payload.reason : "";
-    addSkillRun(key, name, status, Number(payload?.timestamp) || Date.now() / 1000, reason);
+    addSkillRun(key, name, status, Number(payload?.timestamp) || Date.now() / 1000, reason, payload?.args);
   }, undefined, "std_msgs/msg/String");
 
   return {
     setView,
+    startMic,
+    stopMic,
     destroy() {
       mic?.destroy();
       if (flashTimer) clearTimeout(flashTimer);
@@ -645,6 +643,31 @@ function viewButton(label, title) {
   btn.textContent = label;
   btn.title = title;
   return btn;
+}
+
+/**
+ * A skill's inputs on one line: `text` clipped for the run's header row, `full`
+ * intact for its hover title. A lone input reads better as its bare value
+ * ("head emotion  happy") — the skill name already says what it is; several
+ * need their keys to stay legible.
+ * @param {any} args
+ * @returns {{ text: string, full: string }}
+ */
+function formatSkillArgs(args) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return { text: "", full: "" };
+  const entries = Object.entries(args).filter(([, v]) => v !== null && v !== undefined && v !== "");
+  if (entries.length === 0) return { text: "", full: "" };
+  const show = (/** @type {any} */ v) => roundNums(typeof v === "object" ? JSON.stringify(v) : String(v));
+  const line = (/** @type {(v: any) => string} */ value) =>
+    entries.length === 1
+      ? value(entries[0][1])
+      : entries.map(([k, v]) => `${k.replace(/_/g, " ")}: ${value(v)}`).join(" · ");
+  return { text: line((v) => clip(show(v), 40)), full: line(show) };
+}
+
+/** @param {string} text @param {number} max */
+function clip(text, max) {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
 /**

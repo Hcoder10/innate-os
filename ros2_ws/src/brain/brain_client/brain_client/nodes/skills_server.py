@@ -280,7 +280,7 @@ class SkillsActionServer(Node):
         else:
             name = skill_type
         run_id = uuid.uuid4().hex
-        self._publish_skill_status(run_id, skill_type, name, "running")
+        self._publish_skill_status(run_id, skill_type, name, "running", args=inputs)
         try:
             if entry is not None:
                 result = self._execute_code_skill(goal_handle, skill_type, inputs, entry)
@@ -297,10 +297,10 @@ class SkillsActionServer(Node):
             # consumers (the web app's external-run banner) clear the banner
             # for the run that just started.
             status, reason = self._terminal_skill_status(result)
-            self._publish_skill_status(run_id, skill_type, name, status, reason)
+            self._publish_skill_status(run_id, skill_type, name, status, reason, args=inputs)
         except Exception as e:
             # Clients stick on "running" forever without a terminal status.
-            self._publish_skill_status(run_id, skill_type, name, "failed", str(e) or "internal error")
+            self._publish_skill_status(run_id, skill_type, name, "failed", str(e) or "internal error", args=inputs)
             raise
         finally:
             self._release_skill_slot()
@@ -323,7 +323,13 @@ class SkillsActionServer(Node):
         return "failed", result.message or None
 
     def _publish_skill_status(
-        self, run_id: str, skill_type: str, name: str, status: str, reason: str | None = None
+        self,
+        run_id: str,
+        skill_type: str,
+        name: str,
+        status: str,
+        reason: str | None = None,
+        args: dict | None = None,
     ) -> None:
         payload = {
             "primitive_name": name,
@@ -335,6 +341,10 @@ class SkillsActionServer(Node):
         }
         if reason:
             payload["reason"] = reason
+        # The inputs the run was given — "head emotion" alone doesn't say which
+        # emotion, so clients show them alongside the name.
+        if args:
+            payload["args"] = args
         self._skill_status_pub.publish(String(data=json.dumps(payload)))
 
     def _create_run_node(self):

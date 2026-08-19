@@ -115,6 +115,15 @@ field. Four nesting levels become guard clauses with merged conditions. The magi
 that survives states an invariant the code can't show. The blanket `try` is gone — nothing
 here can raise, and the ROS callback boundary that *calls* this already owns crash reporting.
 
+### Tests are a development tool, not a deliverable
+
+Write tests freely *while* developing — they are the fastest way to prove a change does what
+you think. Then **delete the ones you wrote before pushing the PR**. A new test file ships
+only when the user asked for tests.
+
+The existing suite is different: keep it passing, and update a test the change legitimately
+invalidates. Never delete someone else's test to make a change look clean.
+
 ### Done means verified
 
 Before reporting work complete, all three must be clean:
