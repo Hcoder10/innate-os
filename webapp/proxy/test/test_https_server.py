@@ -50,11 +50,22 @@ async def test_gzip_text_assets(tmp_path):
         r2 = await s.get(base + "/assets/big.js", headers={"Accept-Encoding": "gzip", "If-None-Match": gz_etag})
         assert r2.status == 304 and await r2.read() == b""
 
-        # a client that takes no gzip gets the plain file, under a different ETag
+        # a client that takes no gzip gets the plain file, under a different ETag,
+        # and the identity representation declares the same Vary as the gzip one
         r3 = await s.get(base + "/assets/big.js", headers={"Accept-Encoding": "identity"})
         assert r3.headers.get("Content-Encoding") is None
+        assert r3.headers["Vary"] == "Accept-Encoding"
         assert r3.headers["ETag"] != gz_etag
         assert await r3.text() == big
+
+        # an explicit rejection (q=0) means identity too — "gzip" as a substring
+        # is not acceptance; a bare wildcard is
+        r4 = await s.get(base + "/assets/big.js", headers={"Accept-Encoding": "gzip;q=0, identity"})
+        assert r4.headers.get("Content-Encoding") is None
+        await r4.read()
+        r5 = await s.get(base + "/assets/big.js", headers={"Accept-Encoding": "*"})
+        assert r5.headers["Content-Encoding"] == "gzip"
+        assert await r5.text() == big
 
 
 @sync
@@ -81,16 +92,22 @@ async def test_vendor_assets_cache_forever(tmp_path):
     root = make_app_root(tmp_path)
     vendor = root / "public" / "vendor"
     vendor.mkdir(parents=True)
-    (vendor / "three.module.min.js").write_text("export const x = 1;\n" * 200)
+    (vendor / "three.module.min.r160.js").write_text("export const x = 1;\n" * 200)
+    (vendor / "unversioned.js").write_text("export const y = 2;\n" * 200)
     async with serve(ROOT=root) as (s, base):
-        r = await s.get(base + "/public/vendor/three.module.min.js", headers={"Accept-Encoding": "gzip"})
+        r = await s.get(base + "/public/vendor/three.module.min.r160.js", headers={"Accept-Encoding": "gzip"})
         assert r.headers["Cache-Control"] == "public, max-age=31536000, immutable"
         assert r.headers["Content-Encoding"] == "gzip"
         await r.read()
-        # everything outside public/vendor stays no-cache
-        r2 = await s.get(base + "/assets/app.js")
+        # immutable only where the filename names its version — an unversioned
+        # vendor file replaced in place must not stay pinned for a year
+        r2 = await s.get(base + "/public/vendor/unversioned.js")
         assert r2.headers["Cache-Control"] == "no-cache"
         await r2.read()
+        # everything outside public/vendor stays no-cache
+        r3 = await s.get(base + "/assets/app.js")
+        assert r3.headers["Cache-Control"] == "no-cache"
+        await r3.read()
 
 
 @sync

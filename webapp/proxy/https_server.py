@@ -39,10 +39,12 @@ import logging
 import mimetypes
 import os
 import posixpath
+import re
 import shutil
 import ssl
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import aiohttp
@@ -211,8 +213,11 @@ GZIP_MAX_BYTES = 4 * 1024 * 1024  # a mesh this large stays a sendfile rather th
 GZIP_CACHE_BUDGET = 24 * 1024 * 1024  # the whole app compresses to well under this; the cap bounds a Jetson's RSS
 
 # (path, mtime_ns, size) -> gzipped bytes. Insertion-ordered, evicted oldest-first.
+# _gzipped runs on executor threads (asyncio.to_thread), and a cold load is many
+# concurrent misses — the byte counter and the eviction loop race without the lock.
 _GZIP_CACHE: "dict[tuple[str, int, int], bytes]" = {}
 _gzip_cache_bytes = 0
+_gzip_lock = threading.Lock()
 
 
 def _gzipped(path: Path, stat: os.stat_result) -> bytes:
@@ -222,19 +227,39 @@ def _gzipped(path: Path, stat: os.stat_result) -> bytes:
     restart cannot change what a revalidating browser is holding."""
     global _gzip_cache_bytes
     key = (str(path), stat.st_mtime_ns, stat.st_size)
-    hit = _GZIP_CACHE.get(key)
+    with _gzip_lock:
+        hit = _GZIP_CACHE.get(key)
     if hit is not None:
         return hit
     body = gzip.compress(path.read_bytes(), compresslevel=6, mtime=0)
-    _GZIP_CACHE[key] = body
-    _gzip_cache_bytes += len(body)
-    while _gzip_cache_bytes > GZIP_CACHE_BUDGET and len(_GZIP_CACHE) > 1:
-        _gzip_cache_bytes -= len(_GZIP_CACHE.pop(next(iter(_GZIP_CACHE))))
+    with _gzip_lock:
+        if key not in _GZIP_CACHE:  # a concurrent miss compressed it too; count it once
+            _GZIP_CACHE[key] = body
+            _gzip_cache_bytes += len(body)
+        while _gzip_cache_bytes > GZIP_CACHE_BUDGET and len(_GZIP_CACHE) > 1:
+            _gzip_cache_bytes -= len(_GZIP_CACHE.pop(next(iter(_GZIP_CACHE))))
     return body
 
 
 def _matches_etag(header: str, etag: str) -> bool:
     return any(t.strip().removeprefix("W/") in (etag, "*") for t in header.split(","))
+
+
+def _accepts_gzip(header: str) -> bool:
+    """Whether Accept-Encoding allows gzip. An explicit gzip token outranks a
+    wildcard, and q=0 on the winning token is a rejection — a substring test
+    would read `gzip;q=0` as acceptance and serve bytes the client can't decode."""
+    q: dict[str, float] = {}
+    for token in header.split(","):
+        coding, _, params = token.partition(";")
+        params = params.strip()
+        try:
+            weight = float(params[2:]) if params.startswith("q=") else 1.0
+        except ValueError:
+            weight = 0.0
+        q[coding.strip().lower()] = weight
+    winner = q.get("gzip", q.get("*"))
+    return winner is not None and winner > 0
 
 
 def _gzip_candidate(path: Path, request: web.Request) -> "os.stat_result | None":
@@ -243,13 +268,18 @@ def _gzip_candidate(path: Path, request: web.Request) -> "os.stat_result | None"
     serves better as-is."""
     if path.suffix not in COMPRESSIBLE or "Range" in request.headers:
         return None
-    if "gzip" not in request.headers.get("Accept-Encoding", ""):
+    if not _accepts_gzip(request.headers.get("Accept-Encoding", "")):
         return None
     try:
         stat = path.stat()
     except OSError:
         return None
     return stat if GZIP_MIN_BYTES <= stat.st_size <= GZIP_MAX_BYTES else None
+
+
+# A vendor filename that names its version, e.g. three.module.min.r160.js — the
+# segment before the extension starts with a digit (an optional r/v prefix allowed).
+_VENDOR_VERSIONED = re.compile(r"\.[rv]?\d[\w.]*\.\w+$")
 
 
 async def _serve_static(path: Path, request: web.Request) -> web.StreamResponse:
@@ -260,17 +290,23 @@ async def _serve_static(path: Path, request: web.Request) -> web.StreamResponse:
     A gzipped body is a different representation of the same file, so it carries
     its own ETag — a client that stops sending Accept-Encoding revalidates against
     the identity ETag and gets the plain file back, never a mislabelled body."""
-    # public/vendor holds pinned libraries (three.js r160 etc.) — updated by
-    # replacing the file, never edited — so browsers may cache them for good.
-    # Everything else is no-cache: the zero-build app's "deploy" is a file edit.
-    vendored = path.is_relative_to(ROOT / "public" / "vendor")
+    # public/vendor holds pinned libraries whose filenames carry their version
+    # (three.module.min.r160.js): a bump is a new URL, so browsers may cache
+    # these for good without `immutable` ever pinning a stale copy — which is
+    # why an unversioned vendor file gets no-cache like everything else (the
+    # zero-build app's "deploy" is a file edit).
+    vendored = path.is_relative_to(ROOT / "public" / "vendor") and _VENDOR_VERSIONED.search(path.name)
     cache = "public, max-age=31536000, immutable" if vendored else "no-cache"
     headers = {"Content-Type": _content_type(path), "Cache-Control": cache}
+    if path.suffix in COMPRESSIBLE:
+        # Declared on the identity representation too — the two answers for one
+        # URL must agree on Vary or an intermediary can't negotiate them.
+        headers["Vary"] = "Accept-Encoding"
     stat = _gzip_candidate(path, request)
     if stat is None:
         return web.FileResponse(path, headers=headers)
     etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}-gz"'
-    headers |= {"ETag": etag, "Vary": "Accept-Encoding"}
+    headers |= {"ETag": etag}
     if _matches_etag(request.headers.get("If-None-Match", ""), etag):
         return web.Response(status=304, headers=headers)
     body = await asyncio.to_thread(_gzipped, path, stat)

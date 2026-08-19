@@ -39,13 +39,10 @@ let _shared;
  * their own subscriptions on unmount; nothing destroys the state itself.
  */
 export function sharedAgentState() {
-  return (_shared ??= createAgentState(ros));
+  return (_shared ??= createAgentState());
 }
 
-/**
- * @param {import("../rosClient.js").RosClient} rosClient
- */
-function createAgentState(rosClient) {
+function createAgentState() {
   /** @type {AgentSnapshot} */
   let state = { agents: [], broken: [], currentDirective: "", activeSkills: new Set(), brainActive: false };
   /** @type {Set<(s: AgentSnapshot) => void>} */
@@ -92,9 +89,9 @@ function createAgentState(rosClient) {
   let brainSeen = false;
 
   async function refresh() {
-    if (rosClient.state !== "connected" || !brainSeen) return;
+    if (ros.state !== "connected" || !brainSeen) return;
     try {
-      const v = await rosClient.callService(GET_AVAILABLE_DIRECTIVES_SERVICE, {});
+      const v = await ros.callService(GET_AVAILABLE_DIRECTIVES_SERVICE, {});
       const entries = Array.isArray(v?.directives)
         ? v.directives
         : typeof v?.directives === "string"
@@ -168,10 +165,10 @@ function createAgentState(rosClient) {
   async function setDirective(id) {
     try {
       if (id) {
-        rosClient.publish(SET_DIRECTIVE_TOPIC, { data: id });
-        await rosClient.callService(SET_BRAIN_ACTIVE_SERVICE, { data: true });
+        ros.publish(SET_DIRECTIVE_TOPIC, { data: id });
+        await ros.callService(SET_BRAIN_ACTIVE_SERVICE, { data: true });
       } else {
-        await rosClient.callService(SET_BRAIN_ACTIVE_SERVICE, { data: false });
+        await ros.callService(SET_BRAIN_ACTIVE_SERVICE, { data: false });
       }
     } catch {
       // The refresh below reflects the brain's real state regardless.
@@ -186,7 +183,7 @@ function createAgentState(rosClient) {
     const next = new Set(state.activeSkills);
     if (next.has(skillId)) next.delete(skillId);
     else next.add(skillId);
-    rosClient.publish(SET_ACTIVE_SKILLS_TOPIC, {
+    ros.publish(SET_ACTIVE_SKILLS_TOPIC, {
       data: JSON.stringify({ agent_id: state.currentDirective, skills: [...next] }),
     });
     // Don't flip the toggle locally — re-pull so the UI shows what the brain
@@ -196,7 +193,7 @@ function createAgentState(rosClient) {
 
   /** @param {string} [memoryState] @returns {Promise<any>} */
   function resetBrain(memoryState = "") {
-    return rosClient.callService(RESET_BRAIN_SERVICE, { memory_state: memoryState });
+    return ros.callService(RESET_BRAIN_SERVICE, { memory_state: memoryState });
   }
 
   // Live state pushed by the brain. The heartbeat re-emits an unchanged sample
@@ -204,7 +201,7 @@ function createAgentState(rosClient) {
   // churn. The roster still comes from refresh(); this only updates the live
   // bits (a status arriving before the first roster is fine — the picker just
   // stays empty until refresh lands).
-  rosClient.subscribe(AGENT_STATUS_TOPIC, (msg) => {
+  ros.subscribe(AGENT_STATUS_TOPIC, (msg) => {
     let payload;
     try {
       payload = JSON.parse(msg?.data ?? "");
@@ -232,7 +229,7 @@ function createAgentState(rosClient) {
     emit();
   }, undefined, "std_msgs/msg/String");
 
-  rosClient.onStateChange((s) => {
+  ros.onStateChange((s) => {
     if (s === "connected") {
       resetRetry();
       void refresh();

@@ -22,21 +22,23 @@ import { SIM_SECTIONS } from "./railLayout.js";
 
 /**
  * @typedef {{ destroy: () => void }} PageView
- * @typedef {{ path: string, key: string, load: () => Promise<{ mount: (stage: HTMLElement) => PageView | Promise<PageView> }> }} Route
+ * @typedef {{ path: string, key: string, warm?: boolean, load: () => Promise<{ mount: (stage: HTMLElement) => PageView | Promise<PageView> }> }} Route
  */
 
 // Agent is the site root; every other section lives at /<key>. `key` matches
 // the shell's section keys so setActive can highlight the right rail link.
 // /brain is an alias into the Agent page (which opens its Brain monitor when
 // mounted at that path, then settles the URL at the root) — old bookmarks keep
-// working and the rail highlights Agent.
+// working and the rail highlights Agent. `warm` marks the routes prefetchRoutes
+// preloads after first mount (the flag lives here so renaming a key can't
+// silently detach it).
 /** @type {Route[]} */
 const ROUTES = [
-  { path: "/", key: "agent", load: () => import("./agent/main.js") },
-  { path: "/agent", key: "agent", load: () => import("./agent/main.js") },
-  { path: "/brain", key: "agent", load: () => import("./agent/main.js") },
-  { path: "/teleop", key: "teleop", load: () => import("./teleop/main.js") },
-  { path: "/nav", key: "nav", load: () => import("./nav/main.js") },
+  { path: "/", key: "agent", warm: true, load: () => import("./agent/main.js") },
+  { path: "/agent", key: "agent", warm: true, load: () => import("./agent/main.js") },
+  { path: "/brain", key: "agent", warm: true, load: () => import("./agent/main.js") },
+  { path: "/teleop", key: "teleop", warm: true, load: () => import("./teleop/main.js") },
+  { path: "/nav", key: "nav", warm: true, load: () => import("./nav/main.js") },
   { path: "/logging", key: "logging", load: () => import("./logging/main.js") },
   { path: "/datasets", key: "datasets", load: () => import("./datasets/main.js") },
   { path: "/collect", key: "collect", load: () => import("./collect/main.js") },
@@ -93,7 +95,10 @@ async function render(route) {
     route = ROUTES[0];
     pending = route.load();
   }
-  if (seq !== navSeq) return; // superseded while awaiting config
+  if (seq !== navSeq) {
+    void pending.catch(() => {}); // superseded while awaiting config; don't strand the load's rejection
+    return;
+  }
   // Destroy BEFORE building the next page: the outgoing destroy() stops running
   // skills/drive and frees socket-bound panels, and clears the stage.
   if (currentView) {
@@ -214,19 +219,18 @@ if (connectTarget) {
 // routes a session actually switches to, so those rail clicks are instant.
 void render(routeFor(location.pathname)).then(prefetchRoutes);
 
-// Only the cockpit neighbours: warming all twelve routes pulled ~140 KB (and a
-// long tail of requests) off the robot's uplink on every load, mostly for pages
-// the session never opens. An unwarmed route is one dynamic import away (~50 ms
-// on a LAN) — cold-open cost, not correctness. Strictly after the first page has
-// mounted, and one route at a time: the browser counts the main thread as idle
-// while the first page still waits on the network, so an earlier idle callback
-// put the warm-up on the same six connections as the page the user asked for.
-const WARM_KEYS = new Set(["agent", "teleop", "nav"]);
-
+// Only the `warm` cockpit neighbours: warming all twelve routes pulled ~140 KB
+// (and a long tail of requests) off the robot's uplink on every load, mostly for
+// pages the session never opens. An unwarmed route is one dynamic import away
+// (~50 ms on a LAN) — cold-open cost, not correctness. Strictly after the first
+// page has mounted, and one route at a time: the browser counts the main thread
+// as idle while the first page still waits on the network, so an earlier idle
+// callback put the warm-up on the same six connections as the page the user
+// asked for.
 async function prefetchRoutes() {
   const idle = /** @type {any} */ (window).requestIdleCallback || ((/** @type {() => void} */ fn) => setTimeout(fn, 1500));
   await new Promise((resolve) => idle(resolve));
   for (const route of ROUTES) {
-    if (route.key !== currentKey && WARM_KEYS.has(route.key)) await route.load().catch(() => {});
+    if (route.warm && route.key !== currentKey) await route.load().catch(() => {});
   }
 }

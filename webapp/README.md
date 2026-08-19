@@ -59,7 +59,10 @@ stays fast only by keeping bytes and round trips deliberate. Four rules do that:
 
 - **The front door gzips text assets** and caches the compressed bytes per file
   identity, so a cold load moves ~350 KB instead of ~1.8 MB. The pinned vendor
-  libraries under `public/vendor/` are additionally served immutable.
+  libraries under `public/vendor/` are additionally served immutable — their
+  filenames carry the version (`three.module.min.r160.js`) so a bump is a new
+  URL; an unversioned vendor file stays no-cache rather than pinning stale
+  bytes in every returning browser for a year.
 - **`index.html` names every first-paint module** in `<link rel="modulepreload">`.
   Without it the import graph is discovered a level at a time — five serial
   round trips before the page module is even requested. `node tests/preload.test.js`

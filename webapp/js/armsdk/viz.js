@@ -8,12 +8,14 @@
 // via setJoints() are eased toward per-frame, so the 4 Hz state poll renders
 // as continuous motion.
 //
-// three.js is vendored (pinned r160) under /public/vendor/ — the robot serves
-// everything itself, no CDN at runtime.
+// three.js is vendored under /public/vendor/ — the robot serves everything
+// itself, no CDN at runtime. The filenames carry the pinned version because the
+// front door serves vendor files immutable: a bump must be a new URL (new file
+// + these imports), or browsers keep the old bytes for up to a year.
 
-import * as THREE from "../../public/vendor/three.module.min.js";
-import { OrbitControls } from "../../public/vendor/OrbitControls.js";
-import { STLLoader } from "../../public/vendor/STLLoader.js";
+import * as THREE from "../../public/vendor/three.module.min.r160.js";
+import { OrbitControls } from "../../public/vendor/OrbitControls.r160.js";
+import { STLLoader } from "../../public/vendor/STLLoader.r160.js";
 
 const MODEL = "/armsdk/model";
 

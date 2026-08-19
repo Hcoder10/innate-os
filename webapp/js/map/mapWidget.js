@@ -32,28 +32,41 @@ import { MEMORY_COLOR, SEARCH_REPLAY_FRESH_S, ageAlpha, ageText, headerSkew, mem
 // The /map grid rides ONE session-lived subscription instead of one per mount.
 // The topic is latched, and rws replays the full grid — hundreds of KB of JSON
 // for an apartment — to every new subscriber, so re-subscribing on each page
-// switch re-downloaded an unchanged map. A newly mounted widget paints the
-// cached message synchronously; map changes (SLAM updates, a map switch) keep
-// flowing to the cache, and outside those the topic is silent, so the standing
-// subscription costs nothing.
+// switch re-downloaded an unchanged map. The permanent handler below pins
+// rosClient's ref-count for the topic above zero, so widgets add and remove
+// their own handlers through the ordinary ros.subscribe without ever tearing
+// the upstream subscription down; a newly mounted widget paints the cached
+// message synchronously. Map changes (SLAM updates, a map switch) keep flowing
+// to the cache, and outside those the topic is silent, so the standing
+// subscription costs nothing. Started on first widget mount, so sessions that
+// never show a map never subscribe.
 /** @type {any} */
 let lastMapMsg = null;
-/** @type {Set<(msg: any) => void>} */
-const mapFeed = new Set();
-let mapFeedStarted = false;
+/** @type {string | null} */
+let lastMapIp = null;
+let mapLatchStarted = false;
 
-function ensureMapFeed() {
-  if (mapFeedStarted) return;
-  mapFeedStarted = true;
+function ensureMapLatch() {
+  if (mapLatchStarted) return;
+  mapLatchStarted = true;
   ros.subscribe(
     MAP_TOPIC,
     (msg) => {
       lastMapMsg = msg;
-      for (const cb of mapFeed) cb(msg);
+      lastMapIp = ros.ip;
     },
     250,
     "nav_msgs/msg/OccupancyGrid",
   );
+  // The cache is one robot's grid: after connecting to a different robot it
+  // must not paint the old map while the new one latches (or never does, when
+  // that robot has no map publisher yet).
+  ros.onStateChange((_state, ip) => {
+    if (ip !== lastMapIp) {
+      lastMapMsg = null;
+      lastMapIp = null;
+    }
+  });
 }
 
 // Overlay palette — exported so the Nav page legend shows the same colors.
@@ -1749,8 +1762,8 @@ export function createMap(root, opts = {}) {
   render();
 
   syncLayerSubs();
-  ensureMapFeed();
-  mapFeed.add(onMap);
+  ensureMapLatch();
+  const unsubMap = ros.subscribe(MAP_TOPIC, onMap, 250, "nav_msgs/msg/OccupancyGrid");
   if (lastMapMsg) onMap(lastMapMsg);
   const unsubOdom = ros.subscribe(ODOM_TOPIC, onOdom, 100, "nav_msgs/msg/Odometry");
   const unsubAmcl = ros.subscribe(AMCL_POSE_TOPIC, onAmcl, 0, "geometry_msgs/msg/PoseWithCovarianceStamped");
@@ -1878,7 +1891,7 @@ export function createMap(root, opts = {}) {
       cancelAnimationFrame(memAnimFrame);
       document.removeEventListener("keydown", onKeyDown);
       ro.disconnect();
-      mapFeed.delete(onMap);
+      unsubMap();
       unsubOdom();
       unsubAmcl();
       for (const unsub of unsubPlans) unsub();

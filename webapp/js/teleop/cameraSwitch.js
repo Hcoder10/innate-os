@@ -143,20 +143,28 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
       const host = document.createElement("div");
       host.className = "cam-map-host";
       mapHost = host;
-      void import("../map/mapWidget.js").then((m) => {
-        if (mapHost !== host) return; // the map was turned off (or the strip torn down) mid-fetch
-        mapWidget = m.createMap(host, {
-          zoom: mapZoom[mapMode], // read on arrival: the size may have changed while it loaded
-          // Scroll-zoom persists against whichever size is showing now.
-          onZoomChange: (z) => {
-            mapZoom[mapMode] = z;
-            saveMapZoom();
-          },
-          // Memories pulse in live while you drive — the tour builds the
-          // robot's spatial memory, and this is where you watch it happen.
-          layers: { memories: true },
+      import("../map/mapWidget.js")
+        .then((m) => {
+          if (mapHost !== host) return; // the map was turned off (or the strip torn down) mid-fetch
+          mapWidget = m.createMap(host, {
+            zoom: mapZoom[mapMode], // read on arrival: the size may have changed while it loaded
+            // Scroll-zoom persists against whichever size is showing now.
+            onZoomChange: (z) => {
+              mapZoom[mapMode] = z;
+              saveMapZoom();
+            },
+            // Memories pulse in live while you drive — the tour builds the
+            // robot's spatial memory, and this is where you watch it happen.
+            layers: { memories: true },
+          });
+        })
+        .catch(() => {
+          // A dropped fetch must not blank the map for the session: with the
+          // host cleared, the next ensureMap() recreates it and retries.
+          if (mapHost !== host) return;
+          host.remove();
+          mapHost = null;
         });
-      });
     } else if (!mapOn && mapHost) {
       mapWidget?.destroy();
       mapHost.remove();
