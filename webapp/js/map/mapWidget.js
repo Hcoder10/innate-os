@@ -1782,17 +1782,36 @@ export function createMap(root, opts = {}) {
   const unsubMap = ros.subscribe(MAP_TOPIC, onMap, 250, "nav_msgs/msg/OccupancyGrid");
   if (lastMapMsg) onMap(lastMapMsg);
   // ensureMapLatch clears the module cache on a robot switch, but a MOUNTED
-  // widget still shows its rasterized grid and anchors — until the new robot
-  // publishes, or forever when it has no map publisher. Blank back to
-  // "waiting for /map" instead.
+  // widget still shows everything it rasterized from the old robot — grid,
+  // costmaps, scan, route, memories — until the new robot re-publishes each
+  // topic, or forever where it doesn't. Blank back to "waiting for /map".
+  // (A same-robot map switch is different: there the grid replays and the
+  // memory feed swaps itself, so mapChanged() keeps them — see onMemories.)
   let gridIp = ros.ip;
   const unsubConn = ros.onStateChange((_state, ip) => {
     const switched = ip !== gridIp;
     gridIp = ip;
-    if (!switched || !grid) return;
+    if (!switched) return;
     grid = null;
     gridCells = null;
     gridRev++;
+    costGrid = null;
+    localGrid = null;
+    scanMsg = null;
+    plan = null;
+    activePlanTopic = null;
+    goalMarker = null;
+    goalIsCommanded = false;
+    odomPose = null;
+    mappingPose = null;
+    // Forget "known" memories too, so the new robot's first payload adopts
+    // silently instead of pulsing its whole store as new.
+    memState = null;
+    memKnown = null;
+    memPulses.clear();
+    memPolyCache.clear();
+    setMemHover(null);
+    memSearchSeen = false;
     dropFrameState();
     draw();
   });
