@@ -35,6 +35,7 @@ from brain_client.core.lifecycle import BrainLifecycle
 from brain_client.core.state import BrainState
 from brain_client.memory.recorder import MemoryRecorder
 from brain_client.memory.store import MemoryStore
+from brain_client.perception.battery import BatteryMonitor
 from brain_client.perception.camera import CameraCapture
 from brain_client.perception.gaze_control import GazeController
 from brain_client.perception.pose_tracking import PoseTracker
@@ -140,6 +141,7 @@ class BrainClientNode(Node):
         self.camera = CameraCapture(self, cfg)
         self.pose_tracker = PoseTracker(self, odom_topic=cfg.odom_topic, nav_mode_topic=cfg.current_nav_mode_topic)
         self.scan_health = ScanHealthMonitor(self, scan_topic=cfg.scan_topic, stale_after_sec=cfg.scan_stale_after_sec)
+        self.battery = BatteryMonitor(self, self.chat, lambda: state.is_brain_active)
         # Spatial memory: the recorder builds it whenever the robot drives well-
         # localized (brain active or not); skills recall over it through the
         # /brain/search_memory action — the agent itself knows nothing of it.
@@ -191,6 +193,7 @@ class BrainClientNode(Node):
             gaze=self.gaze,
             proxy=self._proxy,
             scan_health=self.scan_health,
+            battery=self.battery,
             trace=lambda payload: self.brain_trace_pub.publish(String(data=payload)),
         )
         # Heavy traces (request bodies, frames — hundreds of KB per turn) are

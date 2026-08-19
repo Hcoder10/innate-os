@@ -55,6 +55,7 @@ if TYPE_CHECKING:
 
     from brain_client.core.config import BrainConfig
     from brain_client.core.state import BrainState, RunningSkill
+    from brain_client.perception.battery import BatteryMonitor
     from brain_client.perception.camera import CameraCapture
     from brain_client.perception.gaze_control import GazeController
     from brain_client.perception.pose import Pose
@@ -89,6 +90,7 @@ class BrainAgent:
         gaze: GazeController,
         proxy: ProxyClient | None = None,
         scan_health: ScanHealthMonitor | None = None,
+        battery: BatteryMonitor | None = None,
         trace: Callable[[str], None] | None = None,
     ):
         self._logger = node.get_logger()
@@ -96,6 +98,7 @@ class BrainAgent:
         self._config = config
         self._camera = camera
         self._pose = pose_tracker
+        self._battery = battery
         self._runner = runner
         self._roster = roster
         self._chat = chat
@@ -414,6 +417,7 @@ class BrainAgent:
         text = observation_text(
             uptime_s=int(time.monotonic() - self._activated_at),
             pose=self._pose_at_capture,
+            battery=self._battery.current if self._battery is not None else None,
             running_skill=running.primitive_name if running else None,
             guidance=self._running_guidance(running),
             events=events,
