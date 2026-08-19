@@ -183,16 +183,22 @@ class MemoryStore:
         # The map hash and the stage copy run without the lock (switch_map
         # hashes outside it too): every stage mutation runs on this same
         # executor thread, so the stage cannot change under the copy.
-        # Build the copy aside and swap it in whole: the proxy reads these
-        # files without the lock and must never see a half-copied frame.
         tmp = self._root / _PROMOTE_TMP
         if tmp.is_dir():
             shutil.rmtree(tmp)
-        shutil.copytree(stage, tmp)
+        # Built aside and swapped in whole (the proxy reads without the lock),
+        # via hardlinks: a byte copy of a long tour would stall the node's
+        # only spin thread for seconds.
+        shutil.copytree(stage, tmp, copy_function=os.link)
         stamped = json.loads((tmp / "index.json").read_text())
         stamped["map"] = map_name
         stamped["fingerprint"] = fingerprint
-        (tmp / "index.json").write_text(json.dumps(stamped))
+        # Not write_text: stage files are only ever replaced, never edited in
+        # place -- that is what keeps every hardlinked file frozen, this one
+        # included.
+        stamped_tmp = tmp / "index.json.tmp"
+        stamped_tmp.write_text(json.dumps(stamped))
+        os.replace(stamped_tmp, tmp / "index.json")
         with self._lock:
             # Displace-then-swap, never delete-then-swap: destroying the
             # target before its replacement is in place would leave the map
