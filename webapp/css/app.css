@@ -9444,6 +9444,27 @@ select.skill-input {
   --agent-theme-shadow: rgb(0 20 25 / 62%);
 }
 
+.agent-cockpit[data-agent-theme="stanford"] {
+  --agent-theme-page: #1c1517;
+  --agent-theme-surface: rgb(46 30 34 / 95%);
+  --agent-theme-surface-strong: rgb(57 37 42 / 98%);
+  --agent-theme-field: #241a1c;
+  --agent-theme-selected: #9d2235;
+  --agent-theme-edge: rgb(190 77 91 / 24%);
+  --agent-theme-edge-strong: rgb(221 132 142 / 38%);
+  --agent-theme-text: #f7f3ed;
+  --agent-theme-muted: #b8a9a4;
+  --agent-theme-control-text: #e7ded8;
+  --agent-theme-control-off: #897b78;
+  --agent-theme-placeholder: rgb(247 243 237 / 36%);
+  --agent-theme-accent: #16825f;
+  --agent-theme-accent-hover: #42a984;
+  --agent-theme-accent-fill: rgb(22 130 95 / 20%);
+  --agent-theme-accent-edge: rgb(22 130 95 / 64%);
+  --agent-theme-selected-text: #fff;
+  --agent-theme-shadow: rgb(8 3 4 / 58%);
+}
+
 .agent-cockpit[data-agent-theme="retro"] .agent-panel,
 .agent-cockpit[data-agent-theme="retro"] .agent-theme-control,
 .agent-cockpit[data-agent-theme="retro"] .agent-telemetry-overlay {

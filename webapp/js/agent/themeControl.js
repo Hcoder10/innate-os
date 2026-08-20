@@ -33,6 +33,7 @@ const THEMES = [
   { id: "contrast", label: "Signal", family: "High contrast" },
   { id: "retro", label: "Amber CRT", family: "Retro" },
   { id: "solarized", label: "Solarized", family: "Classic" },
+  { id: "stanford", label: "Stanford", family: "Collegiate" },
 ];
 
 /**
