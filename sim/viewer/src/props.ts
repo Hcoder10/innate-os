@@ -102,6 +102,7 @@ export class PropLibrary {
   private hulls: THREE.Mesh[] = [];
   private hullsVisible = false;
   private placementPreview?: PlacementPreview;
+  private group = new THREE.Group();
 
   constructor(
     private scene: THREE.Scene,
@@ -112,6 +113,7 @@ export class PropLibrary {
     onModelReady: (model: THREE.Group) => void = () => {},
   ) {
     this.models = new PropModels(onModelReady);
+    this.scene.add(this.group);
   }
 
   /** Adopt the server's roster. Props that vanish from it lose their bodies. */
@@ -122,7 +124,7 @@ export class PropLibrary {
     }
     for (const [name, root] of this.roots) {
       if (!this.info.has(name)) {
-        this.scene.remove(root);
+        this.group.remove(root);
         this.roots.delete(name);
         this.firstSeen.delete(name); // re-added later, it gets a fresh grace window
       }
@@ -170,6 +172,10 @@ export class PropLibrary {
     for (const hull of this.hulls) hull.visible = visible;
   }
 
+  setSceneVisible(visible: boolean): void {
+    this.group.visible = visible;
+  }
+
   showPlacementPreview(name: string, x: number, y: number, yaw: number): void {
     if (name !== this.placementPreview?.name) {
       this.clearPlacementPreview();
@@ -182,7 +188,7 @@ export class PropLibrary {
 
   clearPlacementPreview(): void {
     if (!this.placementPreview) return;
-    this.scene.remove(this.placementPreview.root);
+    this.group.remove(this.placementPreview.root);
     for (const material of this.placementPreview.materials) material.dispose();
     for (const geometry of this.placementPreview.geometries) geometry.dispose();
     this.placementPreview = undefined;
@@ -223,7 +229,7 @@ export class PropLibrary {
     root.add(visual);
     root.updateMatrixWorld(true);
     visual.position.z -= new THREE.Box3().setFromObject(root).min.z;
-    this.scene.add(root);
+    this.group.add(root);
     return { name, root, materials: ownedMaterials, geometries };
   }
 
@@ -242,7 +248,7 @@ export class PropLibrary {
 
     const root = new THREE.Group();
     this.roots.set(name, root);
-    this.scene.add(root);
+    this.group.add(root);
     if (info.viewer.hulls) void this.loadHullSoup(info, root);
 
     const model = this.models.get(name);

@@ -1,0 +1,165 @@
+// @ts-check
+// Deterministic scripted actions for onboarding: exact /brain/tts lines and
+// sequential /execute_skill goals. Motion gated on browser TTS playback start.
+
+import {
+  AVAILABLE_SKILLS_TOPIC,
+  CANCEL_SKILL_SERVICE,
+  EXECUTE_SKILL_ACTION,
+  EXECUTE_SKILL_ACTION_TYPE,
+  TTS_TOPIC,
+} from "../constants.js";
+import { onTtsPlaybackStart } from "../ttsAudio.js";
+
+/**
+ * @typedef {{
+ *   type: "speak",
+ *   text: string,
+ * } | {
+ *   type: "skill",
+ *   name: string,
+ *   inputs?: Record<string, unknown>,
+ *   afterSpeechStart?: boolean,
+ * }} ScriptedAction
+ */
+
+/** @param {import("../rosClient.js").RosClient} rosClient */
+export function createScriptedActionRunner(rosClient) {
+  /** @type {any[]} */
+  let skills = [];
+  /** @type {(() => void) | null} */
+  let cancelActive = null;
+  /** @type {(() => void) | null} */
+  let resolveSpeechStart = null;
+  let generation = 0;
+
+  const unsubSkills = rosClient.subscribe(
+    AVAILABLE_SKILLS_TOPIC,
+    (message) => {
+      skills = Array.isArray(message?.skills) ? message.skills : [];
+    },
+    undefined,
+    "brain_messages/msg/AvailableSkills",
+  );
+
+  const stopPlaybackListener = onTtsPlaybackStart(() => {
+    const resolve = resolveSpeechStart;
+    resolveSpeechStart = null;
+    resolve?.();
+  });
+
+  /** @param {number} id */
+  function waitForSpeechStart(id) {
+    return new Promise((/** @type {(value?: void) => void} */ resolve) => {
+      if (id !== generation) {
+        resolve();
+        return;
+      }
+      resolveSpeechStart = () => resolve();
+    });
+  }
+
+  /** @param {string} name @param {Record<string, unknown>} inputs @param {number} id */
+  async function runSkill(name, inputs, id) {
+    if (id !== generation) return;
+    const skillId = await waitForSkillId(name, id);
+    if (!skillId || id !== generation) return;
+    const action = rosClient.sendActionGoal(
+      EXECUTE_SKILL_ACTION,
+      EXECUTE_SKILL_ACTION_TYPE,
+      { skill_type: skillId, inputs: JSON.stringify(inputs) },
+    );
+    cancelActive = action.cancel;
+    try {
+      await action.promise;
+    } catch (error) {
+      if (id === generation) console.warn(`[onboarding] '${name}' failed`, error);
+    } finally {
+      if (cancelActive === action.cancel) cancelActive = null;
+    }
+  }
+
+  /** @param {string} name @param {number} id */
+  async function waitForSkillId(name, id) {
+    const existing = findSkillId(skills, name);
+    if (existing) return existing;
+    const deadline = Date.now() + 8000;
+    while (id === generation && Date.now() < deadline) {
+      await sleep(100);
+      const found = findSkillId(skills, name);
+      if (found) return found;
+    }
+    if (id === generation) console.warn(`[onboarding] '${name}' is unavailable`);
+    return "";
+  }
+
+  /**
+   * @param {ScriptedAction[]} actions
+   * @returns {Promise<void>}
+   */
+  async function run(actions) {
+    cancel();
+    const id = ++generation;
+    let heardSpeech = false;
+
+    for (const action of actions) {
+      if (id !== generation) return;
+      if (action.type === "speak") {
+        const speechStarted = waitForSpeechStart(id);
+        rosClient.publish(TTS_TOPIC, { data: action.text });
+        await speechStarted;
+        heardSpeech = id === generation;
+        continue;
+      }
+      if (action.type === "skill") {
+        if (action.afterSpeechStart && !heardSpeech) {
+          await waitForSpeechStart(id);
+          heardSpeech = id === generation;
+        }
+        await runSkill(action.name, action.inputs ?? {}, id);
+      }
+    }
+  }
+
+  function cancel() {
+    generation++;
+    const resolve = resolveSpeechStart;
+    resolveSpeechStart = null;
+    resolve?.();
+    cancelActive?.();
+    cancelActive = null;
+    void rosClient.callService(CANCEL_SKILL_SERVICE, {}).catch(() => {});
+  }
+
+  return {
+    run,
+    cancel,
+    destroy() {
+      cancel();
+      stopPlaybackListener();
+      unsubSkills();
+    },
+  };
+}
+
+/** @deprecated Use createScriptedActionRunner */
+export const createOnboardingWelcome = createScriptedActionRunner;
+
+/** @param {any[]} skills @param {string} name */
+function findSkillId(skills, name) {
+  const expected = normalize(name);
+  const match = skills.find((skill) =>
+    [skill?.id, skill?.name].some((value) => normalize(String(value ?? "").split("/").at(-1) ?? "") === expected),
+  );
+  return typeof match?.id === "string" ? match.id : "";
+}
+
+/** @param {string} value */
+function normalize(value) {
+  return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+/** @param {number} ms */
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

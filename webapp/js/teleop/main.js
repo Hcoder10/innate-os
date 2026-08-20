@@ -23,7 +23,6 @@ import { createHeadTilt } from "./headTilt.js";
 import { createSpeedModes } from "./speedModes.js";
 import { createTtsBar } from "./ttsBar.js";
 import { createTelemetry } from "./telemetry.js";
-import { createTelemetryPreviewControl } from "./telemetryPreviewControl.js";
 import { createArmPanel } from "./armPanel.js";
 import { createProfilingPanel } from "./profilingPanel.js";
 import { createSkillsMenu } from "./skillsMenu.js";
@@ -79,10 +78,7 @@ function buildCockpit(root) {
   const keyboard = createKeyboardDrive(drive);
   // No battery in the sim (the simulator has no power sensor).
   const telemetry = createTelemetry(telemetryOverlay, ros, { showBattery: !config.simControls });
-  const telemetryPreview = config.simControls
-    ? createTelemetryPreviewControl(root, telemetry.preview)
-    : null;
-  const parts = [videoStage, ...(telemetryPreview ? [telemetryPreview] : []), telemetry];
+  const parts = [videoStage, telemetry];
   // Robot-mic toggle. Skipped in the sim: the simulator's WebRTC server streams
   // video only (no microphone), so the toggle would do nothing. config.simControls
   // is the sim deployment's feature flag (env-driven; false on the real robot).

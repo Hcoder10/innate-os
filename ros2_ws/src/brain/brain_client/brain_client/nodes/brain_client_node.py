@@ -244,6 +244,7 @@ class BrainClientNode(Node):
         self.create_service(SetBool, "/brain/set_logging_config", self._svc_set_logging_config)
         self.create_service(ResetBrain, "/brain/reset_brain", self._svc_reset_brain)
         self.create_service(SetBool, "/brain/set_brain_active", self._svc_set_brain_active)
+        self.create_service(SetBool, "/brain/set_onboarding_input", self._svc_set_onboarding_input)
         self.create_service(Trigger, "/brain/reload", self._svc_reload)
         self.create_service(Trigger, "/brain/clear_memories", self._svc_clear_memories)
         self.create_service(ForgetMemory, "/brain/forget_memory", self._svc_forget_memory)
@@ -340,6 +341,10 @@ class BrainClientNode(Node):
             self.get_logger().warn(
                 "[BrainClient] Ignoring /brain/chat_in: payload must be a JSON object with a 'text' field."
             )
+            return
+        if self.state.is_onboarding_input:
+            # STT still publishes here for the web onboarding engine; the agent
+            # must not consume scripted transcripts.
             return
         if not self.state.is_brain_active:
             self.get_logger().warn("[BrainClient] Brain is not active. Skipping chat_in message.")
@@ -478,6 +483,12 @@ class BrainClientNode(Node):
                 self.lifecycle.deactivate_brain()
                 response.message = "Brain deactivated."
         response.success = True
+        return response
+
+    def _svc_set_onboarding_input(self, request, response):
+        self.lifecycle.set_onboarding_input(request.data)
+        response.success = True
+        response.message = "Onboarding input enabled." if request.data else "Onboarding input disabled."
         return response
 
     def _svc_clear_memories(self, request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
