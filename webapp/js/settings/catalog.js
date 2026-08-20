@@ -49,10 +49,12 @@
  *   derived from the values, so the robot decides what exists and nothing here drifts.
  * @property {string} [customPlaceholder]  Placeholder for the "Custom…" free-text field.
  * @property {string} [live]  Node to push this knob to with set_parameters after saving,
- *   so it applies without a restart. Set ONLY where the running node re-reads the
- *   parameter (mars_app reads its drive knobs every tick). Nodes that copy a parameter
- *   into a field at construction — bringup's safety clamp, the camera driver, nav2's
- *   launch-time remap — must be left off, or the UI would claim an effect it did not have.
+ *   so it applies without a restart. Set ONLY where the running node acts on the write —
+ *   by re-reading the parameter every tick (mars_app's drive knobs) or by applying it in
+ *   an on_set_parameters callback (motor_sound's synth, brain_client_node's TTS voice).
+ *   Nodes that copy a parameter into a field at construction — bringup's safety clamp,
+ *   the camera driver, nav2's launch-time remap — must be left off, or the UI would
+ *   claim an effect it did not have.
  * @property {string} [subsection]  Optional label grouping related knobs inside a
  *   section card (e.g. "Linear" / "Angular"). Consecutive knobs with the same
  *   subsection render under one subhead.
@@ -119,9 +121,11 @@ export const SETTINGS_PAGES = [
       },
       {
         title: "Robot voice",
-        note: "The TTS voice drives both chat-TTS and realtime voice.",
+        note: "Saving swaps the voice on the next thing the robot says — a clip already playing finishes in the old one.",
         knobs: [
-          { path: ["/**", P, "cartesia_voice_id"], label: "TTS voice", default: "9fdaae0b-f885-4813-b589-3c07cf9d5fea", type: "string", doc: "Cartesia TTS voice (drives both chat-TTS and realtime-voice). Pick a stock voice, or paste any voice ID from Cartesia's library of hundreds.", docHref: "https://play.cartesia.ai/voices", docLinkText: "Browse Cartesia voices\u00A0↗", options: VOICE_OPTIONS },
+          // `/**` in the file so a restart reaches every node that declares it, but the
+          // live push goes to brain_client_node alone — it owns the only TTS that speaks.
+          { path: ["/**", P, "cartesia_voice_id"], label: "TTS voice", default: "9fdaae0b-f885-4813-b589-3c07cf9d5fea", type: "string", doc: "Cartesia voice for everything the robot speaks. Pick a stock voice, or paste any voice ID from Cartesia's library of hundreds.", docHref: "https://play.cartesia.ai/voices", docLinkText: "Browse Cartesia voices\u00A0↗", options: VOICE_OPTIONS, live: "/brain_client_node" },
         ],
       },
     ],

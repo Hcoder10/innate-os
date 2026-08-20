@@ -24,7 +24,8 @@ class TTSHandler:
     Handles text-to-speech conversion using Cartesia API and audio playback via aplay.
 
     Requires a ProxyClient instance for accessing Cartesia services.
-    Voice ID is read from proxy.config["cartesia_voice_id"].
+    Voice ID starts at proxy.config["cartesia_voice_id"] and is swappable at
+    runtime through set_voice; every utterance reads the current one.
     """
 
     # Default voice ID (Alfred)
@@ -98,6 +99,17 @@ class TTSHandler:
     def is_available(self) -> bool:
         """Check if TTS is available and configured."""
         return self._cartesia_client is not None
+
+    def set_voice(self, voice_id: str) -> None:
+        """Speak in a different voice from the next utterance on.
+
+        A clip already streaming keeps the voice it started with — Cartesia picks
+        the voice per request, so there is nothing to swap mid-stream.
+        """
+        if voice_id == self.voice_id:
+            return
+        self.voice_id = voice_id
+        self.logger.info(f"🗣️ TTS voice changed to {voice_id}")
 
     def _publish_tts_status(self, status: str):
         """Publish TTS playback status to /tts/is_playing topic."""
