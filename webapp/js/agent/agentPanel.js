@@ -40,21 +40,19 @@ const CHAT_EXAMPLES = [
  * @param {ReturnType<typeof import("../teleop/agentState.js").sharedAgentState>} agentState
  * @param {{
  *   enableMic?: boolean,
- *   onMicState?: (state: {on: boolean, busy: boolean, level: number, waveform: number[], error: string | null}) => void
+ *   onMicState?: (state: {on: boolean, busy: boolean, level: number, waveform: number[], error: string | null}) => void,
+ *   micDirective?: () => string,
+ *   ensureListening?: () => Promise<boolean>,
  * }} opts
  *   enableMic connects the browser microphone in sim, where the robot has no
  *   physical microphone (see micStream.js).
+ *   ensureListening, when it returns true, opens listening without starting an
+ *   agent (onboarding-input mode).
  * @returns {{
  *   destroy: () => void,
  *   dismissOverlays: () => void,
  *   startMic: () => Promise<void>,
- *   stopMic: () => void,
- *   previewSkill: (sample: {
- *     name: string,
- *     args: Record<string, unknown>,
- *     status: "running" | "completed" | "failed" | "interrupted",
- *     reason?: string
- *   } | null) => void
+ *   stopMic: () => void
  * }}
  */
 export function createAgentPanel(root, rosClient, agentState, opts) {
@@ -352,8 +350,8 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     const { agents, broken, currentDirective, brainActive } = agentState.get();
     if (currentDirective) lastDirective = currentDirective;
 
-    const demo = agents.find((a) => /demo\s*agent/i.test(a.name) || /demo/i.test(a.id));
-    const armed = currentDirective || lastDirective || demo?.id || (agents[0]?.id ?? "");
+    const intro = agents.find((agent) => agent.id === "intro_agent");
+    const armed = currentDirective || lastDirective || intro?.id || (agents[0]?.id ?? "");
     directiveList.replaceChildren();
     for (const agent of agents) {
       const option = document.createElement("button");
@@ -654,14 +652,14 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   const skillRuns = new Map();
 
   /** @param {string} key @param {string} name @param {string} status @param {number} ts @param {string} [reason]
-   *  @param {any} [args] @param {boolean} [preview] */
-  function addSkillRun(key, name, status, ts, reason, args, preview = false) {
+   *  @param {any} [args] */
+  function addSkillRun(key, name, status, ts, reason, args) {
     const wasAtBottom = atBottom();
     const cls = ["running", "completed", "failed", "interrupted"].includes(status) ? status : "running";
-    if (!preview && cls === "running") {
+    if (cls === "running") {
       activeSkillName.textContent = name.replace(/_/g, " ");
       activeSkill.classList.add("on");
-    } else if (!preview && activeSkillName.textContent === name.replace(/_/g, " ")) {
+    } else if (activeSkillName.textContent === name.replace(/_/g, " ")) {
       activeSkillName.textContent = "—";
       activeSkill.classList.remove("on");
     }
@@ -711,8 +709,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
         setSkillRunOpen(createdRun, !createdRun.wrap.classList.contains("open"));
       });
       skillRuns.set(key, createdRun);
-      if (preview) wrap.classList.add("compact-visible");
-      else showCompactMessage(wrap, false);
+      showCompactMessage(wrap, false);
     }
     run.wrap.classList.remove("running", "completed", "failed", "interrupted");
     run.wrap.classList.add(cls);
@@ -739,36 +736,20 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     return run.wrap;
   }
 
-  /** @type {HTMLElement | null} */
-  let skillPreview = null;
-  /** @param {{
-   *  name: string,
-   *  args: Record<string, unknown>,
-   *  status: "running" | "completed" | "failed" | "interrupted",
-   *  reason?: string
-   * } | null} sample */
-  function previewSkill(sample) {
-    skillPreview?.remove();
-    skillRuns.delete("__skill-preview__");
-    skillPreview = null;
-    if (!sample) return;
-    setChatOpen(true);
-    skillPreview = addSkillRun(
-      "__skill-preview__",
-      sample.name,
-      sample.status,
-      Date.now() / 1000,
-      sample.status === "failed" ? sample.reason || "The skill could not complete." : "",
-      sample.args,
-      true,
-    );
-    stream.scrollTop = stream.scrollHeight;
-  }
-
   // ---- composer -----------------------------------------------------------
   // Talking to an idle agent means "start it" — an inactive brain drops
   // chat_in, and the mic device is only open while a directive runs.
+  // Onboarding overrides this: MicroInput opens without BrainAgent.
   async function startIfIdle() {
+    if (opts.ensureListening) {
+      const handled = await opts.ensureListening();
+      if (handled) return;
+    }
+    const micDirective = opts.micDirective?.() ?? "";
+    if (micDirective && agentState.get().currentDirective !== micDirective) {
+      await withApplying(() => agentState.setDirective(micDirective));
+      return;
+    }
     if (agentState.get().brainActive) return;
     const id = selectedDirective || lastDirective;
     if (id) await withApplying(() => agentState.setDirective(id));
@@ -957,7 +938,6 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   return {
     startMic,
     stopMic,
-    previewSkill,
     dismissOverlays() {
       setChatOpen(false);
       setDirectiveOpen(false);

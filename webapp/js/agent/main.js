@@ -27,8 +27,8 @@ import { sharedAgentState } from "../teleop/agentState.js";
 import { createAgentPanel } from "./agentPanel.js";
 import { createChallengePanel } from "./challengePanel.js";
 import { createAgentMicControl } from "./agentMicControl.js";
-import { createSkillCardPreviewControl } from "./skillPreviewControl.js";
-import { createTelemetryPreviewControl } from "../teleop/telemetryPreviewControl.js";
+import { createAgentOnboarding } from "./onboarding.js";
+import { createScriptedActionRunner } from "./onboardingWelcome.js";
 
 // Runtime feature flags (config.json, served static), same as teleop. simControls
 // marks a sim deployment — used here to drop the (absent) battery readout. Fetched
@@ -52,9 +52,31 @@ export function mount(stage) {
  * @returns {{ destroy: () => void }}
  */
 function buildAgentView(root) {
+  const agentState = sharedAgentState();
+  const scriptedActions = config.simControls ? createScriptedActionRunner(ros) : null;
+  const onboarding = config.simControls && scriptedActions
+    ? createAgentOnboarding(root, ros, {
+        runner: scriptedActions,
+        onHandoff: async () => {
+          const { agents, currentDirective } = agentState.get();
+          const preferred =
+            agents.find((agent) => agent.id === "intro_agent")?.id
+            || currentDirective
+            || agents[0]?.id
+            || "";
+          if (preferred) await agentState.setDirective(preferred);
+        },
+      })
+    : null;
   const session = createSession();
 
   const videoStage = createStage ? createStage(root, session) : createVideoStage(root, session);
+  const setOnboardingStep =
+    "setOnboardingStep" in videoStage ? videoStage.setOnboardingStep : null;
+  const stopOnboardingStageSync =
+    onboarding && setOnboardingStep
+      ? onboarding.onStep(setOnboardingStep)
+      : null;
 
   // Camera views stay grouped at the top left.
   const cornerStack = document.createElement("div");
@@ -63,7 +85,6 @@ function buildAgentView(root) {
   const telemetryOverlay = document.createElement("div");
   telemetryOverlay.className = "overlay telemetry-overlay agent-telemetry-overlay";
   root.append(telemetryOverlay);
-  const agentState = sharedAgentState();
 
   const cameraSwitch = createCameraSwitch(root, session, ros, {
     storeKey: "innate.cameras.agent",
@@ -136,6 +157,10 @@ function buildAgentView(root) {
   let micControl = null;
   const panel = createAgentPanel(root, ros, agentState, {
     enableMic: Boolean(config.simControls),
+    ensureListening: async () => {
+      if (!onboarding || onboarding.isComplete()) return false;
+      return onboarding.ensureListening();
+    },
     onMicState: (state) => {
       micControl?.setCaptureState(state);
       micControl?.setAudioFeedback({
@@ -164,22 +189,17 @@ function buildAgentView(root) {
       stopListening: panel.stopMic,
     });
   }
-  const skillPreview = config.simControls
-    ? createSkillCardPreviewControl(root, panel.previewSkill)
-    : null;
-  const telemetryPreview = config.simControls
-    ? createTelemetryPreviewControl(root, telemetry.preview)
-    : null;
 
   const parts = [
+    ...(stopOnboardingStageSync ? [{ destroy: stopOnboardingStageSync }] : []),
+    ...(onboarding ? [onboarding] : []),
+    ...(scriptedActions ? [scriptedActions] : []),
     videoStage,
     ...(challengePanel ? [challengePanel] : []),
-    ...(telemetryPreview ? [telemetryPreview] : []),
     telemetry,
     // Square, always-live camera tiles (own prefs key so teleop's defaults stay put).
     cameraSwitch,
     ...(micControl ? [micControl] : []),
-    ...(skillPreview ? [skillPreview] : []),
     panel,
     {
       destroy: () => {

@@ -16,7 +16,15 @@ import { ros } from "./rosClient.js";
 import { getConfig } from "./config.js";
 
 /**
- * @returns {Promise<{ createSession: () => WebRtcSession, createStage: ((root: HTMLElement, session: WebRtcSession) => { audioEl: HTMLAudioElement | null, destroy: () => void }) | null }>}
+ * @typedef {{
+ *   audioEl: HTMLAudioElement | null,
+ *   destroy: () => void,
+ *   setOnboardingStep?: (step: "await_hello" | "welcome" | "complete") => void
+ * }} RobotStage
+ */
+
+/**
+ * @returns {Promise<{ createSession: () => WebRtcSession, createStage: ((root: HTMLElement, session: WebRtcSession) => RobotStage) | null }>}
  * createStage is null for real robots (pages use createVideoStage); in sim it
  * mounts the live Three.js canvas (full resolution, drag-to-orbit).
  */
