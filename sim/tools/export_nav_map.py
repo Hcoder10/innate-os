@@ -41,53 +41,24 @@ class NavigationEnvironment:
     exterior_boundary_half_width_m: float
 
 
-def _point(value, label: str) -> tuple[float, float]:
-    if not isinstance(value, list) or len(value) != 2 or not all(isinstance(item, int | float) for item in value):
-        raise ValueError(f"{label} must be an [x, y] number pair")
-    return float(value[0]), float(value[1])
+def _point(value: list[float]) -> tuple[float, float]:
+    x, y = value
+    return float(x), float(y)
 
 
 def _load_navigation_environment(path: Path = DEFAULT_NAVIGATION_ENVIRONMENT) -> NavigationEnvironment:
     """Load semantic map boundaries owned by the selected environment."""
     raw = json.loads(path.read_text())
-    if not isinstance(raw, dict):
-        raise ValueError("navigation environment must be an object")
-    samples = raw.get("navigable_samples")
-    unknown_samples = raw.get("expected_unknown_samples")
-    exterior = raw.get("exterior")
-    if not isinstance(samples, dict) or not samples:
-        raise ValueError("navigable_samples must be a non-empty object")
-    if not isinstance(unknown_samples, list) or not unknown_samples:
-        raise ValueError("expected_unknown_samples must be a non-empty list")
-    if not isinstance(exterior, dict):
-        raise ValueError("exterior must be an object")
-
-    flood_seeds = exterior.get("flood_seeds")
-    boundary_polylines = exterior.get("boundary_polylines")
-    if not isinstance(flood_seeds, list) or not flood_seeds:
-        raise ValueError("exterior flood_seeds must be a non-empty list")
-    if not isinstance(boundary_polylines, list) or not boundary_polylines:
-        raise ValueError("exterior boundary_polylines must be a non-empty list")
-    if not all(isinstance(polyline, list) for polyline in boundary_polylines):
-        raise ValueError("every exterior boundary polyline must be a list")
-
-    polylines = tuple(
-        tuple(_point(point, "exterior boundary point") for point in polyline) for polyline in boundary_polylines
-    )
-    if any(len(polyline) < 2 for polyline in polylines):
-        raise ValueError("every exterior boundary polyline must contain at least two points")
-    half_width = exterior.get("boundary_half_width_m")
-    if not isinstance(half_width, int | float) or half_width <= 0:
-        raise ValueError("exterior boundary_half_width_m must be positive")
+    exterior = raw["exterior"]
 
     return NavigationEnvironment(
-        navigable_samples={
-            str(label): _point(point, f"navigable sample {label!r}") for label, point in samples.items()
-        },
-        expected_unknown_samples=tuple(_point(point, "expected unknown sample") for point in unknown_samples),
-        exterior_flood_seeds=tuple(_point(point, "exterior flood seed") for point in flood_seeds),
-        exterior_boundary_polylines=polylines,
-        exterior_boundary_half_width_m=float(half_width),
+        navigable_samples={label: _point(point) for label, point in raw["navigable_samples"].items()},
+        expected_unknown_samples=tuple(_point(point) for point in raw["expected_unknown_samples"]),
+        exterior_flood_seeds=tuple(_point(point) for point in exterior["flood_seeds"]),
+        exterior_boundary_polylines=tuple(
+            tuple(_point(point) for point in polyline) for polyline in exterior["boundary_polylines"]
+        ),
+        exterior_boundary_half_width_m=float(exterior["boundary_half_width_m"]),
     )
 
 

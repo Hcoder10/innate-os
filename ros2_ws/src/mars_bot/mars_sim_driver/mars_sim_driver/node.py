@@ -50,7 +50,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, CompressedImage, Image, JointState, LaserScan, PointCloud2, PointField
-from std_msgs.msg import Empty, Float64MultiArray, Int32, String
+from std_msgs.msg import Empty, Float64MultiArray, Int32, Int64, String
 from std_srvs.srv import Trigger
 from tf2_ros import TransformBroadcaster
 
@@ -125,6 +125,9 @@ class VirtualMarsNode(Node):
         # State topics publish KEEP_LAST(1): a hop that buffers more than the
         # newest sample turns a slow consumer into permanent display lag.
         self._odom_pub = self.create_publisher(Odometry, "/odom", 1)
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self._world_epoch_pub = self.create_publisher(Int64, "/virtual_mars/world_epoch", latched)
+        self._world_epoch = None
         self._scan_pub = self.create_publisher(LaserScan, "/scan", qos_profile_sensor_data)
         self._main_pub = self.create_publisher(
             CompressedImage, "/mars/main_camera/left/image_raw/compressed", qos_profile_sensor_data
@@ -146,7 +149,6 @@ class VirtualMarsNode(Node):
 
         # Latched robot identity: clients (webapp) pick their camera view
         # implementation from this -- rendered view for sim, WebRTC for real.
-        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self._info_pub = self.create_publisher(String, "/robot_info", latched)
         info = String()
         info.data = json.dumps({"simulated": True, "driver": "virtual_mars", "physics": "mujoco"})
@@ -392,6 +394,7 @@ class VirtualMarsNode(Node):
         try:
             with self._lock:
                 x, y, yaw = self.sim.pose()
+                world_epoch = self.sim.world_epoch
         except (OSError, RuntimeError):
             # World server gone past the stale grace: go silent so health
             # checks see the truth instead of a frozen 'ok' robot.
@@ -399,6 +402,11 @@ class VirtualMarsNode(Node):
                 "world server unreachable -- suspending /odom until it returns", throttle_duration_sec=10.0
             )
             return
+        if world_epoch != self._world_epoch:
+            self._world_epoch = world_epoch
+            epoch_msg = Int64()
+            epoch_msg.data = world_epoch
+            self._world_epoch_pub.publish(epoch_msg)
         stamp = self._stamp()
 
         # Like bringup.py: pose only, zero twist/covariance.

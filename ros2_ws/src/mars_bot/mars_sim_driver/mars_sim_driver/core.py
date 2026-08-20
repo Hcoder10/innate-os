@@ -107,9 +107,6 @@ def _navigation_grid(base_grid: np.ndarray, seen_free: np.ndarray, seen_occ: np.
     cross the simulator's infinite ground plane, but it cannot turn a cell
     without authored apartment floor into navigable space.
     """
-    if base_grid.shape != seen_free.shape or base_grid.shape != seen_occ.shape:
-        raise ValueError("navigation-grid inputs must have identical shapes")
-
     grid = np.full(base_grid.shape, -1, dtype=np.int8)
     interior = base_grid != -1
     grid[seen_free & interior] = 0
@@ -315,10 +312,12 @@ class VirtualMars:
         self._cmd_sim_time = -math.inf
         self._hold = None  # (x, y, yaw) the stopped base is keeping, or None
         self._still_since = None  # sim time the base went quiet, or None
+        self.world_epoch = -1
         self.reset()
         release_freed_heap()
 
     def reset(self) -> None:
+        self.world_epoch += 1
         mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[self._base["x"][0]] = SPAWN_X
         self.data.qpos[self._base["y"][0]] = SPAWN_Y
@@ -546,19 +545,11 @@ class VirtualMars:
 
         grid = np.full(n, -1, dtype=np.int8)
         origins = np.column_stack([gx.ravel(), gy.ravel(), np.full(n, wall_top)])
-        # The infinite ground plane exists so the robot has something to
-        # contact, but it is not apartment floor.  When visual rooms are
-        # available, the lidar group selects only their authored surfaces and
-        # excludes that plane entirely.  The ray also excludes world body 0,
-        # which owns the coplanar ground plane.  The apartment body check
-        # remains important for any future static scenery that shares the
-        # selected visual group.
-        floor_groups = self._lidar_groups
         # mj_multiRay shares one origin, so cast per cell (one-time, ~40k rays, ~1s).
         geomid_out = np.zeros(1, dtype=np.int32)
         down = np.array([0.0, 0.0, -1.0])
         for i in range(n):
-            d = mujoco.mj_ray(self.model, self.data, origins[i], down, floor_groups, 1, 0, geomid_out)
+            d = mujoco.mj_ray(self.model, self.data, origins[i], down, self._lidar_groups, 1, -1, geomid_out)
             hit = int(geomid_out[0])
             if hit != -1 and d >= 0 and self.model.geom_bodyid[hit] == apt:
                 grid[i] = 0  # an authored apartment surface below: interior floor

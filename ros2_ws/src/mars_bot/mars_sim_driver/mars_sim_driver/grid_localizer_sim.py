@@ -12,13 +12,11 @@ from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from rclpy.lifecycle import LifecycleNode, TransitionCallbackReturn
 from rclpy.qos import DurabilityPolicy, QoSProfile
+from std_msgs.msg import Int64
 from std_srvs.srv import Trigger
 
 POSITION_MATCH_TOLERANCE_M = 0.35
 YAW_MATCH_TOLERANCE_RAD = math.radians(20.0)
-ODOM_RESET_POSITION_JUMP_M = 0.5
-ODOM_RESET_YAW_JUMP_RAD = math.radians(30.0)
-ODOM_RESET_MAX_SAMPLE_GAP_S = 0.2
 AMCL_DRIFT_POSITION_M = 1.0
 AMCL_DRIFT_YAW_RAD = math.radians(35.0)
 AMCL_DRIFT_MIN_SAMPLES = 4
@@ -39,20 +37,6 @@ def _yaw(pose) -> float:
     )
 
 
-def _stamp_ns(msg) -> int:
-    return int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
-
-
-def _pose_matches(pose, expected: tuple[float, float, float]) -> bool:
-    x, y, yaw = expected
-    position = pose.position
-    yaw_error = math.atan2(math.sin(_yaw(pose) - yaw), math.cos(_yaw(pose) - yaw))
-    return (
-        math.hypot(position.x - x, position.y - y) <= POSITION_MATCH_TOLERANCE_M
-        and abs(yaw_error) <= YAW_MATCH_TOLERANCE_RAD
-    )
-
-
 def _pose_error(first, second) -> tuple[float, float]:
     position_error = math.hypot(first.position.x - second.position.x, first.position.y - second.position.y)
     yaw_error = math.atan2(math.sin(_yaw(first) - _yaw(second)), math.cos(_yaw(first) - _yaw(second)))
@@ -65,7 +49,8 @@ class GridLocalizerSim(LifecycleNode):
         self._last_odom = None
         self._pose_pub = None
         self._retry_timer = None
-        self._pending_pose = None
+        self._reset_pending = False
+        self._world_epoch = None
         self._drift_bad_since = None
         self._drift_bad_samples = 0
         self._drift_armed = True
@@ -75,42 +60,39 @@ class GridLocalizerSim(LifecycleNode):
         # AMCL's /initialpose sub is VOLATILE, so latching can't cover the
         # activation race -- retry until AMCL answers with /amcl_pose.
         self.create_subscription(PoseWithCovarianceStamped, "/amcl_pose", self._on_amcl_pose, 10)
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(Int64, "/virtual_mars/world_epoch", self._on_world_epoch, latched)
         self.create_service(Trigger, "localize", self._on_localize)
 
     def _on_odom(self, msg):
-        previous = self._last_odom
         self._last_odom = msg
-        # ROS stamps remain wall time across a MuJoCo reset. Ground-truth odom
-        # itself teleports to the challenge spawn, which is the reliable reset
-        # signal available to this ROS-side sim adapter.
-        if previous is not None:
-            sample_gap_s = (_stamp_ns(msg) - _stamp_ns(previous)) / 1_000_000_000
-            if not 0.0 <= sample_gap_s <= ODOM_RESET_MAX_SAMPLE_GAP_S:
-                return
-            position_jump, yaw_jump = _pose_error(msg.pose.pose, previous.pose.pose)
-            if position_jump < ODOM_RESET_POSITION_JUMP_M and yaw_jump < ODOM_RESET_YAW_JUMP_RAD:
-                return
-            self.get_logger().info(
-                f"simulator pose reset detected ({position_jump:.2f}m, {math.degrees(yaw_jump):.0f}deg); reseeding AMCL"
-            )
-            self._clear_drift_observation()
-            self._drift_armed = True
-            self._last_auto_reseed_at = None
-            self._begin_localization()
+        if not self._reset_pending:
+            return
+        self._reset_pending = False
+        self.get_logger().info("simulator reset completed; reseeding AMCL")
+        self._begin_localization()
+
+    def _on_world_epoch(self, msg):
+        if self._world_epoch is None:
+            self._world_epoch = msg.data
+            return
+        if msg.data == self._world_epoch:
+            return
+        self._world_epoch = msg.data
+        self._reset_pending = True
+        self._reset_drift_guard()
+        self._cancel_retry()
 
     def _on_amcl_pose(self, msg):
+        if self._reset_pending:
+            return
         pose = msg.pose.pose
-        if self._pending_pose is not None:
-            if not _pose_matches(pose, self._pending_pose):
-                return
-            self._pending_pose = None
+        if self._retry_timer is not None:
             self._clear_drift_observation()
             if not self._drift_armed:
                 self._drift_healthy_since = time.monotonic()
-            if self._retry_timer is not None:
-                self._retry_timer.cancel()
-                self._retry_timer = None
-                self.get_logger().info("AMCL localized; stopping /initialpose retries")
+            self._cancel_retry()
+            self.get_logger().info("AMCL localized; stopping /initialpose retries")
             return
 
         if self._last_odom is None:
@@ -165,28 +147,33 @@ class GridLocalizerSim(LifecycleNode):
         self._drift_bad_since = None
         self._drift_bad_samples = 0
 
+    def _reset_drift_guard(self):
+        self._clear_drift_observation()
+        self._drift_armed = True
+        self._drift_healthy_since = None
+        self._last_auto_reseed_at = None
+
+    def _cancel_retry(self):
+        if self._retry_timer is None:
+            return
+        self._retry_timer.cancel()
+        self._retry_timer = None
+
     def on_configure(self, state) -> TransitionCallbackReturn:
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self._pose_pub = self.create_lifecycle_publisher(PoseWithCovarianceStamped, "/initialpose", latched)
         return TransitionCallbackReturn.SUCCESS
 
     def on_activate(self, state) -> TransitionCallbackReturn:
-        self._clear_drift_observation()
-        self._drift_armed = True
-        self._drift_healthy_since = None
-        self._last_auto_reseed_at = None
+        self._reset_pending = False
+        self._reset_drift_guard()
         self._begin_localization()
         return super().on_activate(state)
 
     def on_deactivate(self, state) -> TransitionCallbackReturn:
-        self._pending_pose = None
-        self._clear_drift_observation()
-        self._drift_armed = True
-        self._drift_healthy_since = None
-        self._last_auto_reseed_at = None
-        if self._retry_timer is not None:
-            self._retry_timer.cancel()
-            self._retry_timer = None
+        self._reset_pending = False
+        self._reset_drift_guard()
+        self._cancel_retry()
         return super().on_deactivate(state)
 
     def _on_localize(self, _request, response):
@@ -210,8 +197,6 @@ class GridLocalizerSim(LifecycleNode):
         msg.pose.pose = self._last_odom.pose.pose
         msg.pose.covariance[0] = msg.pose.covariance[7] = 0.01
         msg.pose.covariance[35] = 0.01
-        pose = msg.pose.pose
-        self._pending_pose = (pose.position.x, pose.position.y, _yaw(pose))
         self._pose_pub.publish(msg)
         self.get_logger().info("published ground-truth /initialpose")
         return True
