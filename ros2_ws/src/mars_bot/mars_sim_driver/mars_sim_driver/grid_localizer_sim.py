@@ -88,6 +88,12 @@ class GridLocalizerSim(LifecycleNode):
             return
         pose = msg.pose.pose
         if self._retry_timer is not None:
+            if not self._drift_armed:
+                if self._last_odom is None:
+                    return
+                position_error, yaw_error = _pose_error(pose, self._last_odom.pose.pose)
+                if position_error > POSITION_MATCH_TOLERANCE_M or yaw_error > YAW_MATCH_TOLERANCE_RAD:
+                    return
             self._clear_drift_observation()
             if not self._drift_armed:
                 self._drift_healthy_since = time.monotonic()
