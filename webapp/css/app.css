@@ -6302,9 +6302,6 @@ select.skill-input {
 }
 
 .agent-cockpit .agent-telemetry-overlay {
-  position: absolute;
-  top: 14px;
-  right: 14px;
   width: var(--agent-dock-width);
 }
 
@@ -6722,23 +6719,22 @@ select.skill-input {
 
 .agent-mic-control {
   --agent-mic-level: 0;
-  position: absolute;
-  left: 50%;
-  bottom: 14px;
-  z-index: 8;
+  position: relative;
+  z-index: 2;
   display: flex;
-  flex-direction: column;
+  width: 42px;
+  height: 42px;
   align-items: center;
-  transform: translateX(-50%);
+  justify-content: center;
 }
 
 .agent-mic-button {
-  --agent-mic-inner-wave-scale: 2.62;
+  --agent-mic-inner-wave-scale: 1.38;
   position: relative;
   display: grid;
   place-items: center;
-  width: 184px;
-  height: 184px;
+  width: 42px;
+  height: 42px;
   padding: 0;
   color: rgb(255 255 255 / 88%);
   background:
@@ -6769,9 +6765,9 @@ select.skill-input {
   content: "";
   position: absolute;
   z-index: 1;
-  width: 68px;
-  height: 68px;
-  border: 1.5px solid rgb(255 255 255 / 58%);
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgb(255 255 255 / 48%);
   border-radius: 50%;
   background: rgb(245 245 248 / 38%);
   box-shadow:
@@ -6841,8 +6837,8 @@ select.skill-input {
 .agent-mic-icon {
   position: relative;
   z-index: 2;
-  width: 28px;
-  height: 28px;
+  width: 16px;
+  height: 16px;
   background: currentColor;
   mask: url("/js/agent/icons/mic.svg") center / contain no-repeat;
   -webkit-mask: url("/js/agent/icons/mic.svg") center / contain no-repeat;
@@ -6854,7 +6850,7 @@ select.skill-input {
 }
 
 .agent-mic-inner-waves {
-  inset: 2px;
+  inset: 1px;
   z-index: 1;
   border-radius: 50%;
   overflow: hidden;
@@ -6864,8 +6860,8 @@ select.skill-input {
 .agent-mic-inner-wave {
   top: 50%;
   left: 50%;
-  width: 68px;
-  height: 68px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   background: radial-gradient(
     circle closest-side,
@@ -6880,8 +6876,8 @@ select.skill-input {
 .agent-mic-hover-glow {
   position: absolute;
   z-index: 1;
-  width: 68px;
-  height: 68px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   background: radial-gradient(circle, rgb(255 255 255 / 34%), rgb(255 255 255 / 12%) 54%, transparent 76%);
   opacity: 0;
@@ -6899,9 +6895,9 @@ select.skill-input {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 24px;
-  gap: 2px;
+  width: 20px;
+  height: 17px;
+  gap: 1.5px;
   opacity: 0;
   pointer-events: none;
   transition: opacity 100ms ease;
@@ -6909,7 +6905,7 @@ select.skill-input {
 
 .agent-mic-waveform-bar {
   width: 2px;
-  height: 22px;
+  height: 15px;
   border-radius: 2px;
   background: currentColor;
   transform: scaleY(var(--agent-wave, 0.12));
@@ -6919,42 +6915,55 @@ select.skill-input {
 .agent-mic-label {
   position: absolute;
   left: 50%;
-  bottom: calc(100% + 12px);
+  bottom: calc(100% + 8px);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   white-space: nowrap;
   color: rgb(255 255 255 / 72%);
+  opacity: 0;
   text-shadow: 0 1px 8px rgb(0 0 0 / 70%);
   transform: translateX(-50%);
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.agent-mic-control:is(.listening, .waiting, .unavailable, .show-hold-hint) .agent-mic-label {
+  opacity: 1;
 }
 
 .agent-mic-control.show-hold-hint .agent-mic-label {
   --agent-mic-hint-bg: rgb(30 30 32);
   --agent-mic-hint-border: rgb(255 255 255 / 18%);
-  padding: 8px 11px;
-  font-size: 11px;
-  line-height: 1.25;
+  right: 0;
+  left: auto;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.35;
   letter-spacing: 0;
   text-transform: none;
+  white-space: normal;
   color: rgb(255 255 255 / 90%);
   background: var(--agent-mic-hint-bg);
   border: 1px solid var(--agent-mic-hint-border);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
   text-shadow: none;
+  transform: none;
+  transform-origin: calc(100% - 21px) 100%;
   animation: agent-mic-hold-hint-in 180ms cubic-bezier(0.215, 0.61, 0.355, 1);
 }
 
 .agent-mic-control.show-hold-hint .agent-mic-label::after {
   content: "";
   position: absolute;
-  left: 50%;
+  right: 17px;
   bottom: -4px;
   width: 8px;
   height: 8px;
-  margin-left: -4px;
   background: var(--agent-mic-hint-bg);
   border-right: 1px solid var(--agent-mic-hint-border);
   border-bottom: 1px solid var(--agent-mic-hint-border);
@@ -6964,11 +6973,11 @@ select.skill-input {
 @keyframes agent-mic-hold-hint-in {
   from {
     opacity: 0;
-    transform: translate(-50%, 4px) scale(0.97);
+    transform: translateY(4px) scale(0.97);
   }
   to {
     opacity: 1;
-    transform: translateX(-50%) scale(1);
+    transform: scale(1);
   }
 }
 
@@ -7168,7 +7177,7 @@ select.skill-input {
 
 .agent-mic-button:focus-visible {
   outline: 2px solid var(--ctl-accent);
-  outline-offset: 5px;
+  outline-offset: 2px;
 }
 
 .agent-cockpit.brain-open .agent-mic-control {
@@ -7177,9 +7186,9 @@ select.skill-input {
 
 .agent-panel {
   position: absolute;
-  top: 120px;
+  top: 14px;
   right: 14px;
-  bottom: 80px;
+  bottom: 14px;
   width: var(--agent-dock-width);
   display: flex;
   flex-direction: column;
@@ -7227,193 +7236,6 @@ select.skill-input {
   max-height: none;
   padding: 16px;
   border: 1px solid rgb(255 255 255 / 12%);
-  transform-origin: bottom right;
-  will-change: transform, opacity;
-  transition:
-    opacity 220ms cubic-bezier(0.23, 1, 0.32, 1),
-    transform 240ms cubic-bezier(0.23, 1, 0.32, 1),
-    visibility 0s;
-}
-
-.agent-panel:not(.chat-open) .agent-thoughts-panel {
-  visibility: hidden;
-  opacity: 0;
-  pointer-events: none;
-  transform: translate(6px, 14px) scale(0.96);
-  transition:
-    opacity 130ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
-    transform 160ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
-    visibility 0s linear 160ms;
-}
-
-.agent-panel.chat-open .agent-thoughts-panel > * {
-  animation: agent-chat-content-in 220ms cubic-bezier(0.23, 1, 0.32, 1) both;
-}
-
-.agent-panel.chat-open .agent-thoughts-panel > :nth-child(1) {
-  animation-delay: 35ms;
-}
-
-.agent-panel.chat-open .agent-thoughts-panel > :nth-child(2) {
-  animation-delay: 55ms;
-}
-
-.agent-panel.chat-open .agent-thoughts-panel > :nth-child(3) {
-  animation-delay: 75ms;
-}
-
-.agent-chat-toggle {
-  position: absolute;
-  right: 14px;
-  bottom: 14px;
-  z-index: 13;
-  display: grid;
-  width: 56px;
-  height: 56px;
-  padding: 0;
-  color: rgb(255 255 255 / 82%);
-  background: rgb(8 8 10 / 76%);
-  backdrop-filter: blur(20px) saturate(1.1);
-  -webkit-backdrop-filter: blur(20px) saturate(1.1);
-  border: 1px solid rgb(255 255 255 / 18%);
-  border-radius: 50%;
-  box-shadow: 0 10px 28px rgb(0 0 0 / 38%);
-  cursor: pointer;
-  place-items: center;
-  transition:
-    color 150ms ease,
-    background-color 150ms ease,
-    border-color 150ms ease,
-    transform 120ms cubic-bezier(0.215, 0.61, 0.355, 1);
-}
-
-.agent-chat-toggle-icon,
-.agent-chat-toggle-thinking {
-  grid-area: 1 / 1;
-}
-
-.agent-chat-toggle-icon {
-  width: 24px;
-  height: 24px;
-  transition:
-    opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
-    transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-
-.agent-chat-toggle-close,
-.agent-chat-toggle-thinking {
-  opacity: 0;
-  transform: rotate(-10deg) scale(0.82);
-  pointer-events: none;
-}
-
-.agent-chat-toggle.open:not(.thinking) .agent-chat-toggle-chat {
-  opacity: 0;
-  transform: rotate(10deg) scale(0.82);
-}
-
-.agent-chat-toggle.open:not(.thinking) .agent-chat-toggle-close {
-  opacity: 1;
-  transform: rotate(0) scale(1);
-}
-
-.agent-chat-toggle-thinking {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  transition:
-    opacity 140ms ease-out,
-    transform 140ms ease-out;
-}
-
-.agent-chat-toggle-thinking i {
-  width: 4px;
-  height: 4px;
-  background: currentColor;
-  border-radius: 50%;
-  animation: agent-chat-thinking 900ms ease-in-out infinite;
-}
-
-.agent-chat-toggle-thinking i:nth-child(2) {
-  animation-delay: 120ms;
-}
-
-.agent-chat-toggle-thinking i:nth-child(3) {
-  animation-delay: 240ms;
-}
-
-.agent-chat-toggle.thinking {
-  color: var(--ctl-accent);
-  border-color: var(--ctl-edge-accent);
-}
-
-.agent-chat-toggle.thinking .agent-chat-toggle-icon {
-  opacity: 0;
-  transform: scale(0.82);
-}
-
-.agent-chat-toggle.thinking .agent-chat-toggle-thinking {
-  opacity: 1;
-  transform: scale(1);
-}
-
-.agent-chat-toggle:active {
-  transform: scale(0.96);
-}
-
-.agent-chat-toggle:focus-visible {
-  outline: 2px solid var(--ctl-accent);
-  outline-offset: 3px;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .agent-chat-toggle:hover {
-    color: #fff;
-    background: rgb(14 14 18 / 88%);
-    border-color: rgb(255 255 255 / 30%);
-  }
-}
-
-@keyframes agent-chat-thinking {
-  0%,
-  60%,
-  100% {
-    opacity: 0.34;
-    transform: translateY(0);
-  }
-  30% {
-    opacity: 1;
-    transform: translateY(-2px);
-  }
-}
-
-@keyframes agent-chat-content-in {
-  from {
-    opacity: 0;
-    transform: translateY(5px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .agent-thoughts-panel,
-  .agent-chat-toggle,
-  .agent-chat-toggle-icon,
-  .agent-chat-toggle-thinking {
-    transition: none;
-  }
-
-  .agent-chat-toggle-thinking i {
-    animation: none;
-  }
-
-  .agent-panel.chat-open .agent-thoughts-panel > * {
-    animation: none;
-  }
 }
 
 .challenge-panel .microlabel {
@@ -7501,9 +7323,13 @@ select.skill-input {
 }
 
 @media (max-width: 640px) {
-  .agent-cockpit .agent-telemetry-overlay {
-    left: 14px;
+  .agent-cockpit .overlay-stack-top-left {
+    right: 14px;
     width: auto;
+  }
+
+  .agent-cockpit .agent-telemetry-overlay {
+    width: 100%;
   }
 
   /* The 360px right dock doesn't fit a phone: dock as a bottom sheet
@@ -7542,22 +7368,15 @@ select.skill-input {
     left: 14px;
   }
 
+  .agent-stage-view-toggle {
+    left: 80px;
+  }
+
   .challenge-panel {
     left: 0;
     width: min(360px, calc(100vw - 28px));
   }
 
-  .agent-mic-control {
-    left: 50%;
-    top: 8vh;
-    bottom: auto;
-  }
-
-  .agent-mic-button {
-    --agent-mic-inner-wave-scale: 2.03;
-    width: 144px;
-    height: 144px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -7632,7 +7451,7 @@ select.skill-input {
 
 .agent-stage-view-toggle {
   position: absolute;
-  right: 80px;
+  left: 146px;
   bottom: 14px;
   z-index: 13;
   display: inline-flex;
@@ -7679,11 +7498,415 @@ select.skill-input {
   outline-offset: 2px;
 }
 
+.agent-composer-layout-control {
+  position: absolute;
+  bottom: 80px;
+  left: 14px;
+  z-index: 13;
+  display: grid;
+  width: 260px;
+  grid-template-columns: 38px minmax(0, 1fr) 38px;
+  align-items: center;
+  gap: 4px;
+  padding: 7px;
+  color: var(--ctl-text);
+  background: rgb(8 8 10 / 82%);
+  backdrop-filter: blur(20px) saturate(1.1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.1);
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 12px;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 38%);
+}
+
+.agent-composer-layout-cycle,
+.agent-composer-layout-name {
+  height: 30px;
+  color: var(--ctl-text);
+  background-color: var(--ctl-field);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+}
+
+.agent-composer-layout-cycle {
+  padding: 0;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.agent-composer-layout-name {
+  display: grid;
+  padding: 0 8px;
+  font-size: 10px;
+  text-align: center;
+  place-items: center;
+}
+
+.agent-composer-layout-cycle:focus-visible {
+  outline: 2px solid var(--ctl-accent);
+  outline-offset: 1px;
+}
+
+.agent-stage-compose {
+  position: absolute;
+  right: calc(var(--agent-dock-width) + 28px);
+  bottom: 14px;
+  left: 280px;
+  z-index: 13;
+  width: auto;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.agent-stage-compose .agent-compose {
+  width: 100%;
+  gap: 8px;
+  padding: 7px 10px;
+  background: rgb(8 8 10 / 78%);
+  backdrop-filter: blur(20px) saturate(1.1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.1);
+  border-radius: 18px;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 38%);
+}
+
+.agent-stage-compose.mic-focus:has(.agent-mic-control:is(.waiting, .listening)) .agent-compose {
+  min-height: 156px;
+  padding: 0;
+  border-radius: 24px;
+}
+
+.agent-stage-compose.mic-focus:has(.agent-mic-control:is(.waiting, .listening))
+  :is(.agent-compose-input, .agent-compose-placeholder) {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.agent-stage-compose.mic-focus:has(.agent-mic-control:is(.waiting, .listening)) .agent-compose-mic {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  width: auto;
+  height: auto;
+  margin: 0;
+  place-items: center;
+}
+
+.agent-stage-compose.mic-focus
+  .agent-mic-control:is(.waiting, .listening),
+.agent-stage-compose.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-button {
+  width: 100%;
+  height: 100%;
+}
+
+.agent-stage-compose.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-button {
+  --agent-mic-inner-wave-scale: 2;
+  border: 0;
+  border-radius: 23px;
+  box-shadow: none;
+  transform: none;
+}
+
+.agent-stage-compose.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-button::before,
+.agent-stage-compose.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  :is(.agent-mic-inner-wave, .agent-mic-hover-glow) {
+  width: 76px;
+  height: 76px;
+  border-radius: 20px;
+}
+
+.agent-stage-compose.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-icon {
+  width: 26px;
+  height: 26px;
+}
+
+.agent-stage-compose.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-inner-waves {
+  inset: 18px;
+  border-radius: 20px;
+}
+
+.agent-stage-compose.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-button::after,
+.agent-stage-compose.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-outer-wave {
+  border-radius: 23px;
+}
+
+.agent-stage-compose.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-waveform {
+  width: 36px;
+  height: 30px;
+  gap: 2px;
+}
+
+.agent-stage-compose.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-waveform-bar {
+  width: 2px;
+  height: 26px;
+}
+
+.agent-stage-compose.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-label {
+  right: auto;
+  bottom: 24px;
+  left: 50%;
+  padding: 0;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  text-shadow: 0 1px 8px rgb(0 0 0 / 70%);
+  transform: translateX(-50%);
+  animation: none;
+}
+
+.agent-stage-compose.pill .agent-compose {
+  padding-right: 16px;
+  padding-left: 14px;
+  border-color: rgb(255 255 255 / 22%);
+  border-radius: 999px;
+}
+
+.agent-stage-compose.pill.mic-focus:has(.agent-mic-control:is(.waiting, .listening)) .agent-compose {
+  min-height: 65px;
+  padding: 0;
+  border-radius: 999px;
+}
+
+.agent-stage-compose.pill.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-button,
+.agent-stage-compose.pill.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-button::after,
+.agent-stage-compose.pill.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-outer-wave {
+  border-radius: 999px;
+}
+
+.agent-stage-compose.pill.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-button::before,
+.agent-stage-compose.pill.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  :is(.agent-mic-inner-wave, .agent-mic-hover-glow) {
+  width: 64px;
+  height: 44px;
+  border-radius: 999px;
+}
+
+.agent-stage-compose.pill.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-label {
+  top: 50%;
+  right: auto;
+  bottom: auto;
+  left: 24px;
+  transform: translateY(-50%);
+}
+
+.agent-stage-compose.pill-polished .agent-compose {
+  overflow: hidden;
+  background: rgb(8 8 11 / 94%);
+  border-color: rgb(255 255 255 / 18%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 10%),
+    0 8px 24px rgb(0 0 0 / 32%);
+}
+
+.agent-stage-compose.pill-polished
+  .agent-compose
+  :is(.agent-compose-input, .agent-compose-placeholder) {
+  transition: opacity 120ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.agent-stage-compose.pill-polished.mic-focus:has(.agent-mic-control:is(.waiting, .listening)) .agent-compose {
+  background: rgb(10 9 15 / 96%);
+  border-color: rgb(151 135 255 / 42%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 12%),
+    0 8px 24px rgb(0 0 0 / 36%);
+  animation: agent-native-pill-engage 180ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.agent-stage-compose.pill-polished.mic-focus:has(.agent-mic-control:is(.waiting, .listening))
+  :is(.agent-compose-input, .agent-compose-placeholder) {
+  visibility: visible;
+  opacity: 0;
+}
+
+.agent-stage-compose.pill-polished.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-button {
+  background: transparent;
+}
+
+.agent-stage-compose.pill-polished.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-button::before {
+  display: none;
+}
+
+.agent-stage-compose.pill-polished.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-button::after {
+  opacity: 0;
+}
+
+.agent-stage-compose.pill-polished.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  :is(.agent-mic-inner-waves, .agent-mic-outer-waves) {
+  display: none;
+}
+
+.agent-stage-compose.pill-polished.mic-focus
+  .agent-mic-control.waiting
+  .agent-mic-icon {
+  animation: agent-native-mic-icon-in 160ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.agent-stage-compose.pill-polished.mic-focus
+  .agent-mic-control.listening
+  .agent-mic-waveform {
+  width: 52px;
+  gap: 3px;
+  transform-origin: center;
+  animation: agent-native-waveform-in 180ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.agent-stage-compose.pill-polished.mic-focus
+  .agent-mic-control.listening
+  .agent-mic-waveform::before {
+  content: none;
+}
+
+.agent-stage-compose.pill-polished.mic-focus
+  .agent-mic-control.listening
+  .agent-mic-waveform-bar {
+  position: relative;
+  z-index: 1;
+  width: 2px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 96%), var(--agent-purple));
+  box-shadow: none;
+}
+
+.agent-stage-compose.pill-polished.mic-focus
+  .agent-mic-control.listening
+  .agent-mic-waveform-bar:is(:first-child, :last-child) {
+  opacity: 0.48;
+}
+
+.agent-stage-compose.pill-polished.mic-focus
+  .agent-mic-control.listening
+  .agent-mic-waveform-bar:is(:nth-child(2), :nth-last-child(2)) {
+  opacity: 0.68;
+}
+
+.agent-stage-compose.pill-polished.mic-focus
+  .agent-mic-control:is(.waiting, .listening)
+  .agent-mic-label {
+  color: rgb(231 231 234 / 68%);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  animation: agent-native-status-in 180ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+@keyframes agent-native-pill-engage {
+  from {
+    transform: scale(0.992);
+  }
+
+  to {
+    transform: scale(1);
+  }
+}
+
+@keyframes agent-native-mic-icon-in {
+  from {
+    opacity: 0;
+    transform: scale(0.88);
+  }
+
+  to {
+    opacity: 0.58;
+    transform: scale(0.94);
+  }
+}
+
+@keyframes agent-native-waveform-in {
+  from {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes agent-native-status-in {
+  from {
+    opacity: 0;
+    transform: translate(-4px, -50%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(0, -50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-stage-compose.pill-polished .agent-compose,
+  .agent-stage-compose.pill-polished .agent-compose :is(.agent-compose-input, .agent-compose-placeholder),
+  .agent-stage-compose.pill-polished.mic-focus
+    .agent-mic-control.waiting
+    .agent-mic-icon,
+  .agent-stage-compose.pill-polished.mic-focus
+    .agent-mic-control.listening
+    .agent-mic-waveform,
+  .agent-stage-compose.pill-polished.mic-focus
+    .agent-mic-control:is(.waiting, .listening)
+    .agent-mic-label {
+    transition: none;
+    animation: none;
+  }
+}
+
+.agent-preview-stack {
+  position: absolute;
+  bottom: 136px;
+  left: 14px;
+  z-index: 13;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
 .agent-skill-preview-control,
 .telemetry-preview-control {
-  position: absolute;
-  left: 190px;
-  z-index: 14;
+  position: static;
   display: grid;
   width: 260px;
   align-items: center;
@@ -7699,17 +7922,11 @@ select.skill-input {
 }
 
 .agent-skill-preview-control {
-  bottom: 14px;
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .telemetry-preview-control {
-  bottom: 14px;
   grid-template-columns: 38px minmax(0, 1fr) 38px;
-}
-
-.agent-cockpit .telemetry-preview-control {
-  bottom: 91px;
 }
 
 .agent-skill-preview-cycle,
@@ -8476,9 +8693,9 @@ select.skill-input {
   z-index: 1;
   flex: 1;
   min-width: 0;
-  min-height: 43px;
+  min-height: 52px;
   max-height: 120px;
-  padding: 10px 12px;
+  padding: 15px 12px;
   resize: none;
   font: inherit;
   font-size: 15px;
@@ -8491,8 +8708,8 @@ select.skill-input {
 .agent-compose-placeholder {
   position: absolute;
   z-index: 1;
-  top: 16px;
-  right: 56px;
+  top: 21px;
+  right: 64px;
   left: 18px;
   overflow: hidden;
   color: rgb(255 255 255 / 32%);
@@ -8526,14 +8743,28 @@ select.skill-input {
   outline: none;
 }
 
+.agent-stage-compose .agent-compose-placeholder {
+  top: 22px;
+}
+
+.agent-compose-mic {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex: 0 0 42px;
+  width: 42px;
+  height: 42px;
+  margin-bottom: 4px;
+}
+
 .agent-compose-send {
   position: relative;
-  flex: 0 0 34px;
+  flex: 0 0 42px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 42px;
+  height: 42px;
   margin-bottom: 4px;
   padding: 0;
   color: var(--agent-purple);
@@ -8544,6 +8775,11 @@ select.skill-input {
   transition: transform 120ms ease-out, background-color 150ms ease, border-color 150ms ease, color 150ms ease, opacity 150ms ease;
 }
 
+.agent-compose-mic[hidden],
+.agent-compose-send[hidden] {
+  display: none;
+}
+
 .agent-compose-send::before {
   position: absolute;
   inset: -8px;
@@ -8551,8 +8787,8 @@ select.skill-input {
 }
 
 .agent-compose-send-icon {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   background: currentColor;
   -webkit-mask: url("/js/agent/icons/arrow.svg") center / contain no-repeat;
   mask: url("/js/agent/icons/arrow.svg") center / contain no-repeat;
@@ -8747,9 +8983,14 @@ select.skill-input {
     display: none;
   }
 
-  /* The Robot/Link/Agent telemetry card costs too much of a small feed. */
+  /* The Robot/Link/Agent telemetry card costs too much of a small feed.
+     Agent keeps its status card, but drops the camera tiles beneath it. */
   .overlay-top-left,
-  .overlay-stack-top-left {
+  .cockpit:not(.agent-cockpit) .overlay-stack-top-left {
+    display: none;
+  }
+
+  .agent-cockpit .cam-strip {
     display: none;
   }
 

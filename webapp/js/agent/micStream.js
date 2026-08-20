@@ -13,7 +13,7 @@ import { isTtsPlaying } from "../micAudioState.js";
 const WORKLET_URL = "/js/agent/micWorklet.js";
 // The rate MicroInput's VAD and the vendor wire formats are built around.
 const SAMPLE_RATE = 24000;
-const WAVEFORM_POINT_COUNT = 7;
+const WAVEFORM_POINT_COUNT = 9;
 // Batch and realtime VAD need audio after speech to close the utterance.
 const VAD_TAIL_MS = 800;
 

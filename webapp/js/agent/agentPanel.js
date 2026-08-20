@@ -48,6 +48,8 @@ const CHAT_EXAMPLES = [
  *   destroy: () => void,
  *   startMic: () => Promise<void>,
  *   stopMic: () => void,
+ *   micMount: HTMLElement,
+ *   setComposerMount: (mount: HTMLElement | null) => void,
  *   previewSkill: (sample: {
  *     name: string,
  *     args: Record<string, unknown>,
@@ -68,33 +70,6 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   controlPanel.className = "agent-control-panel collapsed";
   const thoughtsPanel = document.createElement("section");
   thoughtsPanel.className = "agent-thoughts-panel";
-  const chatToggle = document.createElement("button");
-  chatToggle.type = "button";
-  chatToggle.className = "agent-chat-toggle";
-  chatToggle.innerHTML =
-    '<svg class="agent-chat-toggle-icon agent-chat-toggle-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.5a7.5 7.5 0 0 1-8 7.5 8.8 8.8 0 0 1-3.6-.8L4 20l1.5-3.8A7.2 7.2 0 0 1 4 11.5 7.5 7.5 0 0 1 12 4a7.5 7.5 0 0 1 8 7.5Z"/></svg><svg class="agent-chat-toggle-icon agent-chat-toggle-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg><span class="agent-chat-toggle-thinking" aria-hidden="true"><i></i><i></i><i></i></span>';
-  chatToggle.setAttribute("aria-controls", "agent-chat-panel");
-  thoughtsPanel.id = "agent-chat-panel";
-  let chatOpen = false;
-
-  /** @param {boolean} open */
-  function setChatOpen(open) {
-    chatOpen = open;
-    panel.classList.toggle("chat-open", open);
-    chatToggle.classList.toggle("open", open);
-    chatToggle.setAttribute("aria-expanded", String(open));
-    chatToggle.setAttribute("aria-label", open ? "Close Chat with MARS" : "Open Chat with MARS");
-  }
-
-  /** @param {boolean} thinking */
-  function setChatThinking(thinking) {
-    chatToggle.classList.toggle("thinking", thinking);
-    chatToggle.setAttribute("aria-busy", String(thinking));
-  }
-
-  chatToggle.addEventListener("click", () => setChatOpen(!chatOpen));
-  setChatOpen(false);
-  setChatThinking(false);
 
   // ---- header -------------------------------------------------------------
   const head = document.createElement("button");
@@ -221,14 +196,25 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   const placeholder = document.createElement("span");
   placeholder.className = "agent-compose-placeholder";
   placeholder.textContent = CHAT_EXAMPLES[0];
+  const micMount = document.createElement("div");
+  micMount.className = "agent-compose-mic";
   const send = document.createElement("button");
   send.type = "submit";
   send.className = "agent-compose-send";
   send.innerHTML = '<span class="agent-compose-send-icon" aria-hidden="true"></span>';
   send.setAttribute("aria-label", "Send message");
   send.title = "Send message";
-  send.disabled = true;
-  form.append(input, placeholder, send);
+  form.append(input, placeholder);
+  if (opts.enableMic) form.append(micMount);
+  form.append(send);
+  function syncComposerAction() {
+    const empty = input.value.trim().length === 0;
+    send.disabled = empty;
+    send.hidden = Boolean(opts.enableMic && empty);
+    micMount.hidden = !opts.enableMic || !empty;
+    placeholder.classList.toggle("hidden", !empty);
+  }
+  syncComposerAction();
   let placeholderIndex = 0;
   /** @type {ReturnType<typeof setTimeout> | null} */
   let placeholderSwapTimer = null;
@@ -255,7 +241,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   controlPanel.append(head, controls, statusRow);
   thoughtsPanel.append(streamHead, stream, form);
   panel.append(controlPanel, thoughtsPanel);
-  root.append(panel, chatToggle);
+  root.append(panel);
 
   // ---- directive roster + start/stop --------------------------------------
   // The dropdown ARMS a directive; Start activates it. While active, switching
@@ -567,7 +553,6 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     const word = active ? "Processing" : "Processed";
     thoughts.status.textContent = d > 0 ? `${word} for ${d} second${d === 1 ? "" : "s"}` : `${word}…`;
     thoughts.wrap.classList.toggle("active", active);
-    if (!replayingHistory) setChatThinking(active);
   }
 
   function finalizeThoughts() {
@@ -751,7 +736,6 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     skillRuns.delete("__skill-preview__");
     skillPreview = null;
     if (!sample) return;
-    setChatOpen(true);
     skillPreview = addSkillRun(
       "__skill-preview__",
       sample.name,
@@ -774,7 +758,6 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   }
 
   async function startMic() {
-    setChatOpen(true);
     await startIfIdle();
     await mic?.start();
   }
@@ -789,8 +772,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     addMessage("user", text, Date.now() / 1000);
     input.value = "";
     input.style.height = "auto";
-    send.disabled = true;
-    placeholder.classList.remove("hidden");
+    syncComposerAction();
     // Always jump to our own message, even if we'd scrolled up reading earlier.
     stream.scrollTop = stream.scrollHeight;
     await startIfIdle();
@@ -812,9 +794,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   input.addEventListener("input", () => {
     input.style.height = "auto";
     input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
-    const empty = input.value.trim().length === 0;
-    send.disabled = empty;
-    placeholder.classList.toggle("hidden", !empty);
+    syncComposerAction();
   });
 
   // ---- history backfill ---------------------------------------------------
@@ -852,7 +832,6 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     compactPrompt = null;
     compactMessages.length = 0;
     thoughts = null;
-    setChatThinking(false);
     skillRuns.clear();
     lastTs = 0;
     replayingHistory = true;
@@ -910,7 +889,6 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     if (String(payload?.sender ?? "") !== "user") return;
     const text = String(payload?.text ?? "");
     if (!text) return;
-    setChatOpen(true);
     addMessage("user", text, Number(payload?.timestamp) || Date.now() / 1000);
   }, undefined, "std_msgs/msg/String");
 
@@ -956,6 +934,10 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   return {
     startMic,
     stopMic,
+    micMount,
+    setComposerMount(mount) {
+      (mount ?? thoughtsPanel).append(form);
+    },
     previewSkill,
     destroy() {
       mic?.destroy();
@@ -971,7 +953,6 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       unsubOut();
       unsubSkill();
       panel.remove();
-      chatToggle.remove();
     },
   };
 }

@@ -3,15 +3,14 @@
 import { isTypingContext } from "../shell.js";
 
 const RIPPLE_COUNT = 3;
-const WAVEFORM_BAR_COUNT = 7;
+const WAVEFORM_BAR_COUNT = 9;
 const SHORT_CLICK_MS = 350;
 const HOLD_HINT_DURATION_MS = 4200;
 /** Mic RMS is quiet; scale it so the resting glass glow reads as activity. */
 const LEVEL_GAIN = 6;
-/** Band RMS is quieter still; scale so waveform bars fill the puck. */
-const WAVEFORM_GAIN = 10;
 /** Idle bar height so the waveform never collapses to a flat line. */
 const WAVEFORM_FLOOR = 0.12;
+const WAVEFORM_DB_RANGE = 48;
 
 /**
  * @param {HTMLElement} root
@@ -246,7 +245,7 @@ export function createAgentMicControl(root, callbacks) {
     setAudioFeedback({ level, waveform }) {
       control.style.setProperty("--agent-mic-level", String(clamp(level * LEVEL_GAIN)));
       waveformBars.forEach((bar, index) => {
-        const amplitude = clamp((waveform[index] ?? 0) * WAVEFORM_GAIN, WAVEFORM_FLOOR);
+        const amplitude = waveformHeight(waveform[index] ?? 0);
         bar.style.setProperty("--agent-wave", String(amplitude));
       });
     },
@@ -278,4 +277,11 @@ function rippleGroup(groupClass, rippleClass) {
 /** @param {number} value @param {number} [min] @returns {number} */
 function clamp(value, min = 0) {
   return Math.max(min, Math.min(1, value));
+}
+
+/** @param {number} amplitude @returns {number} */
+function waveformHeight(amplitude) {
+  if (amplitude <= 0) return WAVEFORM_FLOOR;
+  const decibels = 20 * Math.log10(amplitude);
+  return clamp((decibels + WAVEFORM_DB_RANGE) / WAVEFORM_DB_RANGE, WAVEFORM_FLOOR);
 }

@@ -56,13 +56,13 @@ function buildAgentView(root) {
 
   const videoStage = createStage ? createStage(root, session) : createVideoStage(root, session);
 
-  // Camera views stay grouped at the top left.
+  // Status and camera views stay grouped at the top left.
   const cornerStack = document.createElement("div");
   cornerStack.className = "overlay-stack-top-left";
   root.append(cornerStack);
   const telemetryOverlay = document.createElement("div");
   telemetryOverlay.className = "overlay telemetry-overlay agent-telemetry-overlay";
-  root.append(telemetryOverlay);
+  cornerStack.append(telemetryOverlay);
   const agentState = sharedAgentState();
 
   const cameraSwitch = createCameraSwitch(root, session, ros, {
@@ -147,6 +147,12 @@ function buildAgentView(root) {
   const simSession = /** @type {any} */ (session);
   const challengePanel =
     typeof simSession.onChallenge === "function" ? createChallengePanel(root, simSession) : null;
+  const composerLayout = config.simControls ? createComposerLayoutToggle(root, panel) : null;
+  const previewStack = config.simControls ? document.createElement("div") : null;
+  if (previewStack) {
+    previewStack.className = "agent-preview-stack";
+    root.append(previewStack);
+  }
   const isSceneSurface = (/** @type {EventTarget | null} */ target) =>
     target instanceof Element &&
     (target.matches(".video-stage > canvas, .video-stage > video") || target.classList.contains("video-stage"));
@@ -158,16 +164,16 @@ function buildAgentView(root) {
   root.addEventListener("pointerdown", onScenePointerDown);
   const telemetry = createTelemetry(telemetryOverlay, ros, { showBattery: !config.simControls });
   if (config.simControls) {
-    micControl = createAgentMicControl(root, {
+    micControl = createAgentMicControl(panel.micMount, {
       startListening: panel.startMic,
       stopListening: panel.stopMic,
     });
   }
-  const skillPreview = config.simControls
-    ? createSkillCardPreviewControl(root, panel.previewSkill)
+  const telemetryPreview = previewStack
+    ? createTelemetryPreviewControl(previewStack, telemetry.preview)
     : null;
-  const telemetryPreview = config.simControls
-    ? createTelemetryPreviewControl(root, telemetry.preview)
+  const skillPreview = previewStack
+    ? createSkillCardPreviewControl(previewStack, panel.previewSkill)
     : null;
 
   const parts = [
@@ -179,6 +185,8 @@ function buildAgentView(root) {
     cameraSwitch,
     ...(micControl ? [micControl] : []),
     ...(skillPreview ? [skillPreview] : []),
+    ...(composerLayout ? [composerLayout] : []),
+    ...(previewStack ? [{ destroy: () => previewStack.remove() }] : []),
     panel,
     {
       destroy: () => {
@@ -209,4 +217,61 @@ function buildAgentView(root) {
       root.innerHTML = "";
     },
   };
+}
+
+/**
+ * @param {HTMLElement} root
+ * @param {ReturnType<typeof createAgentPanel>} panel
+ */
+function createComposerLayoutToggle(root, panel) {
+  const mount = document.createElement("div");
+  mount.className = "agent-stage-compose";
+  const control = document.createElement("aside");
+  control.className = "agent-composer-layout-control";
+  control.setAttribute("aria-label", "Chat input layout");
+  const previous = composerLayoutButton("‹", "Previous chat input layout");
+  const label = document.createElement("span");
+  label.className = "agent-composer-layout-name";
+  const next = composerLayoutButton("›", "Next chat input layout");
+  control.append(previous, label, next);
+  let layout = 0;
+
+  function render() {
+    const stage = layout !== 1;
+    panel.setComposerMount(stage ? mount : null);
+    mount.hidden = !stage;
+    mount.classList.toggle("mic-focus", layout >= 2);
+    mount.classList.toggle("pill", layout >= 3);
+    mount.classList.toggle("pill-polished", layout === 4);
+    label.textContent = `Chat input · ${layout + 1}/5`;
+  }
+
+  previous.addEventListener("click", () => {
+    layout = (layout + 4) % 5;
+    render();
+  });
+  next.addEventListener("click", () => {
+    layout = (layout + 1) % 5;
+    render();
+  });
+  root.append(mount, control);
+  render();
+
+  return {
+    destroy() {
+      panel.setComposerMount(null);
+      mount.remove();
+      control.remove();
+    },
+  };
+}
+
+/** @param {string} text @param {string} label */
+function composerLayoutButton(text, label) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "agent-composer-layout-cycle";
+  button.textContent = text;
+  button.setAttribute("aria-label", label);
+  return button;
 }
