@@ -6291,6 +6291,12 @@ select.skill-input {
 /* ---- Agent page --------------------------------------------------------- */
 .agent-cockpit {
   --agent-dock-width: 360px;
+  --agent-dock-gutter: 18px;
+  --agent-telemetry-height: 56px;
+}
+
+.agent-cockpit .video-stage {
+  background: transparent;
 }
 
 .agent-cockpit .cam-strip {
@@ -6303,6 +6309,45 @@ select.skill-input {
 
 .agent-cockpit .agent-telemetry-overlay {
   width: var(--agent-dock-width);
+  height: var(--agent-telemetry-height);
+  border-radius: 14px;
+}
+
+.agent-cockpit .agent-telemetry-overlay .telemetry {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  gap: 0;
+  padding: 8px 12px;
+}
+
+.agent-cockpit .agent-telemetry-overlay .telemetry-item {
+  flex: 1 1 0;
+  padding: 0 10px;
+}
+
+.agent-cockpit .agent-telemetry-overlay .telemetry-item-robot {
+  display: grid;
+  flex-grow: 1.65;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: center;
+  gap: 1px;
+  padding: 0 12px 0 0;
+  border-bottom: 0;
+}
+
+.agent-cockpit .agent-telemetry-overlay .telemetry-item-battery {
+  display: grid;
+  grid-template-rows: auto auto;
+  align-content: center;
+  gap: 2px;
+}
+
+.agent-cockpit
+  .agent-telemetry-overlay
+  .telemetry-item:not(.telemetry-item-robot) {
+  border-left: 1px solid rgb(255 255 255 / 10%);
 }
 
 @keyframes telemetry-marquee {
@@ -7186,15 +7231,15 @@ select.skill-input {
 
 .agent-panel {
   position: absolute;
-  top: 14px;
-  right: 14px;
-  bottom: 14px;
+  top: var(--agent-dock-gutter);
+  right: var(--agent-dock-gutter);
+  bottom: var(--agent-dock-gutter);
   width: var(--agent-dock-width);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   gap: 10px;
-  max-height: calc(100% - 28px);
+  max-height: calc(100% - var(--agent-dock-gutter) - var(--agent-dock-gutter));
   padding: 0;
   background: transparent;
   backdrop-filter: none;
@@ -7245,6 +7290,53 @@ select.skill-input {
 @media (min-width: 641px) {
   .agent-cockpit {
     --agent-dock-width: 388px;
+  }
+
+  .agent-cockpit .overlay-stack-top-left {
+    top: calc(var(--agent-dock-gutter) + 18px);
+    right: calc(
+      var(--agent-dock-width) + var(--agent-dock-gutter) + var(--agent-dock-gutter) + 18px
+    );
+    bottom: auto;
+    left: auto;
+  }
+
+  .agent-cockpit .video-stage {
+    top: var(--agent-dock-gutter);
+    bottom: var(--agent-dock-gutter);
+    left: var(--agent-dock-gutter);
+    right: calc(
+      var(--agent-dock-width) + var(--agent-dock-gutter) + var(--agent-dock-gutter)
+    );
+  }
+
+  .agent-cockpit .video-stage video {
+    display: block;
+    height: auto;
+    max-height: 100%;
+    border: 1px solid transparent;
+    border-radius: 18px;
+    object-position: left top;
+    transition: border-color 320ms ease;
+  }
+
+  .agent-cockpit .video-stage.feed-live video {
+    border-color: color-mix(in srgb, var(--text) 34%, var(--bg));
+  }
+
+  .agent-cockpit .agent-telemetry-overlay {
+    top: auto;
+    right: auto;
+    bottom: var(--agent-dock-gutter);
+    left: var(--agent-dock-gutter);
+  }
+
+  .agent-cockpit .agent-stage-view-toggle {
+    right: calc(
+      var(--agent-dock-width) + var(--agent-dock-gutter) + var(--agent-dock-gutter)
+    );
+    bottom: var(--agent-dock-gutter);
+    left: auto;
   }
 }
 
@@ -7329,7 +7421,11 @@ select.skill-input {
   }
 
   .agent-cockpit .agent-telemetry-overlay {
-    width: 100%;
+    top: 14px;
+    right: 14px;
+    bottom: auto;
+    left: 14px;
+    width: auto;
   }
 
   /* The 360px right dock doesn't fit a phone: dock as a bottom sheet
@@ -8055,7 +8151,8 @@ select.skill-input {
    stand down while it's open (the panel carries the running state; the
    monitor shows pose and frames). */
 .agent-cockpit.brain-open .overlay-stack-top-left,
-.agent-cockpit.brain-open .cam-strip {
+.agent-cockpit.brain-open .cam-strip,
+.agent-cockpit.brain-open .agent-telemetry-overlay {
   display: none;
 }
 
@@ -8830,6 +8927,742 @@ select.skill-input {
 .agent-compose-send:focus-visible {
   outline: 2px solid var(--agent-purple);
   outline-offset: 2px;
+}
+
+/* ---- Agent page themes -------------------------------------------------- */
+
+.agent-cockpit[data-agent-theme] {
+  color: var(--agent-theme-text);
+  background: var(--agent-theme-page);
+  --bg: var(--agent-theme-page);
+  --panel: var(--agent-theme-surface);
+  --glass: var(--agent-theme-surface);
+  --text: var(--agent-theme-text);
+  --muted: var(--agent-theme-muted);
+  --hairline: var(--agent-theme-edge);
+  --hairline-strong: var(--agent-theme-edge-strong);
+  --ctl-glass: var(--agent-theme-surface-strong);
+  --ctl-glass-hover: var(--agent-theme-selected);
+  --ctl-field: var(--agent-theme-field);
+  --ctl-text: var(--agent-theme-control-text);
+  --ctl-text-off: var(--agent-theme-control-off);
+  --ctl-accent: var(--agent-theme-accent);
+  --ctl-accent-hover: var(--agent-theme-accent-hover);
+  --ctl-edge-accent: var(--agent-theme-accent-edge);
+  --ctl-edge-accent-hover: var(--agent-theme-accent-hover);
+  --agent-purple: var(--agent-theme-accent);
+  --agent-purple-fill: var(--agent-theme-accent-fill);
+  --agent-purple-edge: var(--agent-theme-accent-edge);
+}
+
+.agent-cockpit[data-agent-theme^="omarchy-"] {
+  --agent-theme-page: var(--omarchy-bg);
+  --agent-theme-surface: var(--omarchy-surface);
+  --agent-theme-surface-strong: color-mix(
+    in srgb,
+    var(--omarchy-surface) 88%,
+    var(--omarchy-bright-text)
+  );
+  --agent-theme-field: var(--omarchy-dark-bg);
+  --agent-theme-selected: var(--omarchy-selection);
+  --agent-theme-edge: color-mix(in srgb, var(--omarchy-muted-tone) 55%, transparent);
+  --agent-theme-edge-strong: color-mix(in srgb, var(--omarchy-muted-tone) 78%, transparent);
+  --agent-theme-text: var(--omarchy-text);
+  --agent-theme-muted: color-mix(
+    in srgb,
+    var(--omarchy-muted-tone) 45%,
+    var(--omarchy-text)
+  );
+  --agent-theme-control-text: color-mix(in srgb, var(--omarchy-text) 84%, transparent);
+  --agent-theme-control-off: color-mix(in srgb, var(--agent-theme-muted) 58%, transparent);
+  --agent-theme-placeholder: color-mix(in srgb, var(--omarchy-text) 38%, transparent);
+  --agent-theme-accent: var(--omarchy-accent);
+  --agent-theme-accent-hover: color-mix(
+    in srgb,
+    var(--omarchy-accent) 78%,
+    var(--omarchy-bright-text)
+  );
+  --agent-theme-accent-fill: color-mix(in srgb, var(--omarchy-accent) 22%, transparent);
+  --agent-theme-accent-edge: color-mix(in srgb, var(--omarchy-accent) 58%, transparent);
+  --agent-theme-selected-text: var(--omarchy-bright-text);
+  --agent-theme-shadow: rgb(0 0 0 / 42%);
+}
+
+.agent-cockpit:is(
+  [data-agent-theme="omarchy-flexoki-light"],
+  [data-agent-theme="omarchy-rose-pine"],
+  [data-agent-theme="omarchy-catppuccin-latte"],
+  [data-agent-theme="omarchy-white"]
+) {
+  --agent-theme-surface: var(--omarchy-dark-bg);
+  --agent-theme-surface-strong: var(--omarchy-bg);
+  --agent-theme-field: color-mix(
+    in srgb,
+    var(--omarchy-bg) 78%,
+    var(--omarchy-selection)
+  );
+  --agent-theme-shadow: color-mix(in srgb, var(--omarchy-text) 14%, transparent);
+}
+
+.agent-cockpit[data-agent-theme="omarchy-tokyo-night"] {
+  --omarchy-bg: #1a1b26;
+  --omarchy-dark-bg: #13141c;
+  --omarchy-surface: #24283b;
+  --omarchy-selection: #292e42;
+  --omarchy-text: #a9b1d6;
+  --omarchy-muted-tone: #414868;
+  --omarchy-bright-text: #c0caf5;
+  --omarchy-accent: #7aa2f7;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-catppuccin"] {
+  --omarchy-bg: #1e1e2e;
+  --omarchy-dark-bg: #161622;
+  --omarchy-surface: #313244;
+  --omarchy-selection: #45475a;
+  --omarchy-text: #cdd6f4;
+  --omarchy-muted-tone: #585b70;
+  --omarchy-bright-text: #cdd6f4;
+  --omarchy-accent: #89b4fa;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-lumon"] {
+  --omarchy-bg: #16242d;
+  --omarchy-dark-bg: #101b21;
+  --omarchy-surface: #1b2d40;
+  --omarchy-selection: #243d56;
+  --omarchy-text: #d6e2ee;
+  --omarchy-muted-tone: #304860;
+  --omarchy-bright-text: #f2fcff;
+  --omarchy-accent: #8bc9eb;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-ethereal"] {
+  --omarchy-bg: #060b1e;
+  --omarchy-dark-bg: #040816;
+  --omarchy-surface: #131a3a;
+  --omarchy-selection: #252e56;
+  --omarchy-text: #ffcead;
+  --omarchy-muted-tone: #6d7db6;
+  --omarchy-bright-text: #ffcead;
+  --omarchy-accent: #7d82d9;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-everforest"] {
+  --omarchy-bg: #2d353b;
+  --omarchy-dark-bg: #21272c;
+  --omarchy-surface: #343f44;
+  --omarchy-selection: #3d484d;
+  --omarchy-text: #d3c6aa;
+  --omarchy-muted-tone: #475258;
+  --omarchy-bright-text: #d3c6aa;
+  --omarchy-accent: #7fbbb3;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-gruvbox"] {
+  --omarchy-bg: #282828;
+  --omarchy-dark-bg: #1e1e1e;
+  --omarchy-surface: #3c3836;
+  --omarchy-selection: #504945;
+  --omarchy-text: #d4be98;
+  --omarchy-muted-tone: #665c54;
+  --omarchy-bright-text: #d4be98;
+  --omarchy-accent: #7daea3;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-miasma"] {
+  --omarchy-bg: #222;
+  --omarchy-dark-bg: #191919;
+  --omarchy-surface: #2c2c2c;
+  --omarchy-selection: #383838;
+  --omarchy-text: #c2c2b0;
+  --omarchy-muted-tone: #666;
+  --omarchy-bright-text: #c2c2b0;
+  --omarchy-accent: #78824b;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-hackerman"] {
+  --omarchy-bg: #0b0c16;
+  --omarchy-dark-bg: #080910;
+  --omarchy-surface: #151828;
+  --omarchy-selection: #1f253a;
+  --omarchy-text: #ddf7ff;
+  --omarchy-muted-tone: #2d3450;
+  --omarchy-bright-text: #ddf7ff;
+  --omarchy-accent: #82fb9c;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-osaka-jade"] {
+  --omarchy-bg: #111c18;
+  --omarchy-dark-bg: #0c1512;
+  --omarchy-surface: #23372b;
+  --omarchy-selection: #32473b;
+  --omarchy-text: #c1c497;
+  --omarchy-muted-tone: #53685b;
+  --omarchy-bright-text: #f7e8b2;
+  --omarchy-accent: #509475;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-kanagawa"] {
+  --omarchy-bg: #1f1f28;
+  --omarchy-dark-bg: #17171e;
+  --omarchy-surface: #223249;
+  --omarchy-selection: #363646;
+  --omarchy-text: #dcd7ba;
+  --omarchy-muted-tone: #54546d;
+  --omarchy-bright-text: #dcd7ba;
+  --omarchy-accent: #dcd7ba;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-nord"] {
+  --omarchy-bg: #2e3440;
+  --omarchy-dark-bg: #222730;
+  --omarchy-surface: #3b4252;
+  --omarchy-selection: #434c5e;
+  --omarchy-text: #d8dee9;
+  --omarchy-muted-tone: #4c566a;
+  --omarchy-bright-text: #d8dee9;
+  --omarchy-accent: #81a1c1;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-matte-black"] {
+  --omarchy-bg: #121212;
+  --omarchy-dark-bg: #0d0d0d;
+  --omarchy-surface: #1e1e1e;
+  --omarchy-selection: #2a2a2a;
+  --omarchy-text: #bebebe;
+  --omarchy-muted-tone: #333;
+  --omarchy-bright-text: #bebebe;
+  --omarchy-accent: #e68e0d;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-vantablack"] {
+  --omarchy-bg: #000;
+  --omarchy-dark-bg: #090909;
+  --omarchy-surface: #1a1a1a;
+  --omarchy-selection: #1a1a1a;
+  --omarchy-text: #fff;
+  --omarchy-muted-tone: #7a7a7a;
+  --omarchy-bright-text: #fff;
+  --omarchy-accent: #8d8d8d;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-ristretto"] {
+  --omarchy-bg: #2c2525;
+  --omarchy-dark-bg: #211b1b;
+  --omarchy-surface: #3d2f2a;
+  --omarchy-selection: #403e41;
+  --omarchy-text: #e6d9db;
+  --omarchy-muted-tone: #72696a;
+  --omarchy-bright-text: #e6d9db;
+  --omarchy-accent: #f38d70;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-retro-82"] {
+  --omarchy-bg: #05182e;
+  --omarchy-dark-bg: #031222;
+  --omarchy-surface: #0a2540;
+  --omarchy-selection: #134e5a;
+  --omarchy-text: #f6dcac;
+  --omarchy-muted-tone: #2a6b78;
+  --omarchy-bright-text: #f6dcac;
+  --omarchy-accent: #faa968;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-flexoki-light"] {
+  --omarchy-bg: #fffcf0;
+  --omarchy-dark-bg: #f2efe4;
+  --omarchy-surface: #e6e4d9;
+  --omarchy-selection: #cecdc3;
+  --omarchy-text: #100f0f;
+  --omarchy-muted-tone: #b7b5ac;
+  --omarchy-bright-text: #100f0f;
+  --omarchy-accent: #205ea6;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-rose-pine"] {
+  --omarchy-bg: #faf4ed;
+  --omarchy-dark-bg: #ede7e1;
+  --omarchy-surface: #f2e9e1;
+  --omarchy-selection: #dfdad9;
+  --omarchy-text: #575279;
+  --omarchy-muted-tone: #cecacd;
+  --omarchy-bright-text: #575279;
+  --omarchy-accent: #56949f;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-catppuccin-latte"] {
+  --omarchy-bg: #eff1f5;
+  --omarchy-dark-bg: #e3e4e8;
+  --omarchy-surface: #dce0e8;
+  --omarchy-selection: #ccd0da;
+  --omarchy-text: #4c4f69;
+  --omarchy-muted-tone: #acb0be;
+  --omarchy-bright-text: #4c4f69;
+  --omarchy-accent: #1e66f5;
+}
+
+.agent-cockpit[data-agent-theme="omarchy-white"] {
+  --omarchy-bg: #fff;
+  --omarchy-dark-bg: #f5f5f5;
+  --omarchy-surface: #c0c0c0;
+  --omarchy-selection: #c0c0c0;
+  --omarchy-text: #000;
+  --omarchy-muted-tone: #808080;
+  --omarchy-bright-text: #000;
+  --omarchy-accent: #6e6e6e;
+}
+
+.agent-cockpit[data-agent-theme="obsidian"] {
+  --agent-theme-page: #0a0a0c;
+  --agent-theme-surface: rgb(7 7 10 / 82%);
+  --agent-theme-surface-strong: rgb(8 8 10 / 92%);
+  --agent-theme-field: rgb(8 8 10 / 58%);
+  --agent-theme-selected: rgb(4 4 6 / 92%);
+  --agent-theme-edge: rgb(255 255 255 / 13%);
+  --agent-theme-edge-strong: rgb(255 255 255 / 22%);
+  --agent-theme-text: #f2f2f4;
+  --agent-theme-muted: rgb(231 231 234 / 58%);
+  --agent-theme-control-text: rgb(242 242 244 / 80%);
+  --agent-theme-control-off: rgb(242 242 244 / 42%);
+  --agent-theme-placeholder: rgb(255 255 255 / 32%);
+  --agent-theme-accent: #d7d2ff;
+  --agent-theme-accent-hover: #f0edff;
+  --agent-theme-accent-fill: rgb(64 31 251 / 32%);
+  --agent-theme-accent-edge: rgb(151 135 255 / 68%);
+  --agent-theme-selected-text: #fff;
+  --agent-theme-shadow: rgb(0 0 0 / 48%);
+}
+
+.agent-cockpit[data-agent-theme="graphite"] {
+  --agent-theme-page: #121518;
+  --agent-theme-surface: rgb(25 29 32 / 92%);
+  --agent-theme-surface-strong: rgb(31 36 40 / 96%);
+  --agent-theme-field: rgb(8 13 16 / 62%);
+  --agent-theme-selected: #101619;
+  --agent-theme-edge: rgb(211 227 232 / 16%);
+  --agent-theme-edge-strong: rgb(211 227 232 / 28%);
+  --agent-theme-text: #eef3f4;
+  --agent-theme-muted: #96a6ab;
+  --agent-theme-control-text: #d8e1e3;
+  --agent-theme-control-off: #778589;
+  --agent-theme-placeholder: rgb(216 225 227 / 38%);
+  --agent-theme-accent: #79d8ce;
+  --agent-theme-accent-hover: #b0fff5;
+  --agent-theme-accent-fill: rgb(52 143 134 / 30%);
+  --agent-theme-accent-edge: rgb(121 216 206 / 62%);
+  --agent-theme-selected-text: #f4fffd;
+  --agent-theme-shadow: rgb(0 0 0 / 42%);
+}
+
+.agent-cockpit[data-agent-theme="midnight"] {
+  --agent-theme-page: #06101d;
+  --agent-theme-surface: rgb(7 19 36 / 92%);
+  --agent-theme-surface-strong: rgb(9 25 46 / 96%);
+  --agent-theme-field: rgb(2 10 22 / 64%);
+  --agent-theme-selected: #0d203d;
+  --agent-theme-edge: rgb(144 184 255 / 17%);
+  --agent-theme-edge-strong: rgb(144 184 255 / 30%);
+  --agent-theme-text: #edf4ff;
+  --agent-theme-muted: #8ea6c7;
+  --agent-theme-control-text: #d6e6ff;
+  --agent-theme-control-off: #6e84a3;
+  --agent-theme-placeholder: rgb(214 230 255 / 38%);
+  --agent-theme-accent: #8db8ff;
+  --agent-theme-accent-hover: #c2d8ff;
+  --agent-theme-accent-fill: rgb(53 103 190 / 34%);
+  --agent-theme-accent-edge: rgb(141 184 255 / 68%);
+  --agent-theme-selected-text: #fff;
+  --agent-theme-shadow: rgb(0 5 15 / 52%);
+}
+
+.agent-cockpit[data-agent-theme="aurora"] {
+  --agent-theme-page: #100b20;
+  --agent-theme-surface: rgb(28 17 49 / 92%);
+  --agent-theme-surface-strong: rgb(36 21 62 / 96%);
+  --agent-theme-field: rgb(12 7 27 / 66%);
+  --agent-theme-selected: #342056;
+  --agent-theme-edge: rgb(196 153 255 / 18%);
+  --agent-theme-edge-strong: rgb(196 153 255 / 32%);
+  --agent-theme-text: #f5efff;
+  --agent-theme-muted: #b49bcf;
+  --agent-theme-control-text: #e7d9f8;
+  --agent-theme-control-off: #8e78a8;
+  --agent-theme-placeholder: rgb(231 217 248 / 38%);
+  --agent-theme-accent: #75f1d2;
+  --agent-theme-accent-hover: #b4ffe9;
+  --agent-theme-accent-fill: rgb(61 195 161 / 24%);
+  --agent-theme-accent-edge: rgb(117 241 210 / 58%);
+  --agent-theme-selected-text: #f8f1ff;
+  --agent-theme-shadow: rgb(5 2 14 / 58%);
+}
+
+.agent-cockpit[data-agent-theme="evergreen"] {
+  --agent-theme-page: #08130e;
+  --agent-theme-surface: rgb(12 35 25 / 93%);
+  --agent-theme-surface-strong: rgb(15 44 31 / 97%);
+  --agent-theme-field: rgb(4 18 12 / 70%);
+  --agent-theme-selected: #173e2d;
+  --agent-theme-edge: rgb(135 216 169 / 18%);
+  --agent-theme-edge-strong: rgb(135 216 169 / 32%);
+  --agent-theme-text: #e9f8ee;
+  --agent-theme-muted: #91b9a0;
+  --agent-theme-control-text: #d4eadb;
+  --agent-theme-control-off: #6f947b;
+  --agent-theme-placeholder: rgb(212 234 219 / 38%);
+  --agent-theme-accent: #9be15d;
+  --agent-theme-accent-hover: #c9ff96;
+  --agent-theme-accent-fill: rgb(107 178 54 / 24%);
+  --agent-theme-accent-edge: rgb(155 225 93 / 58%);
+  --agent-theme-selected-text: #f3ffe8;
+  --agent-theme-shadow: rgb(1 9 5 / 56%);
+}
+
+.agent-cockpit[data-agent-theme="daylight"] {
+  --agent-theme-page: #e7e9ec;
+  --agent-theme-surface: rgb(250 251 252 / 94%);
+  --agent-theme-surface-strong: rgb(255 255 255 / 97%);
+  --agent-theme-field: rgb(232 235 239 / 90%);
+  --agent-theme-selected: #fff;
+  --agent-theme-edge: rgb(24 29 36 / 16%);
+  --agent-theme-edge-strong: rgb(24 29 36 / 28%);
+  --agent-theme-text: #171b21;
+  --agent-theme-muted: #626b76;
+  --agent-theme-control-text: #272e37;
+  --agent-theme-control-off: #858e98;
+  --agent-theme-placeholder: rgb(23 27 33 / 38%);
+  --agent-theme-accent: #5239c8;
+  --agent-theme-accent-hover: #3823a8;
+  --agent-theme-accent-fill: rgb(82 57 200 / 14%);
+  --agent-theme-accent-edge: rgb(82 57 200 / 48%);
+  --agent-theme-selected-text: #171b21;
+  --agent-theme-shadow: rgb(30 38 48 / 22%);
+}
+
+.agent-cockpit[data-agent-theme="arctic"] {
+  --agent-theme-page: #e3eef4;
+  --agent-theme-surface: rgb(247 252 255 / 95%);
+  --agent-theme-surface-strong: rgb(252 254 255 / 98%);
+  --agent-theme-field: rgb(219 233 241 / 90%);
+  --agent-theme-selected: #fff;
+  --agent-theme-edge: rgb(24 67 91 / 17%);
+  --agent-theme-edge-strong: rgb(24 67 91 / 30%);
+  --agent-theme-text: #122b3a;
+  --agent-theme-muted: #607b8a;
+  --agent-theme-control-text: #234557;
+  --agent-theme-control-off: #8197a3;
+  --agent-theme-placeholder: rgb(18 43 58 / 36%);
+  --agent-theme-accent: #087ea4;
+  --agent-theme-accent-hover: #005f80;
+  --agent-theme-accent-fill: rgb(8 126 164 / 13%);
+  --agent-theme-accent-edge: rgb(8 126 164 / 46%);
+  --agent-theme-selected-text: #122b3a;
+  --agent-theme-shadow: rgb(39 74 93 / 20%);
+}
+
+.agent-cockpit[data-agent-theme="rose"] {
+  --agent-theme-page: #f0e5e7;
+  --agent-theme-surface: rgb(255 249 249 / 95%);
+  --agent-theme-surface-strong: rgb(255 252 251 / 98%);
+  --agent-theme-field: rgb(237 220 222 / 90%);
+  --agent-theme-selected: #fff8f7;
+  --agent-theme-edge: rgb(93 42 50 / 17%);
+  --agent-theme-edge-strong: rgb(93 42 50 / 30%);
+  --agent-theme-text: #352126;
+  --agent-theme-muted: #80676c;
+  --agent-theme-control-text: #50373d;
+  --agent-theme-control-off: #9e898d;
+  --agent-theme-placeholder: rgb(53 33 38 / 36%);
+  --agent-theme-accent: #a33858;
+  --agent-theme-accent-hover: #7c2440;
+  --agent-theme-accent-fill: rgb(163 56 88 / 13%);
+  --agent-theme-accent-edge: rgb(163 56 88 / 46%);
+  --agent-theme-selected-text: #352126;
+  --agent-theme-shadow: rgb(77 46 52 / 20%);
+}
+
+.agent-cockpit[data-agent-theme="contrast"] {
+  --agent-theme-page: #000;
+  --agent-theme-surface: #000;
+  --agent-theme-surface-strong: #050505;
+  --agent-theme-field: #000;
+  --agent-theme-selected: #ffe600;
+  --agent-theme-edge: rgb(255 255 255 / 72%);
+  --agent-theme-edge-strong: #fff;
+  --agent-theme-text: #fff;
+  --agent-theme-muted: #fff;
+  --agent-theme-control-text: #fff;
+  --agent-theme-control-off: #b8b8b8;
+  --agent-theme-placeholder: #c8c8c8;
+  --agent-theme-accent: #ffe600;
+  --agent-theme-accent-hover: #fff36b;
+  --agent-theme-accent-fill: rgb(255 230 0 / 18%);
+  --agent-theme-accent-edge: #ffe600;
+  --agent-theme-selected-text: #000;
+  --agent-theme-shadow: rgb(0 0 0 / 80%);
+}
+
+.agent-cockpit[data-agent-theme="retro"] {
+  --agent-theme-page: #18130c;
+  --agent-theme-surface: rgb(39 30 17 / 94%);
+  --agent-theme-surface-strong: rgb(48 37 20 / 97%);
+  --agent-theme-field: rgb(21 16 9 / 78%);
+  --agent-theme-selected: #3e2d13;
+  --agent-theme-edge: rgb(255 196 94 / 24%);
+  --agent-theme-edge-strong: rgb(255 196 94 / 42%);
+  --agent-theme-text: #f4d59a;
+  --agent-theme-muted: #b9a174;
+  --agent-theme-control-text: #e8c98e;
+  --agent-theme-control-off: #8c7958;
+  --agent-theme-placeholder: rgb(244 213 154 / 38%);
+  --agent-theme-accent: #ffb34d;
+  --agent-theme-accent-hover: #ffd08a;
+  --agent-theme-accent-fill: rgb(185 103 24 / 25%);
+  --agent-theme-accent-edge: rgb(255 179 77 / 58%);
+  --agent-theme-selected-text: #ffe5b2;
+  --agent-theme-shadow: rgb(8 5 2 / 58%);
+}
+
+.agent-cockpit[data-agent-theme="solarized"] {
+  --agent-theme-page: #002b36;
+  --agent-theme-surface: rgb(7 54 66 / 95%);
+  --agent-theme-surface-strong: rgb(8 63 76 / 98%);
+  --agent-theme-field: rgb(0 35 44 / 82%);
+  --agent-theme-selected: #0b4655;
+  --agent-theme-edge: rgb(147 161 161 / 24%);
+  --agent-theme-edge-strong: rgb(147 161 161 / 42%);
+  --agent-theme-text: #eee8d5;
+  --agent-theme-muted: #93a1a1;
+  --agent-theme-control-text: #d8d2be;
+  --agent-theme-control-off: #718486;
+  --agent-theme-placeholder: rgb(238 232 213 / 36%);
+  --agent-theme-accent: #b58900;
+  --agent-theme-accent-hover: #d6a900;
+  --agent-theme-accent-fill: rgb(181 137 0 / 22%);
+  --agent-theme-accent-edge: rgb(181 137 0 / 58%);
+  --agent-theme-selected-text: #fff4cf;
+  --agent-theme-shadow: rgb(0 20 25 / 62%);
+}
+
+.agent-cockpit[data-agent-theme="retro"] .agent-panel,
+.agent-cockpit[data-agent-theme="retro"] .agent-theme-control,
+.agent-cockpit[data-agent-theme="retro"] .agent-telemetry-overlay {
+  font-family: var(--font-mono);
+}
+
+.agent-cockpit[data-agent-theme] .agent-control-panel,
+.agent-cockpit[data-agent-theme] .agent-thoughts-panel {
+  color: var(--agent-theme-text);
+  background: var(--agent-theme-surface);
+  border-color: var(--agent-theme-edge);
+  box-shadow: 0 14px 44px var(--agent-theme-shadow);
+}
+
+.agent-cockpit[data-agent-theme] .agent-control-panel {
+  background: var(--agent-theme-surface-strong);
+}
+
+.agent-cockpit[data-agent-theme] .agent-telemetry-overlay,
+.agent-cockpit[data-agent-theme] .agent-stage-view-toggle,
+.agent-cockpit[data-agent-theme] .agent-theme-control {
+  color: var(--agent-theme-control-text);
+  background: var(--agent-theme-surface-strong);
+  border-color: var(--agent-theme-edge);
+  box-shadow: 0 10px 28px var(--agent-theme-shadow);
+}
+
+.agent-cockpit[data-agent-theme] .agent-head-agent-name,
+.agent-cockpit[data-agent-theme] .agent-panel .chat-msg.robot .chat-bubble {
+  color: var(--agent-theme-text);
+}
+
+.agent-cockpit[data-agent-theme] .agent-head-label,
+.agent-cockpit[data-agent-theme] .agent-panel .chat-thought-item,
+.agent-cockpit[data-agent-theme] .agent-panel .chat-thoughts-status,
+.agent-cockpit[data-agent-theme] .agent-panel .chat-thoughts-label,
+.agent-cockpit[data-agent-theme] .agent-panel .agent-stream-label,
+.agent-cockpit[data-agent-theme] .agent-panel .agent-activeskill .microlabel {
+  color: var(--agent-theme-muted);
+}
+
+.agent-cockpit[data-agent-theme] .agent-directive-list {
+  color: var(--agent-theme-text);
+  background: var(--agent-theme-surface-strong);
+  border-color: var(--agent-theme-edge-strong);
+}
+
+.agent-cockpit[data-agent-theme] .agent-stream-mode::before {
+  background: var(--agent-theme-selected);
+  box-shadow: inset 0 0 0 1px var(--agent-theme-edge), 0 2px 6px var(--agent-theme-shadow);
+}
+
+.agent-cockpit[data-agent-theme] .agent-stream-mode-btn.active {
+  color: var(--agent-theme-selected-text);
+}
+
+.agent-cockpit[data-agent-theme] .agent-compose:focus-within {
+  background: var(--agent-theme-surface-strong);
+  border-color: var(--agent-theme-accent-edge);
+  box-shadow: 0 0 0 2px var(--agent-theme-accent-fill);
+}
+
+.agent-cockpit[data-agent-theme] .agent-compose-placeholder {
+  color: var(--agent-theme-placeholder);
+}
+
+.agent-cockpit[data-agent-theme] .agent-panel .chat-msg.user .chat-bubble {
+  color: var(--agent-theme-text);
+  background: var(--agent-theme-field);
+  border-color: var(--agent-theme-edge);
+}
+
+.agent-cockpit[data-agent-theme] .agent-directive-option:hover,
+.agent-cockpit[data-agent-theme] .agent-directive-option:focus-visible,
+.agent-cockpit[data-agent-theme] .agent-directive-option[aria-selected="true"] {
+  color: var(--agent-theme-text);
+  background: var(--agent-theme-selected);
+}
+
+.agent-cockpit[data-agent-theme] .agent-compose-send:disabled {
+  color: var(--agent-theme-control-off);
+  background: var(--agent-theme-field);
+  border-color: var(--agent-theme-edge);
+}
+
+.agent-cockpit[data-agent-theme] .agent-telemetry-overlay .microlabel,
+.agent-cockpit[data-agent-theme] .agent-telemetry-overlay .telemetry-meta {
+  color: var(--agent-theme-muted);
+}
+
+.agent-cockpit[data-agent-theme]
+  .agent-telemetry-overlay
+  .telemetry-item {
+  border-color: var(--agent-theme-edge);
+}
+
+.agent-cockpit[data-agent-theme] .cam-tile.live,
+.agent-cockpit[data-agent-theme] .cam-tile-label {
+  color: var(--agent-theme-control-text);
+  background-color: var(--agent-theme-surface-strong);
+  border-color: var(--agent-theme-edge);
+}
+
+.agent-theme-control {
+  position: absolute;
+  z-index: 13;
+  bottom: 14px;
+  left: 14px;
+  display: grid;
+  width: 190px;
+  height: 56px;
+  grid-template-columns: 38px minmax(0, 1fr) 38px;
+  align-items: center;
+  gap: 4px;
+  padding: 7px;
+  color: var(--ctl-text);
+  background: rgb(8 8 10 / 76%);
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 28px;
+  backdrop-filter: blur(20px) saturate(1.1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.1);
+}
+
+.agent-theme-cycle {
+  display: grid;
+  width: 38px;
+  height: 40px;
+  padding: 0;
+  color: inherit;
+  background: var(--agent-theme-field, var(--ctl-field));
+  border: 1px solid var(--agent-theme-edge, var(--hairline));
+  border-radius: 20px;
+  font-size: 22px;
+  line-height: 1;
+  place-items: center;
+}
+
+.agent-theme-cycle svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.agent-theme-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  line-height: 1.15;
+}
+
+.agent-theme-family,
+.agent-theme-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-theme-family {
+  color: var(--agent-theme-muted, var(--muted));
+  font-size: 7px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.agent-theme-name {
+  color: var(--agent-theme-text, var(--text));
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.agent-theme-cycle:focus-visible {
+  outline: 2px solid var(--agent-theme-accent, var(--ctl-accent));
+  outline-offset: 1px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agent-theme-cycle:hover {
+    color: var(--agent-theme-accent, var(--ctl-accent));
+    border-color: var(--agent-theme-accent-edge, var(--ctl-edge-accent));
+  }
+}
+
+@media (min-width: 641px) {
+  .agent-cockpit .agent-stage-view-toggle {
+    width: 136px;
+    justify-content: center;
+  }
+
+  .agent-cockpit .agent-theme-control {
+    right: calc(
+      var(--agent-dock-width) + var(--agent-dock-gutter) + var(--agent-dock-gutter) + 146px
+    );
+    bottom: var(--agent-dock-gutter);
+    left: auto;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1100px) {
+  .agent-cockpit .agent-theme-control {
+    right: calc(
+      var(--agent-dock-width) + var(--agent-dock-gutter) + var(--agent-dock-gutter)
+    );
+    bottom: calc(var(--agent-dock-gutter) + 66px);
+  }
+}
+
+@media (max-width: 640px) {
+  .agent-theme-control {
+    display: none;
+  }
 }
 
 /* Top-center "<agent> is running" pill — shown on non-Agent pages while the

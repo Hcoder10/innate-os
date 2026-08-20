@@ -104,6 +104,7 @@ export function createVideoStage(parent, session) {
     status.hidden = !showStatus;
     wrap.classList.toggle("buffering", loading);
     wrap.classList.toggle("degraded", state.status === "connecting" && !!state.videoStream);
+    wrap.classList.toggle("feed-live", Boolean(state.videoStream) && !loading);
     if (state.status === "error") {
       statusText.textContent = "video link failed";
       retry.hidden = false;

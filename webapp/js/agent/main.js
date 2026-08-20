@@ -29,6 +29,7 @@ import { createChallengePanel } from "./challengePanel.js";
 import { createAgentMicControl } from "./agentMicControl.js";
 import { createSkillCardPreviewControl } from "./skillPreviewControl.js";
 import { createTelemetryPreviewControl } from "../teleop/telemetryPreviewControl.js";
+import { createAgentThemeControl } from "./themeControl.js";
 
 // Runtime feature flags (config.json, served static), same as teleop. simControls
 // marks a sim deployment — used here to drop the (absent) battery readout. Fetched
@@ -56,19 +57,18 @@ function buildAgentView(root) {
 
   const videoStage = createStage ? createStage(root, session) : createVideoStage(root, session);
 
-  // Status and camera views stay grouped at the top left.
   const cornerStack = document.createElement("div");
   cornerStack.className = "overlay-stack-top-left";
   root.append(cornerStack);
-  const telemetryOverlay = document.createElement("div");
-  telemetryOverlay.className = "overlay telemetry-overlay agent-telemetry-overlay";
-  cornerStack.append(telemetryOverlay);
   const agentState = sharedAgentState();
 
   const cameraSwitch = createCameraSwitch(root, session, ros, {
     storeKey: "innate.cameras.agent",
     stripParent: cornerStack,
   });
+  const telemetryOverlay = document.createElement("div");
+  telemetryOverlay.className = "overlay telemetry-overlay agent-telemetry-overlay";
+  root.append(telemetryOverlay);
 
   // The Brain monitor's layer sits between the camera overlays and the panel
   // (DOM order + z-index): opening it covers the stage but never the controls.
@@ -84,7 +84,8 @@ function buildAgentView(root) {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2-5 4 10 2-5h6"/></svg><span></span>';
   const stageViewLabel = /** @type {HTMLElement} */ (stageViewToggle.querySelector("span"));
   stageViewToggle.addEventListener("click", () => setView(view === "live" ? "brain" : "live"));
-  root.append(stageViewToggle);
+  const themeControl = createAgentThemeControl(root);
+  root.append(themeControl.element, stageViewToggle);
 
   /** @param {"live" | "brain"} next */
   function renderStageView(next) {
@@ -193,6 +194,7 @@ function buildAgentView(root) {
         root.removeEventListener("pointerdown", onScenePointerDown);
       },
     },
+    themeControl,
     { destroy: () => stageViewToggle.remove() },
     {
       destroy: () => {
