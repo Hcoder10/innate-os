@@ -37,6 +37,10 @@ def _yaw(pose) -> float:
     )
 
 
+def _stamp_ns(msg) -> int:
+    return int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
+
+
 def _pose_error(first, second) -> tuple[float, float]:
     position_error = math.hypot(first.position.x - second.position.x, first.position.y - second.position.y)
     yaw_error = math.atan2(math.sin(_yaw(first) - _yaw(second)), math.cos(_yaw(first) - _yaw(second)))
@@ -49,6 +53,7 @@ class GridLocalizerSim(LifecycleNode):
         self._last_odom = None
         self._pose_pub = None
         self._retry_timer = None
+        self._localization_started_ns = None
         self._reset_pending = False
         self._world_epoch = None
         self._drift_bad_since = None
@@ -88,15 +93,19 @@ class GridLocalizerSim(LifecycleNode):
             return
         pose = msg.pose.pose
         if self._retry_timer is not None:
-            if not self._drift_armed:
+            if self._localization_started_ns is not None and _stamp_ns(msg) < self._localization_started_ns:
+                return
+            automatic_recovery = not self._drift_armed
+            if automatic_recovery:
                 if self._last_odom is None:
                     return
                 position_error, yaw_error = _pose_error(pose, self._last_odom.pose.pose)
                 if position_error > POSITION_MATCH_TOLERANCE_M or yaw_error > YAW_MATCH_TOLERANCE_RAD:
                     return
             self._clear_drift_observation()
-            if not self._drift_armed:
-                self._drift_healthy_since = time.monotonic()
+            if automatic_recovery:
+                self._drift_armed = True
+                self._drift_healthy_since = None
             self._cancel_retry()
             self.get_logger().info("AMCL localized; stopping /initialpose retries")
             return
@@ -160,6 +169,7 @@ class GridLocalizerSim(LifecycleNode):
         self._last_auto_reseed_at = None
 
     def _cancel_retry(self):
+        self._localization_started_ns = None
         if self._retry_timer is None:
             return
         self._retry_timer.cancel()
@@ -188,7 +198,9 @@ class GridLocalizerSim(LifecycleNode):
         return response
 
     def _begin_localization(self) -> bool:
+        self._localization_started_ns = self.get_clock().now().nanoseconds
         if not self._publish_pose():
+            self._localization_started_ns = None
             return False
         if self._retry_timer is None:
             self._retry_timer = self.create_timer(2.0, self._publish_pose)
