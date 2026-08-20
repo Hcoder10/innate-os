@@ -152,7 +152,6 @@ function buildAgentView(root) {
     (target.matches(".video-stage > canvas, .video-stage > video") || target.classList.contains("video-stage"));
   const onScenePointerDown = (/** @type {PointerEvent} */ event) => {
     if (!event.isPrimary || event.button !== 0 || !isSceneSurface(event.target)) return;
-    panel.dismissOverlays();
     challengePanel?.dismiss();
     root.dispatchEvent(new Event("innate:stage-background-click"));
   };

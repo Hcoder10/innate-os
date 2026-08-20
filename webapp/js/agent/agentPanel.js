@@ -46,7 +46,6 @@ const CHAT_EXAMPLES = [
  *   physical microphone (see micStream.js).
  * @returns {{
  *   destroy: () => void,
- *   dismissOverlays: () => void,
  *   startMic: () => Promise<void>,
  *   stopMic: () => void,
  *   previewSkill: (sample: {
@@ -958,11 +957,6 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     startMic,
     stopMic,
     previewSkill,
-    dismissOverlays() {
-      setChatOpen(false);
-      setDirectiveOpen(false);
-      setControlsCollapsed(true);
-    },
     destroy() {
       mic?.destroy();
       document.removeEventListener("click", onDirectiveOutsideClick);
