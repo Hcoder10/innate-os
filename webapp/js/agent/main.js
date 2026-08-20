@@ -6,7 +6,7 @@
 //
 // The page has two stages behind that one panel: the live camera view, and the
 // Brain monitor (the agent loop instrumented turn by turn) which flips in over
-// it via the panel's Live/Brain switch — controls and chat stay docked in both.
+// it via a stage-level inspector button — controls and chat stay docked in both.
 // The monitor is built on first open and kept until the page unmounts, so its
 // turn history survives flipping back and forth. /brain deep-links here with
 // the monitor open.
@@ -27,6 +27,8 @@ import { sharedAgentState } from "../teleop/agentState.js";
 import { createAgentPanel } from "./agentPanel.js";
 import { createChallengePanel } from "./challengePanel.js";
 import { createAgentMicControl } from "./agentMicControl.js";
+import { createSkillCardPreviewControl } from "./skillPreviewControl.js";
+import { createTelemetryPreviewControl } from "../teleop/telemetryPreviewControl.js";
 
 // Runtime feature flags (config.json, served static), same as teleop. simControls
 // marks a sim deployment — used here to drop the (absent) battery readout. Fetched
@@ -54,22 +56,19 @@ function buildAgentView(root) {
 
   const videoStage = createStage ? createStage(root, session) : createVideoStage(root, session);
 
-  // Top-left column: the sim challenge panel (when the session supports it)
-  // stacked above the telemetry card; on real robots it holds telemetry alone,
-  // in the same corner position as before.
+  // Camera views stay grouped at the top left.
   const cornerStack = document.createElement("div");
   cornerStack.className = "overlay-stack-top-left";
   root.append(cornerStack);
-  // Column order is DOM order: the challenge panel (sim only) first, then the
-  // telemetry card under it. The stack does the positioning, so the card
-  // carries no corner class of its own.
-  const challengePanel = typeof session.onChallenge === "function" ? createChallengePanel(cornerStack, session) : null;
   const telemetryOverlay = document.createElement("div");
-  telemetryOverlay.className = "overlay";
-  cornerStack.append(telemetryOverlay);
+  telemetryOverlay.className = "overlay telemetry-overlay agent-telemetry-overlay";
+  root.append(telemetryOverlay);
   const agentState = sharedAgentState();
 
-  const cameraSwitch = createCameraSwitch(root, session, ros, { storeKey: "innate.cameras.agent" });
+  const cameraSwitch = createCameraSwitch(root, session, ros, {
+    storeKey: "innate.cameras.agent",
+    stripParent: cornerStack,
+  });
 
   // The Brain monitor's layer sits between the camera overlays and the panel
   // (DOM order + z-index): opening it covers the stage but never the controls.
@@ -77,6 +76,28 @@ function buildAgentView(root) {
   brainLayer.className = "agent-brain brain-page";
   brainLayer.hidden = true;
   root.append(brainLayer);
+
+  const stageViewToggle = document.createElement("button");
+  stageViewToggle.type = "button";
+  stageViewToggle.className = "agent-stage-view-toggle";
+  stageViewToggle.innerHTML =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2-5 4 10 2-5h6"/></svg><span></span>';
+  const stageViewLabel = /** @type {HTMLElement} */ (stageViewToggle.querySelector("span"));
+  stageViewToggle.addEventListener("click", () => setView(view === "live" ? "brain" : "live"));
+  root.append(stageViewToggle);
+
+  /** @param {"live" | "brain"} next */
+  function renderStageView(next) {
+    const brain = next === "brain";
+    stageViewToggle.classList.toggle("active", brain);
+    stageViewToggle.setAttribute("aria-pressed", String(brain));
+    stageViewToggle.setAttribute("aria-label", brain ? "Back to live camera" : "Inspect brain activity");
+    stageViewToggle.title = brain
+      ? "Return to the robot's live camera"
+      : "Inspect model frames, tools, latency, and turn history";
+    stageViewLabel.textContent = brain ? "Back to Live" : "Inspect Brain";
+  }
+  renderStageView("live");
 
   /** @type {{ destroy: () => void, setVisible: (visible: boolean) => void } | null} */
   let monitor = null;
@@ -108,13 +129,12 @@ function buildAgentView(root) {
     brainLayer.hidden = next !== "brain";
     root.classList.toggle("brain-open", next === "brain");
     micControl?.setEnabled(next === "live");
-    panel.setView(next);
+    renderStageView(next);
   }
 
   /** @type {ReturnType<typeof createAgentMicControl> | null} */
   let micControl = null;
   const panel = createAgentPanel(root, ros, agentState, {
-    onView: setView,
     enableMic: Boolean(config.simControls),
     onMicState: (state) => {
       micControl?.setCaptureState(state);
@@ -124,22 +144,49 @@ function buildAgentView(root) {
       });
     },
   });
+  const simSession = /** @type {any} */ (session);
+  const challengePanel =
+    typeof simSession.onChallenge === "function" ? createChallengePanel(root, simSession) : null;
+  const isSceneSurface = (/** @type {EventTarget | null} */ target) =>
+    target instanceof Element &&
+    (target.matches(".video-stage > canvas, .video-stage > video") || target.classList.contains("video-stage"));
+  const onScenePointerDown = (/** @type {PointerEvent} */ event) => {
+    if (!event.isPrimary || event.button !== 0 || !isSceneSurface(event.target)) return;
+    panel.dismissOverlays();
+    challengePanel?.dismiss();
+    root.dispatchEvent(new Event("innate:stage-background-click"));
+  };
+  root.addEventListener("pointerdown", onScenePointerDown);
+  const telemetry = createTelemetry(telemetryOverlay, ros, { showBattery: !config.simControls });
   if (config.simControls) {
     micControl = createAgentMicControl(root, {
       startListening: panel.startMic,
       stopListening: panel.stopMic,
     });
   }
+  const skillPreview = config.simControls
+    ? createSkillCardPreviewControl(root, panel.previewSkill)
+    : null;
+  const telemetryPreview = config.simControls
+    ? createTelemetryPreviewControl(root, telemetry.preview)
+    : null;
 
   const parts = [
     videoStage,
     ...(challengePanel ? [challengePanel] : []),
-    createTelemetry(telemetryOverlay, ros, { showBattery: !config.simControls }),
+    ...(telemetryPreview ? [telemetryPreview] : []),
+    telemetry,
     // Square, always-live camera tiles (own prefs key so teleop's defaults stay put).
     cameraSwitch,
     ...(micControl ? [micControl] : []),
+    ...(skillPreview ? [skillPreview] : []),
     panel,
-    { destroy: () => agentState.destroy() },
+    {
+      destroy: () => {
+        root.removeEventListener("pointerdown", onScenePointerDown);
+      },
+    },
+    { destroy: () => stageViewToggle.remove() },
     {
       destroy: () => {
         unmounted = true; // a monitor import still in flight must not build into the dead layer

@@ -16,7 +16,6 @@
 import { copyText } from "../clipboard.js";
 import { createMicStream } from "./micStream.js";
 import {
-  AGENT_STATUS_TOPIC,
   CHAT_IN_TOPIC,
   CHAT_OUT_TOPIC,
   GET_AVAILABLE_DIRECTIVES_SERVICE,
@@ -26,23 +25,36 @@ import {
   SKILL_STATUS_UPDATE_TOPIC,
 } from "../constants.js";
 
+const CHAT_EXAMPLES = [
+  "What can you see right now?",
+  "What do you remember about this room?",
+  "What can you help me with?",
+  "Wave hello",
+  "Move to the other side of the room",
+  "Pick up the object in front of you",
+];
+
 /**
  * @param {HTMLElement} root cockpit root — the panel mounts as a right-edge overlay.
  * @param {import("../rosClient.js").RosClient} rosClient
  * @param {ReturnType<typeof import("../teleop/agentState.js").sharedAgentState>} agentState
  * @param {{
- *   onView: (view: "live" | "brain") => void,
  *   enableMic?: boolean,
  *   onMicState?: (state: {on: boolean, busy: boolean, level: number, waveform: number[], error: string | null}) => void
  * }} opts
- *   onView is the stage-view switch, owned by the page; setView reflects a flip
- *   the page made itself (chip, Esc). enableMic connects the browser microphone
- *   in sim, where the robot has no physical microphone (see micStream.js).
+ *   enableMic connects the browser microphone in sim, where the robot has no
+ *   physical microphone (see micStream.js).
  * @returns {{
  *   destroy: () => void,
- *   setView: (view: "live" | "brain") => void,
+ *   dismissOverlays: () => void,
  *   startMic: () => Promise<void>,
- *   stopMic: () => void
+ *   stopMic: () => void,
+ *   previewSkill: (sample: {
+ *     name: string,
+ *     args: Record<string, unknown>,
+ *     status: "running" | "completed" | "failed" | "interrupted",
+ *     reason?: string
+ *   } | null) => void
  * }}
  */
 export function createAgentPanel(root, rosClient, agentState, opts) {
@@ -53,69 +65,116 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
 
   const panel = document.createElement("section");
   panel.className = "overlay agent-panel";
+  const controlPanel = document.createElement("section");
+  controlPanel.className = "agent-control-panel collapsed";
+  const thoughtsPanel = document.createElement("section");
+  thoughtsPanel.className = "agent-thoughts-panel";
+  const chatToggle = document.createElement("button");
+  chatToggle.type = "button";
+  chatToggle.className = "agent-chat-toggle";
+  chatToggle.innerHTML =
+    '<svg class="agent-chat-toggle-icon agent-chat-toggle-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.5a7.5 7.5 0 0 1-8 7.5 8.8 8.8 0 0 1-3.6-.8L4 20l1.5-3.8A7.2 7.2 0 0 1 4 11.5 7.5 7.5 0 0 1 12 4a7.5 7.5 0 0 1 8 7.5Z"/></svg><svg class="agent-chat-toggle-icon agent-chat-toggle-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg><span class="agent-chat-toggle-thinking" aria-hidden="true"><i></i><i></i><i></i></span>';
+  chatToggle.setAttribute("aria-controls", "agent-chat-panel");
+  thoughtsPanel.id = "agent-chat-panel";
+  let chatOpen = false;
+
+  /** @param {boolean} open */
+  function setChatOpen(open) {
+    chatOpen = open;
+    panel.classList.toggle("chat-open", open);
+    chatToggle.classList.toggle("open", open);
+    chatToggle.setAttribute("aria-expanded", String(open));
+    chatToggle.setAttribute("aria-label", open ? "Close Chat with MARS" : "Open Chat with MARS");
+  }
+
+  /** @param {boolean} thinking */
+  function setChatThinking(thinking) {
+    chatToggle.classList.toggle("thinking", thinking);
+    chatToggle.setAttribute("aria-busy", String(thinking));
+  }
+
+  chatToggle.addEventListener("click", () => setChatOpen(!chatOpen));
+  setChatOpen(false);
+  setChatThinking(false);
 
   // ---- header -------------------------------------------------------------
-  const head = document.createElement("div");
+  const head = document.createElement("button");
+  head.type = "button";
   head.className = "agent-head";
+  head.setAttribute("aria-label", "Expand agent controls");
+  head.setAttribute("aria-expanded", "false");
   const titleEl = document.createElement("span");
   titleEl.className = "agent-title";
-  titleEl.textContent = "Agent";
-  const stateDot = document.createElement("span");
-  stateDot.className = "agent-state-dot";
-  stateDot.title = `green while the brain is active — ${AGENT_STATUS_TOPIC}`;
-  // Live/Brain switch: the panel is the agent; these pick which stage shows
-  // behind it — the robot's eyes, or its loop instrumented turn by turn.
-  const viewSwitch = document.createElement("div");
-  viewSwitch.className = "agent-views";
-  viewSwitch.setAttribute("role", "group");
-  viewSwitch.setAttribute("aria-label", "Stage view");
-  const liveBtn = viewButton("Live", "The robot's live camera view");
-  const brainBtn = viewButton("Brain", "Brain monitor — the agent loop, turn by turn (Esc returns)");
-  viewSwitch.append(liveBtn, brainBtn);
-  liveBtn.addEventListener("click", () => opts.onView("live"));
-  brainBtn.addEventListener("click", () => opts.onView("brain"));
-  /** @param {"live" | "brain"} view */
-  function setView(view) {
-    liveBtn.classList.toggle("active", view === "live");
-    brainBtn.classList.toggle("active", view === "brain");
-    liveBtn.setAttribute("aria-pressed", String(view === "live"));
-    brainBtn.setAttribute("aria-pressed", String(view === "brain"));
+  titleEl.innerHTML =
+    '<svg class="agent-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l1.7 6.8 6.8 1.7-6.8 1.7L12 20.5l-1.7-6.8L3.5 12l6.8-1.7z"/></svg>';
+  const headCopy = document.createElement("span");
+  headCopy.className = "agent-head-copy";
+  const headLabel = document.createElement("span");
+  headLabel.className = "agent-head-label";
+  headLabel.textContent = "Agent";
+  const headAgentName = document.createElement("span");
+  headAgentName.className = "agent-head-agent-name";
+  headAgentName.textContent = "—";
+  headCopy.append(headLabel, headAgentName);
+  const headChevron = document.createElement("span");
+  headChevron.className = "agent-head-chev";
+  headChevron.innerHTML =
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9,6 15,12 9,18"/></svg>';
+  /** @param {boolean} collapsed */
+  function setControlsCollapsed(collapsed) {
+    controlPanel.classList.toggle("collapsed", collapsed);
+    head.setAttribute("aria-expanded", String(!collapsed));
+    updateHeadLabel();
   }
-  setView("live");
-  // Phones dock the panel as a bottom sheet (CSS); this expands it upward.
-  const expandBtn = document.createElement("button");
-  expandBtn.type = "button";
-  expandBtn.className = "agent-expand";
-  expandBtn.setAttribute("aria-label", "Expand panel");
-  expandBtn.textContent = "\u25b4";
-  expandBtn.onclick = () => {
-    const expanded = panel.classList.toggle("expanded");
-    expandBtn.textContent = expanded ? "\u25be" : "\u25b4";
-    expandBtn.setAttribute("aria-label", expanded ? "Collapse panel" : "Expand panel");
-  };
-  head.append(titleEl, stateDot, viewSwitch, expandBtn);
+  function updateHeadLabel() {
+    const action = controlPanel.classList.contains("collapsed") ? "Expand" : "Collapse";
+    head.setAttribute("aria-label", `${action} controls for ${headAgentName.textContent}`);
+  }
+  head.addEventListener("click", () => setControlsCollapsed(!controlPanel.classList.contains("collapsed")));
+  head.append(titleEl, headCopy, headChevron);
 
   // ---- directive + start/stop --------------------------------------------
   const controls = document.createElement("div");
   controls.className = "agent-controls";
 
-  const directiveSelect = document.createElement("select");
-  directiveSelect.className = "agent-directive mono";
-  directiveSelect.setAttribute("aria-label", "Directive");
-  directiveSelect.title = `Pick the directive to run — ${GET_AVAILABLE_DIRECTIVES_SERVICE}`;
+  const directivePicker = document.createElement("div");
+  directivePicker.className = "agent-directive-picker";
+  const directiveButton = document.createElement("button");
+  directiveButton.type = "button";
+  directiveButton.className = "agent-directive mono";
+  directiveButton.setAttribute("role", "combobox");
+  directiveButton.setAttribute("aria-label", "Agent");
+  directiveButton.setAttribute("aria-haspopup", "listbox");
+  directiveButton.setAttribute("aria-expanded", "false");
+  directiveButton.title = `Pick the directive to run — ${GET_AVAILABLE_DIRECTIVES_SERVICE}`;
+  const directiveValue = document.createElement("span");
+  directiveValue.className = "agent-directive-value";
+  directiveValue.textContent = "No agents available";
+  const directiveChevron = document.createElement("span");
+  directiveChevron.className = "agent-directive-chevron";
+  directiveChevron.innerHTML =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9,6 15,12 9,18"/></svg>';
+  directiveButton.append(directiveValue, directiveChevron);
+  const directiveList = document.createElement("div");
+  directiveList.className = "agent-directive-list mono";
+  directiveList.id = `agent-directive-list-${selfOrigin}`;
+  directiveList.setAttribute("role", "listbox");
+  directiveList.setAttribute("aria-label", "Agents");
+  directiveButton.setAttribute("aria-controls", directiveList.id);
+  directivePicker.append(directiveButton, directiveList);
 
   const toggleBtn = document.createElement("button");
   toggleBtn.type = "button";
   toggleBtn.className = "agent-toggle";
-  toggleBtn.title = SET_BRAIN_ACTIVE_SERVICE;
 
   const resetBtn = document.createElement("button");
   resetBtn.type = "button";
   resetBtn.className = "agent-reset";
   resetBtn.title = `Reset the agent's brain / working memory — ${RESET_BRAIN_SERVICE}`;
-  resetBtn.textContent = "Reset";
+  resetBtn.setAttribute("aria-label", "Reset agent");
+  resetBtn.innerHTML = '<span class="agent-reset-icon" aria-hidden="true"></span>';
 
-  controls.append(directiveSelect, toggleBtn, resetBtn);
+  controls.append(directivePicker, toggleBtn, resetBtn);
 
   // ---- active skill -------------------------------------------------------
   const activeSkill = document.createElement("div");
@@ -132,11 +191,26 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   // ---- live stream (thoughts + chat + skill runs) -------------------------
   const streamLabel = document.createElement("p");
   streamLabel.className = "microlabel agent-stream-label";
-  streamLabel.textContent = "AI thoughts";
-  streamLabel.title = `the brain's thoughts, chat, and skill runs — ${CHAT_OUT_TOPIC}`;
+  streamLabel.textContent = "Chat with MARS";
+  streamLabel.title = `MARS chat, thoughts, and skill runs — ${CHAT_OUT_TOPIC}`;
+  const streamHead = document.createElement("div");
+  streamHead.className = "agent-stream-head";
+  const streamMode = document.createElement("div");
+  streamMode.className = "agent-stream-mode";
+  streamMode.setAttribute("role", "group");
+  streamMode.setAttribute("aria-label", "Chat detail");
+  const compactBtn = modeButton("Simple");
+  const detailedBtn = modeButton("Detailed");
+  streamMode.append(compactBtn, detailedBtn);
+  streamHead.append(streamLabel, streamMode);
 
   const stream = document.createElement("div");
-  stream.className = "agent-stream";
+  stream.className = "agent-stream compact";
+  compactBtn.classList.add("active");
+  compactBtn.setAttribute("aria-pressed", "true");
+  detailedBtn.setAttribute("aria-pressed", "false");
+  compactBtn.addEventListener("click", () => setStreamMode("compact"));
+  detailedBtn.addEventListener("click", () => setStreamMode("detailed"));
 
   // ---- composer -----------------------------------------------------------
   const form = document.createElement("form");
@@ -144,16 +218,45 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   const input = document.createElement("textarea");
   input.className = "agent-compose-input";
   input.rows = 1;
-  input.placeholder = "Message the agent…";
+  input.setAttribute("aria-label", "Message MARS");
+  const placeholder = document.createElement("span");
+  placeholder.className = "agent-compose-placeholder";
+  placeholder.textContent = CHAT_EXAMPLES[0];
   const send = document.createElement("button");
   send.type = "submit";
   send.className = "agent-compose-send";
-  send.textContent = "Send";
-  send.title = CHAT_IN_TOPIC;
-  form.append(input, send);
+  send.innerHTML = '<span class="agent-compose-send-icon" aria-hidden="true"></span>';
+  send.setAttribute("aria-label", "Send message");
+  send.title = "Send message";
+  send.disabled = true;
+  form.append(input, placeholder, send);
+  let placeholderIndex = 0;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let placeholderSwapTimer = null;
+  const placeholderInterval = setInterval(() => {
+    placeholderIndex = (placeholderIndex + 1) % CHAT_EXAMPLES.length;
+    if (input.value.trim()) {
+      placeholder.textContent = CHAT_EXAMPLES[placeholderIndex];
+      return;
+    }
+    placeholder.classList.add("exiting");
+    placeholderSwapTimer = setTimeout(() => {
+      placeholder.textContent = CHAT_EXAMPLES[placeholderIndex];
+      placeholder.classList.remove("exiting");
+      placeholder.classList.add("entering");
+      void placeholder.offsetWidth;
+      placeholder.classList.remove("entering");
+      placeholderSwapTimer = null;
+    }, 500);
+  }, 3500);
 
-  panel.append(head, controls, activeSkill, streamLabel, stream, form);
-  root.append(panel);
+  const statusRow = document.createElement("div");
+  statusRow.className = "agent-status-row";
+  statusRow.append(activeSkill);
+  controlPanel.append(head, controls, statusRow);
+  thoughtsPanel.append(streamHead, stream, form);
+  panel.append(controlPanel, thoughtsPanel);
+  root.append(panel, chatToggle);
 
   // ---- directive roster + start/stop --------------------------------------
   // The dropdown ARMS a directive; Start activates it. While active, switching
@@ -162,49 +265,167 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   // Stop -> Start resumes the same one even though the brain reports "" when idle.
   let lastDirective = "";
   let applying = false;
+  let wasBrainActive = false;
+  let directiveOpen = false;
+  let selectedDirective = "";
   /** @type {ReturnType<typeof setTimeout> | null} */
   let flashTimer = null;
+
+  /** @param {boolean} open */
+  function setDirectiveOpen(open) {
+    directiveOpen = open && !directiveButton.disabled;
+    directivePicker.classList.toggle("open", directiveOpen);
+    directiveButton.setAttribute("aria-expanded", String(directiveOpen));
+    if (!directiveOpen) return;
+    const selected = directiveList.querySelector('[aria-selected="true"]');
+    const first = directiveList.querySelector('[role="option"]');
+    const target = /** @type {HTMLElement | null} */ (selected ?? first);
+    requestAnimationFrame(() => target?.focus());
+  }
+
+  /** @param {string} id @param {string | undefined} error */
+  function chooseDirective(id, error) {
+    setDirectiveOpen(false);
+    if (error !== undefined) {
+      void copyText(error).then(
+        () => {
+          directiveValue.textContent = "Load error copied";
+        },
+        () => {
+          directiveValue.textContent = "Copy failed";
+        },
+      );
+      flashTimer = setTimeout(() => {
+        flashTimer = null;
+        renderRoster();
+      }, 1200);
+      return;
+    }
+    if (!id) return;
+    selectedDirective = id;
+    lastDirective = id;
+    const agent = agentState.get().agents.find((candidate) => candidate.id === id);
+    directiveValue.textContent = agent?.name ?? id;
+    headAgentName.textContent = directiveValue.textContent;
+    updateHeadLabel();
+    if (agentState.get().brainActive) void withApplying(() => agentState.setDirective(id));
+  }
+
+  /** @param {KeyboardEvent} event */
+  function onDirectiveKeydown(event) {
+    const options = /** @type {HTMLElement[]} */ ([...directiveList.querySelectorAll('[role="option"]')]);
+    if (event.currentTarget === directiveButton && ["ArrowDown", "ArrowUp"].includes(event.key)) {
+      event.preventDefault();
+      setDirectiveOpen(true);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setDirectiveOpen(false);
+      directiveButton.focus();
+      return;
+    }
+    const current = Math.max(0, options.indexOf(/** @type {HTMLElement} */ (document.activeElement)));
+    let next = current;
+    if (event.key === "ArrowDown") next = Math.min(current + 1, options.length - 1);
+    else if (event.key === "ArrowUp") next = Math.max(current - 1, 0);
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = options.length - 1;
+    else return;
+    event.preventDefault();
+    options[next]?.focus();
+  }
+
+  /** @param {MouseEvent} event */
+  function onDirectiveOutsideClick(event) {
+    if (!directivePicker.contains(/** @type {Node} */ (event.target))) setDirectiveOpen(false);
+  }
+
+  directiveButton.addEventListener("click", () => setDirectiveOpen(!directiveOpen));
+  directiveButton.addEventListener("keydown", onDirectiveKeydown);
+  directiveList.addEventListener("keydown", onDirectiveKeydown);
+  directivePicker.addEventListener("click", (event) => event.stopPropagation());
+  document.addEventListener("click", onDirectiveOutsideClick);
 
   function renderRoster() {
     if (flashTimer) return; // keep the copy-feedback row until it expires
     const { agents, broken, currentDirective, brainActive } = agentState.get();
     if (currentDirective) lastDirective = currentDirective;
 
-    directiveSelect.replaceChildren();
-    if (agents.length === 0) {
-      directiveSelect.appendChild(new Option("No agents available", ""));
-    } else {
-      for (const a of agents) directiveSelect.appendChild(new Option(a.name, a.id));
-    }
-    // Agents that failed to load stay visible instead of silently vanishing:
-    // a picker row with the start of the load error, the full error in the
-    // tooltip, and selecting the row copies it to the clipboard.
-    for (const b of broken ?? []) {
-      const preview = b.error.length > 60 ? b.error.slice(0, 59) + "…" : b.error;
-      const opt = new Option(`⚠ ${b.name} — ${preview}`, `__broken__:${b.id}`);
-      opt.title = `${b.error}\n\nSelect to copy the full error.`;
-      opt.dataset.error = b.error;
-      directiveSelect.appendChild(opt);
-    }
-    // Show the running directive when active, else the armed/last one. With no
-    // prior choice, default to "Demo Agent" if the roster has it.
     const demo = agents.find((a) => /demo\s*agent/i.test(a.name) || /demo/i.test(a.id));
     const armed = currentDirective || lastDirective || demo?.id || (agents[0]?.id ?? "");
-    if (armed) directiveSelect.value = armed;
+    directiveList.replaceChildren();
+    for (const agent of agents) {
+      const option = document.createElement("button");
+      option.type = "button";
+      option.className = "agent-directive-option";
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", String(agent.id === armed));
+      option.innerHTML =
+        '<span class="agent-directive-check" aria-hidden="true"><svg viewBox="0 0 14 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m1.5 5.5 3.3 3.3 7.7-7.3"/></svg></span>';
+      const name = document.createElement("span");
+      name.className = "agent-directive-option-name";
+      name.textContent = agent.name;
+      option.append(name);
+      option.addEventListener("click", () => chooseDirective(agent.id, undefined));
+      directiveList.append(option);
+    }
+    for (const b of broken ?? []) {
+      const preview = b.error.length > 60 ? b.error.slice(0, 59) + "…" : b.error;
+      const option = document.createElement("button");
+      option.type = "button";
+      option.className = "agent-directive-option broken";
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", "false");
+      option.title = `${b.error}\n\nSelect to copy the full error.`;
+      const warning = document.createElement("span");
+      warning.className = "agent-directive-warning";
+      warning.textContent = "!";
+      const copy = document.createElement("span");
+      copy.className = "agent-directive-option-copy";
+      const name = document.createElement("span");
+      name.className = "agent-directive-option-name";
+      name.textContent = b.name;
+      const error = document.createElement("span");
+      error.className = "agent-directive-option-error";
+      error.textContent = preview;
+      copy.append(name, error);
+      option.append(warning, copy);
+      option.addEventListener("click", () => chooseDirective("", b.error));
+      directiveList.append(option);
+    }
+    if (agents.length === 0 && (broken ?? []).length === 0) {
+      const empty = document.createElement("span");
+      empty.className = "agent-directive-empty";
+      empty.textContent = "No agents available";
+      directiveList.append(empty);
+    }
+    const selectedAgent = agents.find((agent) => agent.id === armed);
+    selectedDirective = selectedAgent?.id ?? "";
+    directiveValue.textContent = selectedAgent?.name ?? "No agents available";
+    headAgentName.textContent = selectedAgent?.name ?? "No agent";
+    updateHeadLabel();
 
     panel.classList.toggle("active", brainActive);
-    stateDot.classList.toggle("on", brainActive);
-    // A running loop makes the Brain segment glow — an invitation to look inside.
-    brainBtn.classList.toggle("pulse", brainActive);
+    if (brainActive && !wasBrainActive && controlPanel.classList.contains("collapsed")) {
+      setControlsCollapsed(false);
+    }
+    wasBrainActive = brainActive;
 
-    toggleBtn.textContent = applying ? "…" : brainActive ? "Stop" : "Start";
+    const action = brainActive ? "Stop" : "Start";
+    const agentName = selectedAgent?.name ?? "agent";
+    toggleBtn.textContent = action;
+    toggleBtn.title = `${action} ${agentName} — ${SET_BRAIN_ACTIVE_SERVICE}`;
+    toggleBtn.setAttribute("aria-label", `${action} ${agentName}`);
+    toggleBtn.setAttribute("aria-pressed", String(brainActive));
+    toggleBtn.setAttribute("aria-busy", String(applying));
     toggleBtn.classList.toggle("stop", brainActive);
     toggleBtn.disabled = applying || (!brainActive && agents.length === 0);
     // Keep the picker openable when only broken agents exist, so their rows
     // stay reachable; the change handler ignores non-agent values.
-    directiveSelect.disabled = applying || (agents.length === 0 && (broken ?? []).length === 0);
+    directiveButton.disabled = applying || (agents.length === 0 && (broken ?? []).length === 0);
+    if (directiveButton.disabled) setDirectiveOpen(false);
     resetBtn.disabled = applying;
-    input.placeholder = brainActive ? "Message the agent…" : "Message the agent… (sending starts it)";
   }
 
   /** @param {() => Promise<any>} fn */
@@ -225,32 +446,6 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     }
   }
 
-  directiveSelect.addEventListener("change", () => {
-    const id = directiveSelect.value;
-    if (id.startsWith("__broken__:")) {
-      // Copy the full load error, flash the result in the closed box, then
-      // re-render (which re-arms the previous choice).
-      const opt = directiveSelect.selectedOptions[0];
-      void copyText(opt?.dataset.error ?? "").then(
-        () => {
-          if (opt) opt.text = "✓ load error copied";
-        },
-        () => {
-          if (opt) opt.text = "✗ copy failed — see tooltip";
-        },
-      );
-      flashTimer = setTimeout(() => {
-        flashTimer = null;
-        renderRoster();
-      }, 1200);
-      return;
-    }
-    if (!id) return;
-    lastDirective = id;
-    // Switch live only when already running; otherwise just arm for Start.
-    if (agentState.get().brainActive) void withApplying(() => agentState.setDirective(id));
-  });
-
   // No local "started./stopped." echo: the brain announces both on
   // /brain/chat_out (and into history), so every client — not just the one
   // whose button was pressed — renders the same message via the normal
@@ -260,8 +455,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     if (brainActive) {
       void withApplying(() => agentState.setDirective(""));
     } else {
-      const selected = directiveSelect.value.startsWith("__broken__:") ? "" : directiveSelect.value;
-      const id = selected || lastDirective;
+      const id = selectedDirective || lastDirective;
       if (id) void withApplying(() => agentState.setDirective(id));
     }
   });
@@ -291,6 +485,81 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   /** @type {{ wrap: HTMLElement, status: HTMLElement, list: HTMLElement, lastByKind: Record<string, string>, startTs: number, latestTs: number } | null} */
   let thoughts = null;
   let lastTs = 0;
+  /** @type {HTMLElement | null} */
+  let compactPrompt = null;
+  /** @type {HTMLElement[]} */
+  const compactMessages = [];
+  let replayingHistory = false;
+  /** @type {Set<ReturnType<typeof setTimeout>>} */
+  const compactEnterTimers = new Set();
+  /** @type {Set<ReturnType<typeof setTimeout>>} */
+  const compactExitTimers = new Set();
+
+  /** @param {"compact" | "detailed"} mode */
+  function setStreamMode(mode) {
+    const compact = mode === "compact";
+    stream.classList.toggle("compact", compact);
+    stream.classList.toggle("detailed", !compact);
+    streamMode.classList.toggle("detailed-selected", !compact);
+    compactBtn.classList.toggle("active", compact);
+    detailedBtn.classList.toggle("active", !compact);
+    compactBtn.setAttribute("aria-pressed", String(compact));
+    detailedBtn.setAttribute("aria-pressed", String(!compact));
+    for (const card of stream.querySelectorAll(".chat-skill.failed.has-detail")) {
+      const head = card.querySelector(".chat-skill-head");
+      if (card instanceof HTMLElement && head instanceof HTMLButtonElement) {
+        setSkillElementOpen(card, head, !compact);
+      }
+    }
+    if (!compact) stream.scrollTop = stream.scrollHeight;
+  }
+
+  /** @param {HTMLElement} message */
+  function hideCompactMessage(message) {
+    message.classList.remove("compact-visible", "compact-entering");
+    if (stream.classList.contains("compact") && !replayingHistory) {
+      message.classList.add("compact-exiting");
+      const timer = setTimeout(() => {
+        message.classList.remove("compact-exiting");
+        compactExitTimers.delete(timer);
+      }, 140);
+      compactExitTimers.add(timer);
+    } else {
+      message.classList.remove("compact-exiting");
+    }
+  }
+
+  /** @param {HTMLElement} next @param {boolean} isPrompt */
+  function showCompactMessage(next, isPrompt) {
+    if (isPrompt) {
+      if (compactPrompt) {
+        compactPrompt.classList.remove("compact-prompt");
+        hideCompactMessage(compactPrompt);
+      }
+      for (const message of compactMessages) hideCompactMessage(message);
+      compactMessages.length = 0;
+      compactPrompt = next;
+      next.classList.add("compact-prompt");
+    } else {
+      compactMessages.push(next);
+    }
+
+    next.classList.remove("compact-exiting");
+    next.classList.add("compact-visible");
+    if (stream.classList.contains("compact") && !replayingHistory) {
+      next.classList.add("compact-entering");
+      const timer = setTimeout(() => {
+        next.classList.remove("compact-entering");
+        compactEnterTimers.delete(timer);
+      }, 180);
+      compactEnterTimers.add(timer);
+    }
+
+    while (compactMessages.length > 7) {
+      const previous = compactMessages.shift();
+      if (previous) hideCompactMessage(previous);
+    }
+  }
 
   /** @param {boolean} active */
   function setThoughtsStatus(active) {
@@ -299,6 +568,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     const word = active ? "Processing" : "Processed";
     thoughts.status.textContent = d > 0 ? `${word} for ${d} second${d === 1 ? "" : "s"}` : `${word}…`;
     thoughts.wrap.classList.toggle("active", active);
+    if (!replayingHistory) setChatThinking(active);
   }
 
   function finalizeThoughts() {
@@ -354,6 +624,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     finalizeThoughts();
     const el = document.createElement("div");
     el.className = `chat-msg ${kind}`;
+    el.classList.toggle("skill-output", label === "skill_output");
     if (kind === "system") {
       const tag = document.createElement("span");
       tag.className = "chat-sender mono";
@@ -365,23 +636,32 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     bubble.textContent = kind === "user" ? text : roundNums(text);
     el.appendChild(bubble);
     stream.appendChild(el);
+    if (label !== "skill_output") showCompactMessage(el, kind === "user");
     lastTs = ts;
     snapIfAtBottom(wasAtBottom);
   }
 
-  /** @type {Map<string, { wrap: HTMLElement, head: HTMLElement, args: HTMLElement, status: HTMLElement, hasDetail: boolean }>} */
+  /** @type {Map<string, {
+   *  wrap: HTMLElement,
+   *  head: HTMLButtonElement,
+   *  summary: HTMLElement,
+   *  status: HTMLElement,
+   *  chevron: HTMLElement,
+   *  parameters: HTMLElement,
+   *  failure: HTMLElement,
+   *  hasDetail: boolean
+   * }>} */
   const skillRuns = new Map();
 
   /** @param {string} key @param {string} name @param {string} status @param {number} ts @param {string} [reason]
-   *  @param {any} [args] */
-  function addSkillRun(key, name, status, ts, reason, args) {
+   *  @param {any} [args] @param {boolean} [preview] */
+  function addSkillRun(key, name, status, ts, reason, args, preview = false) {
     const wasAtBottom = atBottom();
     const cls = ["running", "completed", "failed", "interrupted"].includes(status) ? status : "running";
-    // Reflect the running primitive in the Active Skill readout.
-    if (cls === "running") {
+    if (!preview && cls === "running") {
       activeSkillName.textContent = name.replace(/_/g, " ");
       activeSkill.classList.add("on");
-    } else if (activeSkillName.textContent === name.replace(/_/g, " ")) {
+    } else if (!preview && activeSkillName.textContent === name.replace(/_/g, " ")) {
       activeSkillName.textContent = "—";
       activeSkill.classList.remove("on");
     }
@@ -391,59 +671,98 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       finalizeThoughts();
       const wrap = document.createElement("div");
       wrap.className = "chat-skill";
-      const head = document.createElement("div");
+      const head = document.createElement("button");
+      head.type = "button";
       head.className = "chat-skill-head";
-      const tag = document.createElement("span");
-      tag.className = "chat-skill-tag mono";
-      tag.textContent = "skill";
+      head.setAttribute("aria-expanded", "false");
+      const icon = document.createElement("span");
+      icon.className = "chat-skill-icon";
+      icon.setAttribute("aria-hidden", "true");
+      const copy = document.createElement("span");
+      copy.className = "chat-skill-copy";
       const nameEl = document.createElement("span");
       nameEl.className = "chat-skill-name";
       nameEl.textContent = name.replace(/_/g, " ");
-      const argsEl = document.createElement("span");
-      argsEl.className = "chat-skill-args mono";
+      const summary = document.createElement("span");
+      summary.className = "chat-skill-summary";
+      copy.append(nameEl, summary);
       const statusEl = document.createElement("span");
-      statusEl.className = "chat-skill-status mono";
+      statusEl.className = "chat-skill-status";
       statusEl.title = SKILL_STATUS_UPDATE_TOPIC;
-      head.append(tag, nameEl, argsEl, statusEl);
-      wrap.append(head);
-      stream.appendChild(wrap);
-      run = { wrap, head, args: argsEl, status: statusEl, hasDetail: false };
-      skillRuns.set(key, run);
-    }
-    run.wrap.className = `chat-skill ${cls}`;
-    if (run.hasDetail) run.wrap.classList.add("has-detail");
-    // Terminal updates repeat the inputs; keep the last non-empty rendering so
-    // a publisher that omits them can't blank args the run already showed.
-    const inputs = formatSkillArgs(args);
-    if (inputs.text) {
-      run.args.textContent = inputs.text;
-      run.args.title = inputs.full;
-    }
-    run.status.textContent = cls;
-
-    // A failed run carries the failure reason / error — show it expanded
-    // in-place (collapsible so a long trace can be tucked away).
-    if (cls === "failed" && reason && !run.hasDetail) {
-      run.hasDetail = true;
-      run.wrap.classList.add("has-detail", "open");
-      run.head.title = "Click to show/hide the failure reason";
       const chevron = document.createElement("span");
-      chevron.className = "chat-skill-chevron mono";
-      chevron.textContent = "▴";
-      run.head.appendChild(chevron);
+      chevron.className = "chat-skill-chevron";
+      chevron.innerHTML =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9,6 15,12 9,18"/></svg>';
+      chevron.setAttribute("aria-hidden", "true");
+      head.append(icon, copy, statusEl, chevron);
       const detail = document.createElement("div");
       detail.className = "chat-skill-detail";
-      detail.textContent = reason;
-      run.wrap.appendChild(detail);
-      run.head.addEventListener("click", () => {
-        const open = run.wrap.classList.toggle("open");
-        chevron.textContent = open ? "▴" : "▾";
+      const parameters = document.createElement("div");
+      parameters.className = "chat-skill-parameters";
+      const failure = document.createElement("div");
+      failure.className = "chat-skill-failure";
+      detail.append(parameters, failure);
+      wrap.append(head, detail);
+      stream.appendChild(wrap);
+      const createdRun = { wrap, head, summary, status: statusEl, chevron, parameters, failure, hasDetail: false };
+      run = createdRun;
+      head.addEventListener("click", () => {
+        if (!createdRun.hasDetail) return;
+        setSkillRunOpen(createdRun, !createdRun.wrap.classList.contains("open"));
       });
+      skillRuns.set(key, createdRun);
+      if (preview) wrap.classList.add("compact-visible");
+      else showCompactMessage(wrap, false);
     }
+    run.wrap.classList.remove("running", "completed", "failed", "interrupted");
+    run.wrap.classList.add(cls);
+    const inputs = formatSkillArgs(name, args);
+    if (inputs.rows.length) {
+      run.summary.textContent = inputs.summary;
+      renderSkillParameters(run.parameters, inputs.rows);
+      run.hasDetail = true;
+    }
+    run.status.textContent = skillStatusLabel(cls);
+    run.head.setAttribute("aria-label", `${name.replace(/_/g, " ")}: ${run.status.textContent}`);
+
+    if (cls === "failed" && reason) {
+      renderSkillFailure(run.failure, reason);
+      run.hasDetail = true;
+    }
+    run.wrap.classList.toggle("has-detail", run.hasDetail);
+    run.head.title = run.hasDetail ? "Show skill details" : "";
+    if (cls === "failed") setSkillRunOpen(run, !stream.classList.contains("compact"));
 
     lastTs = ts;
     if (cls !== "running") skillRuns.delete(key);
     snapIfAtBottom(wasAtBottom);
+    return run.wrap;
+  }
+
+  /** @type {HTMLElement | null} */
+  let skillPreview = null;
+  /** @param {{
+   *  name: string,
+   *  args: Record<string, unknown>,
+   *  status: "running" | "completed" | "failed" | "interrupted",
+   *  reason?: string
+   * } | null} sample */
+  function previewSkill(sample) {
+    skillPreview?.remove();
+    skillRuns.delete("__skill-preview__");
+    skillPreview = null;
+    if (!sample) return;
+    setChatOpen(true);
+    skillPreview = addSkillRun(
+      "__skill-preview__",
+      sample.name,
+      sample.status,
+      Date.now() / 1000,
+      sample.status === "failed" ? sample.reason || "The skill could not complete." : "",
+      sample.args,
+      true,
+    );
+    stream.scrollTop = stream.scrollHeight;
   }
 
   // ---- composer -----------------------------------------------------------
@@ -451,11 +770,12 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   // chat_in, and the mic device is only open while a directive runs.
   async function startIfIdle() {
     if (agentState.get().brainActive) return;
-    const id = directiveSelect.value || lastDirective;
+    const id = selectedDirective || lastDirective;
     if (id) await withApplying(() => agentState.setDirective(id));
   }
 
   async function startMic() {
+    setChatOpen(true);
     await startIfIdle();
     await mic?.start();
   }
@@ -470,6 +790,8 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     addMessage("user", text, Date.now() / 1000);
     input.value = "";
     input.style.height = "auto";
+    send.disabled = true;
+    placeholder.classList.remove("hidden");
     // Always jump to our own message, even if we'd scrolled up reading earlier.
     stream.scrollTop = stream.scrollHeight;
     await startIfIdle();
@@ -491,6 +813,9 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   input.addEventListener("input", () => {
     input.style.height = "auto";
     input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
+    const empty = input.value.trim().length === 0;
+    send.disabled = empty;
+    placeholder.classList.toggle("hidden", !empty);
   });
 
   // ---- history backfill ---------------------------------------------------
@@ -521,10 +846,24 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     // The snapshot already includes anything the live stream just showed, so
     // reset and replay it wholesale rather than trying to merge.
     stream.replaceChildren();
+    for (const timer of compactEnterTimers) clearTimeout(timer);
+    compactEnterTimers.clear();
+    for (const timer of compactExitTimers) clearTimeout(timer);
+    compactExitTimers.clear();
+    compactPrompt = null;
+    compactMessages.length = 0;
     thoughts = null;
+    setChatThinking(false);
     skillRuns.clear();
     lastTs = 0;
-    for (const e of entries) replayEntry(e);
+    replayingHistory = true;
+    stream.classList.add("replaying");
+    try {
+      for (const e of entries) replayEntry(e);
+    } finally {
+      replayingHistory = false;
+      stream.classList.remove("replaying");
+    }
     historyLoaded = true;
     stream.scrollTop = stream.scrollHeight;
   }
@@ -572,6 +911,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     if (String(payload?.sender ?? "") !== "user") return;
     const text = String(payload?.text ?? "");
     if (!text) return;
+    setChatOpen(true);
     addMessage("user", text, Number(payload?.timestamp) || Date.now() / 1000);
   }, undefined, "std_msgs/msg/String");
 
@@ -615,59 +955,165 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   }, undefined, "std_msgs/msg/String");
 
   return {
-    setView,
     startMic,
     stopMic,
+    previewSkill,
+    dismissOverlays() {
+      setChatOpen(false);
+      setDirectiveOpen(false);
+      setControlsCollapsed(true);
+    },
     destroy() {
       mic?.destroy();
+      document.removeEventListener("click", onDirectiveOutsideClick);
       if (flashTimer) clearTimeout(flashTimer);
+      clearInterval(placeholderInterval);
+      if (placeholderSwapTimer) clearTimeout(placeholderSwapTimer);
+      for (const timer of compactEnterTimers) clearTimeout(timer);
+      for (const timer of compactExitTimers) clearTimeout(timer);
       unsubAgents();
       unsubConn();
       unsubIn();
       unsubOut();
       unsubSkill();
       panel.remove();
+      chatToggle.remove();
     },
   };
 }
 
-/**
- * A segment of the panel's Live/Brain stage switch.
- * @param {string} label
- * @param {string} title
- */
-function viewButton(label, title) {
+/** @param {string} label */
+function modeButton(label) {
   const btn = document.createElement("button");
   btn.type = "button";
-  btn.className = "agent-view-btn";
+  btn.className = "agent-stream-mode-btn";
   btn.textContent = label;
-  btn.title = title;
   return btn;
 }
 
-/**
- * A skill's inputs on one line: `text` clipped for the run's header row, `full`
- * intact for its hover title. A lone input reads better as its bare value
- * ("head emotion  happy") — the skill name already says what it is; several
- * need their keys to stay legible.
- * @param {any} args
- * @returns {{ text: string, full: string }}
- */
-function formatSkillArgs(args) {
-  if (!args || typeof args !== "object" || Array.isArray(args)) return { text: "", full: "" };
-  const entries = Object.entries(args).filter(([, v]) => v !== null && v !== undefined && v !== "");
-  if (entries.length === 0) return { text: "", full: "" };
-  const show = (/** @type {any} */ v) => roundNums(typeof v === "object" ? JSON.stringify(v) : String(v));
-  const line = (/** @type {(v: any) => string} */ value) =>
-    entries.length === 1
-      ? value(entries[0][1])
-      : entries.map(([k, v]) => `${k.replace(/_/g, " ")}: ${value(v)}`).join(" · ");
-  return { text: line((v) => clip(show(v), 40)), full: line(show) };
+/** @param {{wrap: HTMLElement, head: HTMLButtonElement}} run @param {boolean} open */
+function setSkillRunOpen(run, open) {
+  setSkillElementOpen(run.wrap, run.head, open);
 }
 
-/** @param {string} text @param {number} max */
-function clip(text, max) {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+/** @param {HTMLElement} wrap @param {HTMLButtonElement} head @param {boolean} open */
+function setSkillElementOpen(wrap, head, open) {
+  wrap.classList.toggle("open", open);
+  head.setAttribute("aria-expanded", String(open));
+  head.title = open ? "Hide skill details" : "Show skill details";
+}
+
+/**
+ * @param {string} name
+ * @param {any} args
+ * @returns {{ summary: string, rows: Array<{label: string, value: string}> }}
+ */
+function formatSkillArgs(name, args) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return { summary: "", rows: [] };
+  const entries = Object.entries(args).filter(([, v]) => v !== null && v !== undefined && v !== "");
+  if (!entries.length) return { summary: "", rows: [] };
+  const rows = entries.map(([key, value]) => ({
+    label: skillArgLabel(key),
+    value: skillArgValue(name, key, value),
+  }));
+  return { summary: skillArgSummary(name, args, rows), rows };
+}
+
+/** @param {HTMLElement} container @param {Array<{label: string, value: string}>} rows */
+function renderSkillParameters(container, rows) {
+  const label = document.createElement("p");
+  label.className = "chat-skill-detail-label";
+  label.textContent = "Parameters";
+  const list = document.createElement("dl");
+  for (const row of rows) {
+    const term = document.createElement("dt");
+    term.textContent = row.label;
+    const value = document.createElement("dd");
+    value.textContent = row.value;
+    list.append(term, value);
+  }
+  container.replaceChildren(label, list);
+}
+
+/** @param {HTMLElement} container @param {string} reason */
+function renderSkillFailure(container, reason) {
+  const label = document.createElement("p");
+  label.className = "chat-skill-detail-label";
+  label.textContent = "Failure";
+  const message = document.createElement("p");
+  message.className = "chat-skill-failure-message";
+  message.textContent = reason;
+  container.replaceChildren(label, message);
+}
+
+/** @param {string} status */
+function skillStatusLabel(status) {
+  return {
+    running: "Running",
+    completed: "Completed",
+    failed: "Failed",
+    interrupted: "Interrupted",
+  }[status] || "Running";
+}
+
+/** @param {string} key */
+function skillArgLabel(key) {
+  const labels = {
+    theta_degrees: "Heading",
+    angle_degrees: "Angle",
+    local_frame: "Frame",
+    num_loops: "Loops",
+    points_per_loop: "Points per loop",
+    duration_per_point: "Point duration",
+    is_capture: "Capture",
+    keep_gripper: "Keep gripper",
+  };
+  if (key in labels) return labels[/** @type {keyof typeof labels} */ (key)];
+  if (/^[xyz]$/.test(key)) return key.toUpperCase();
+  const text = key.replace(/_/g, " ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** @param {string} name @param {string} key @param {any} value */
+function skillArgValue(name, key, value) {
+  if (key === "local_frame") return value ? "Local" : "Map";
+  if (key === "is_capture" || key === "keep_gripper") return value ? "Yes" : "No";
+  if (typeof value === "object") return roundNums(JSON.stringify(value));
+  if (typeof value !== "number") return String(value).replace(/_/g, " ");
+  const number = roundNums(String(value));
+  if (key === "theta_degrees" || key === "angle_degrees") return `${number}°`;
+  if (/^(x|y|z|center_x|center_y|center_z|radius|distance)$/.test(key)) return `${number} m`;
+  if (key.includes("duration")) return `${number} s`;
+  if (key === "speed" && name.replace(/_/g, " ").includes("turn")) return `${number} rad/s`;
+  if (key === "speed" && name.replace(/_/g, " ").includes("move")) return `${number} m/s`;
+  return number;
+}
+
+/** @param {string} name @param {Record<string, any>} args @param {Array<{label: string, value: string}>} rows */
+function skillArgSummary(name, args, rows) {
+  const skill = name.replace(/_/g, " ").toLowerCase();
+  if (skill.includes("navigate to position")) {
+    return `x ${roundNums(String(args.x))} m · y ${roundNums(String(args.y))} m · ${roundNums(String(args.theta_degrees ?? 0))}° · ${args.local_frame ? "Local" : "Map"}`;
+  }
+  if (skill.includes("move straight")) {
+    const distance = Number(args.distance);
+    return `${roundNums(String(Math.abs(distance)))} m ${distance < 0 ? "backward" : "forward"} · ${roundNums(String(args.speed))} m/s`;
+  }
+  if (skill.includes("turn in place")) {
+    const angle = Number(args.angle_degrees);
+    return `${roundNums(String(Math.abs(angle)))}° ${angle < 0 ? "right" : "left"} · ${roundNums(String(args.speed))} rad/s`;
+  }
+  if (skill.includes("head emotion")) {
+    return `${String(args.emotion).replace(/_/g, " ")}${Number(args.repeat) > 1 ? ` ×${args.repeat}` : ""}`;
+  }
+  if (skill.includes("search memory")) return `“${String(args.query)}”`;
+  if (skill.includes("arm move to xyz")) {
+    return `x ${roundNums(String(args.x))} m · y ${roundNums(String(args.y))} m · z ${roundNums(String(args.z))} m`;
+  }
+  return rows
+    .slice(0, 3)
+    .map(({ label, value }) => `${label} ${value}`)
+    .join(" · ");
 }
 
 /**

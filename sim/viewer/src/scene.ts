@@ -900,6 +900,14 @@ export class SimScene {
     return raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), hit) ? hit : null;
   }
 
+  showPropPlacementPreview(name: string, x: number, y: number, yaw: number): void {
+    this.props.showPlacementPreview(name, x, y, yaw);
+  }
+
+  clearPropPlacementPreview(): void {
+    this.props.clearPlacementPreview();
+  }
+
   /** Drive the URDF's arm/head joints to match physics-simulated angles (radians). */
   setJointAngles(joints: Record<string, number>): void {
     this.robot?.setJointValues(joints);
@@ -1044,6 +1052,7 @@ export class SimScene {
    * stage per visit, and undisposed contexts pile up until the browser kills
    * the oldest (~16), breaking the live view. */
   dispose(): void {
+    this.props.clearPlacementPreview();
     this.placeholderMat?.dispose();
     this.controls.dispose();
     this.renderer.dispose();

@@ -4,6 +4,8 @@ import { isTypingContext } from "../shell.js";
 
 const RIPPLE_COUNT = 3;
 const WAVEFORM_BAR_COUNT = 7;
+const SHORT_CLICK_MS = 350;
+const HOLD_HINT_DURATION_MS = 4200;
 /** Mic RMS is quiet; scale it so the resting glass glow reads as activity. */
 const LEVEL_GAIN = 6;
 /** Band RMS is quieter still; scale so waveform bars fill the puck. */
@@ -67,19 +69,47 @@ export function createAgentMicControl(root, callbacks) {
   /** @type {string | null} */
   let unavailableReason = null;
   let activationId = 0;
+  let pointerDownAt = 0;
+  let holdHintVisible = false;
+  let holdHintTimeout = 0;
 
   function renderHoldState() {
     const unavailable = unavailableReason !== null;
     const listening = isHeld && captureOn && !unavailable;
     const waiting = isHeld && (captureBusy || !captureOn) && !unavailable;
+    const showingHoldHint = holdHintVisible && !unavailable && !waiting && !listening;
     control.classList.toggle("listening", listening);
     control.classList.toggle("waiting", waiting);
     control.classList.toggle("unavailable", unavailable);
+    control.classList.toggle("show-hold-hint", showingHoldHint);
     button.setAttribute("aria-pressed", String(isHeld));
     button.setAttribute("aria-busy", String(waiting));
     button.setAttribute("aria-label", unavailable ? "Microphone disabled" : "Hold to talk to the agent");
     button.title = unavailableReason ?? "Hold to talk — Space, or click and hold";
-    label.textContent = unavailable ? "Mic disabled" : waiting ? "Starting…" : listening ? "Listening…" : "Hold to talk";
+    label.textContent = unavailable
+      ? "Mic disabled"
+      : waiting
+        ? "Starting…"
+        : listening
+          ? "Listening…"
+          : showingHoldHint
+            ? "Hold down your space key or mouse to talk"
+            : "Hold to talk";
+  }
+
+  function dismissHoldHint() {
+    window.clearTimeout(holdHintTimeout);
+    holdHintVisible = false;
+  }
+
+  function showHoldHint() {
+    dismissHoldHint();
+    holdHintVisible = true;
+    holdHintTimeout = window.setTimeout(() => {
+      holdHintVisible = false;
+      renderHoldState();
+    }, HOLD_HINT_DURATION_MS);
+    renderHoldState();
   }
 
   function applyAvailability() {
@@ -120,6 +150,7 @@ export function createAgentMicControl(root, callbacks) {
   }
 
   function releaseAllHolds() {
+    pointerDownAt = 0;
     holdSources.clear();
     syncHoldState();
   }
@@ -128,12 +159,24 @@ export function createAgentMicControl(root, callbacks) {
   function onPointerDown(event) {
     if (event.button !== 0) return;
     event.preventDefault();
+    dismissHoldHint();
+    pointerDownAt = event.timeStamp;
     button.setPointerCapture(event.pointerId);
     holdSources.add("pointer");
     syncHoldState();
   }
 
-  function onPointerRelease() {
+  /** @param {PointerEvent} event */
+  function onPointerUp(event) {
+    const wasShortClick = pointerDownAt > 0 && event.timeStamp - pointerDownAt < SHORT_CLICK_MS;
+    pointerDownAt = 0;
+    holdSources.delete("pointer");
+    syncHoldState();
+    if (wasShortClick && !button.disabled) showHoldHint();
+  }
+
+  function onPointerCancel() {
+    pointerDownAt = 0;
     holdSources.delete("pointer");
     syncHoldState();
   }
@@ -177,9 +220,9 @@ export function createAgentMicControl(root, callbacks) {
 
   const listenerOptions = { signal: eventController.signal };
   button.addEventListener("pointerdown", onPointerDown, listenerOptions);
-  button.addEventListener("pointerup", onPointerRelease, listenerOptions);
-  button.addEventListener("pointercancel", onPointerRelease, listenerOptions);
-  button.addEventListener("lostpointercapture", onPointerRelease, listenerOptions);
+  button.addEventListener("pointerup", onPointerUp, listenerOptions);
+  button.addEventListener("pointercancel", onPointerCancel, listenerOptions);
+  button.addEventListener("lostpointercapture", onPointerCancel, listenerOptions);
   window.addEventListener("keydown", onKeyDown, listenerOptions);
   window.addEventListener("keyup", onKeyUp, listenerOptions);
   window.addEventListener("blur", releaseAllHolds, listenerOptions);
@@ -208,6 +251,7 @@ export function createAgentMicControl(root, callbacks) {
       });
     },
     destroy() {
+      dismissHoldHint();
       releaseAllHolds();
       eventController.abort();
       control.remove();

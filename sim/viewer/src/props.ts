@@ -18,6 +18,7 @@
 // only decides how long to wait for one.
 
 import * as THREE from "three";
+import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { PropModels } from "./propModels";
 
 /** How long a prop with a glb stays undrawn waiting for its model before we
@@ -52,6 +53,13 @@ export interface PropInfo {
   size: number[];
   rgba: number[];
   viewer: PropViewerDef;
+}
+
+interface PlacementPreview {
+  name: string;
+  root: THREE.Group;
+  materials: THREE.Material[];
+  geometries: THREE.BufferGeometry[];
 }
 
 /** Build the primitive MuJoCo is colliding with. Mirrors props.py's
@@ -93,6 +101,7 @@ export class PropLibrary {
   private prefetching = false;
   private hulls: THREE.Mesh[] = [];
   private hullsVisible = false;
+  private placementPreview?: PlacementPreview;
 
   constructor(
     private scene: THREE.Scene,
@@ -108,6 +117,9 @@ export class PropLibrary {
   /** Adopt the server's roster. Props that vanish from it lose their bodies. */
   setManifest(props: PropInfo[]): void {
     this.info = new Map(props.map((p) => [p.name, p]));
+    if (this.placementPreview && !this.info.has(this.placementPreview.name)) {
+      this.clearPlacementPreview();
+    }
     for (const [name, root] of this.roots) {
       if (!this.info.has(name)) {
         this.scene.remove(root);
@@ -158,9 +170,61 @@ export class PropLibrary {
     for (const hull of this.hulls) hull.visible = visible;
   }
 
+  showPlacementPreview(name: string, x: number, y: number, yaw: number): void {
+    if (name !== this.placementPreview?.name) {
+      this.clearPlacementPreview();
+      this.placementPreview = this.buildPlacementPreview(name);
+    }
+    if (!this.placementPreview) return;
+    this.placementPreview.root.position.set(x, y, 0.015);
+    this.placementPreview.root.rotation.z = yaw;
+  }
+
+  clearPlacementPreview(): void {
+    if (!this.placementPreview) return;
+    this.scene.remove(this.placementPreview.root);
+    for (const material of this.placementPreview.materials) material.dispose();
+    for (const geometry of this.placementPreview.geometries) geometry.dispose();
+    this.placementPreview = undefined;
+  }
+
   /** Every prop body currently in the world (shadow-box fitting). */
   get visibleRoots(): THREE.Object3D[] {
     return [...this.roots.values()].filter((r) => r.visible);
+  }
+
+  private buildPlacementPreview(name: string): PlacementPreview | undefined {
+    const info = this.info.get(name);
+    if (!info) return undefined;
+
+    const root = new THREE.Group();
+    const model = this.models.get(name);
+    const visual = model ? cloneSkeleton(model) : this.primitiveMesh(info);
+    const ownedMaterials: THREE.Material[] = [];
+    const geometries: THREE.BufferGeometry[] = [];
+    if (!model && visual instanceof THREE.Mesh) {
+      geometries.push(visual.geometry);
+    }
+    visual.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      const sourceMaterials = Array.isArray(object.material) ? object.material : [object.material];
+      const ghostMaterials = sourceMaterials.map((material) => {
+        const ghost = model ? material.clone() : material;
+        ghost.transparent = true;
+        ghost.opacity = Math.min(ghost.opacity, 0.48);
+        ghost.depthWrite = false;
+        ownedMaterials.push(ghost);
+        return ghost;
+      });
+      object.material = Array.isArray(object.material) ? ghostMaterials : ghostMaterials[0];
+      object.castShadow = false;
+      object.receiveShadow = false;
+    });
+    root.add(visual);
+    root.updateMatrixWorld(true);
+    visual.position.z -= new THREE.Box3().setFromObject(root).min.z;
+    this.scene.add(root);
+    return { name, root, materials: ownedMaterials, geometries };
   }
 
   private ensure(name: string): THREE.Group | undefined {
