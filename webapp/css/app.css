@@ -9450,8 +9450,8 @@ select.skill-input {
   --agent-theme-surface-strong: rgb(57 37 42 / 98%);
   --agent-theme-field: #241a1c;
   --agent-theme-selected: #9d2235;
-  --agent-theme-edge: rgb(190 77 91 / 24%);
-  --agent-theme-edge-strong: rgb(221 132 142 / 38%);
+  --agent-theme-edge: rgb(157 34 53 / 52%);
+  --agent-theme-edge-strong: rgb(157 34 53 / 78%);
   --agent-theme-text: #f7f3ed;
   --agent-theme-muted: #b8a9a4;
   --agent-theme-control-text: #e7ded8;
@@ -9463,6 +9463,28 @@ select.skill-input {
   --agent-theme-accent-edge: rgb(22 130 95 / 64%);
   --agent-theme-selected-text: #fff;
   --agent-theme-shadow: rgb(8 3 4 / 58%);
+}
+
+.agent-cockpit[data-agent-theme="the-czech"] {
+  --agent-theme-page: #0d1726;
+  --agent-theme-surface: rgb(21 38 59 / 95%);
+  --agent-theme-surface-strong: rgb(29 48 72 / 98%);
+  --agent-theme-field: rgb(255 255 255 / 20%);
+  --agent-theme-selected: #d7141a;
+  --agent-theme-edge: rgb(255 255 255 / 58%);
+  --agent-theme-edge-strong: rgb(255 255 255 / 88%);
+  --agent-theme-text: #f7f8fa;
+  --agent-theme-muted: #aabbd0;
+  --agent-theme-control-text: #e7eef6;
+  --agent-theme-control-off: #778ba3;
+  --agent-theme-placeholder: rgb(247 248 250 / 36%);
+  --agent-theme-accent: #4b8ccc;
+  --agent-theme-accent-hover: #78ade0;
+  --agent-theme-accent-fill: rgb(75 140 204 / 20%);
+  --agent-theme-accent-edge: rgb(75 140 204 / 64%);
+  --agent-theme-selected-text: #fff;
+  --agent-theme-shadow: rgb(2 8 17 / 60%);
+  --czech-gold: #f2c94c;
 }
 
 .agent-cockpit[data-agent-theme="retro"] .agent-panel,
@@ -9495,6 +9517,12 @@ select.skill-input {
 .agent-cockpit[data-agent-theme] .agent-head-agent-name,
 .agent-cockpit[data-agent-theme] .agent-panel .chat-msg.robot .chat-bubble {
   color: var(--agent-theme-text);
+}
+
+.agent-cockpit[data-agent-theme="the-czech"]
+  .telemetry-item-battery
+  .telemetry-value {
+  color: var(--czech-gold);
 }
 
 .agent-cockpit[data-agent-theme] .agent-head-label,
