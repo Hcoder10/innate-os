@@ -54,6 +54,9 @@ body {
   --ctl-edge-accent: rgb(232 163 61 / 45%);
   --ctl-edge-accent-hover: rgb(232 163 61 / 72%);
   --ctl-edge-danger: rgb(217 106 90 / 50%);
+  --agent-purple: #e0dcff;
+  --agent-purple-fill: rgb(64 31 251 / 32%);
+  --agent-purple-edge: rgb(151 135 255 / 68%);
 
   --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
@@ -120,7 +123,6 @@ button {
 
 /* Native select chevron cannot be inset reliably.
    30px end padding = 10px inset + 10px icon + 10px text gap. */
-.agent-directive,
 .log-select,
 .modal-select,
 .prof-select,
@@ -701,15 +703,15 @@ select.skill-input {
   padding: 10px 12px;
 }
 
-/* Top-left overlay column (agent page): sim challenge panel above telemetry.
-   Children keep the .overlay glass look but stack instead of self-anchoring. */
+/* Top-left overlay column on the Agent page. */
 .overlay-stack-top-left {
   position: absolute;
   top: 14px;
   left: 14px;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
+  width: max-content;
   gap: 10px;
   z-index: 6;
 }
@@ -725,22 +727,137 @@ select.skill-input {
 }
 
 /* ---- challenge panel (sim only, see agent/challengePanel.js) ------------- */
+.agent-challenge-dock {
+  position: absolute;
+  bottom: 14px;
+  left: 80px;
+  z-index: 13;
+  width: 56px;
+  height: 56px;
+}
+
 .challenge-panel {
-  width: 252px;
-  padding: 10px 12px 12px;
+  position: absolute;
+  bottom: 66px;
+  left: -66px;
+  display: grid;
+  width: min(360px, calc(100vw - 150px));
+  max-height: min(520px, calc(100vh - 110px));
+  padding: 13px;
+  gap: 10px;
+  overflow-y: auto;
+  background: rgb(8 8 10 / 42%);
+  backdrop-filter: blur(30px) saturate(1.1) brightness(0.82);
+  -webkit-backdrop-filter: blur(30px) saturate(1.1) brightness(0.82);
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 18px;
+  box-shadow: 0 14px 44px rgb(0 0 0 / 48%);
+  transform-origin: bottom left;
+  will-change: transform, opacity;
+  transition:
+    opacity 220ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 240ms cubic-bezier(0.23, 1, 0.32, 1),
+    visibility 0s;
+}
+
+.agent-challenge-dock:not(.open) .challenge-panel {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-4px, 10px) scale(0.96);
+  transition:
+    opacity 130ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+    transform 160ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+    visibility 0s linear 160ms;
 }
 
 .challenge-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  min-height: 24px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgb(255 255 255 / 9%);
+}
+
+.agent-challenge-toggle {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  color: rgb(255 255 255 / 82%);
+  background: rgb(8 8 10 / 76%);
+  backdrop-filter: blur(20px) saturate(1.1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.1);
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 50%;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 38%);
+  cursor: pointer;
+  place-items: center;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease,
+    border-color 150ms ease,
+    transform 120ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.agent-challenge-toggle-icon {
+  grid-area: 1 / 1;
+  width: 24px;
+  height: 24px;
+  transition:
+    opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.agent-challenge-toggle-flag {
+  background: currentColor;
+  -webkit-mask: url("/js/agent/icons/finish-flag.svg") center / contain no-repeat;
+  mask: url("/js/agent/icons/finish-flag.svg") center / contain no-repeat;
+}
+
+.agent-challenge-toggle-close {
+  opacity: 0;
+  pointer-events: none;
+  transform: rotate(-10deg) scale(0.82);
+}
+
+.agent-challenge-dock.open .agent-challenge-toggle-flag {
+  opacity: 0;
+  transform: rotate(10deg) scale(0.82);
+}
+
+.agent-challenge-dock.open .agent-challenge-toggle-close {
+  opacity: 1;
+  transform: rotate(0) scale(1);
+}
+
+.agent-challenge-toggle:active {
+  transform: scale(0.96);
+}
+
+.agent-challenge-toggle:focus-visible {
+  outline: 2px solid var(--ctl-accent);
+  outline-offset: 3px;
+}
+
+.agent-challenge-dock.active .agent-challenge-toggle {
+  color: var(--ctl-accent);
+  border-color: var(--ctl-edge-accent);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agent-challenge-toggle:hover {
+    color: #fff;
+    background: rgb(14 14 18 / 88%);
+    border-color: rgb(255 255 255 / 30%);
+  }
 }
 
 .challenge-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .challenge-empty {
@@ -751,11 +868,11 @@ select.skill-input {
 .challenge-item {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   width: 100%;
-  padding: 7px 9px;
-  background: rgb(255 255 255 / 4%);
-  border: 1px solid var(--hairline);
+  padding: 9px 11px;
+  background: rgb(8 8 10 / 46%);
+  border: 1px solid rgb(255 255 255 / 14%);
   border-radius: 8px;
   color: var(--text);
   font: inherit;
@@ -764,8 +881,8 @@ select.skill-input {
 }
 
 .challenge-item:hover {
-  background: rgb(255 255 255 / 8%);
-  border-color: var(--hairline-strong);
+  background: rgb(8 8 10 / 62%);
+  border-color: rgb(255 255 255 / 24%);
 }
 
 .challenge-dot {
@@ -782,26 +899,32 @@ select.skill-input {
 }
 
 .challenge-item-text {
+  display: grid;
   flex: 1;
+  gap: 2px;
   min-width: 0;
 }
 
 .challenge-item-title {
   font-size: 13px;
+  line-height: 1.25;
 }
 
 .challenge-item-meta {
   font-size: 11px;
-  color: var(--muted);
+  line-height: 1.3;
+  color: rgb(231 231 234 / 68%);
 }
 
 .challenge-play {
+  display: flex;
   color: var(--muted);
-  font-size: 10px;
+  opacity: 0.5;
 }
 
 .challenge-item:hover .challenge-play {
   color: var(--accent);
+  opacity: 1;
 }
 
 .challenge-active {
@@ -925,7 +1048,7 @@ select.skill-input {
   font-size: 10px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: rgb(231 231 234 / 72%);
   transition: color 150ms ease;
 }
 
@@ -1202,21 +1325,18 @@ select.skill-input {
   color: var(--danger);
 }
 
-/* Camera PiP strip — Zoom-style view switcher pinned bottom-right. The big stage is the primary camera;
-   these tiles are the other cameras (off pills or live thumbnails). Tunable knobs live here as custom
-   properties: tile size, gap, and the corner inset. */
 .cam-strip {
-  --pip-w: 120px;
-  --pip-h: 120px; /* square tiles */
-  --pip-gap: 14px;
+  --pip-w: 113px;
+  --pip-h: 113px;
+  --pip-gap: 8px;
   --pip-inset: 20px;
-  --pip-top: 14px; /* flush with the top edge, aligned with the overlays/panel */
+  --pip-top: 14px;
   position: absolute;
   right: var(--pip-inset);
   top: var(--pip-top);
   display: flex;
-  flex-direction: row; /* grow leftward along the top edge */
-  align-items: flex-end;
+  flex-direction: row;
+  align-items: center;
   gap: var(--pip-gap);
 }
 
@@ -1228,23 +1348,49 @@ select.skill-input {
 }
 
 .cam-tile {
-  --pip-hover-scale: 1.12;
   position: relative;
   width: var(--pip-w);
-  background: var(--glass);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border-radius: 10px;
+  filter: saturate(0.22);
+  background: rgb(8 8 10 / 34%);
+  backdrop-filter: blur(10px) saturate(1.08);
+  -webkit-backdrop-filter: blur(10px) saturate(1.08);
+  border: 1px solid rgb(255 255 255 / 28%);
+  border-radius: 16px;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 16%),
+    0 10px 28px rgb(0 0 0 / 22%);
   cursor: pointer;
   overflow: hidden;
-  transform-origin: top right; /* grow inward from the corner, never off-screen */
-  transition: transform 150ms ease, color 150ms ease;
+  transform-origin: center;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    filter 180ms ease,
+    transform 160ms cubic-bezier(0.455, 0.03, 0.515, 0.955),
+    border-color 150ms ease;
 }
 
-/* Grow on hover so the feed you're about to pick previews bigger. */
-.cam-tile:hover {
-  transform: scale(var(--pip-hover-scale));
-  z-index: 1;
+@media (hover: hover) and (pointer: fine) {
+  .cam-tile:hover {
+    z-index: 1;
+    filter: saturate(1);
+    border-color: rgb(255 255 255 / 48%);
+    transform: translateY(-3px);
+  }
+
+  .cam-tile:hover .cam-tile-label {
+    color: #fff;
+    background-color: rgb(18 18 21 / 62%);
+  }
+}
+
+.cam-tile:active {
+  transform: translateY(0) scale(0.985);
+}
+
+.cam-tile:focus-visible {
+  filter: saturate(1);
+  outline: 2px solid rgb(255 255 255 / 72%);
+  outline-offset: 3px;
 }
 
 /* Off: a compact dim pill showing just the camera name. */
@@ -1262,11 +1408,16 @@ select.skill-input {
 
 /* Live: a thumbnail of the feed. */
 .cam-tile.live {
-  height: var(--pip-h);
-  background: #000;
+  display: grid;
+  grid-template-rows: var(--pip-h) 25px;
+  height: auto;
+  background: rgb(8 8 10 / 48%);
 }
 
-.cam-tile.live video {
+.cam-tile.live > video,
+.cam-tile.live > canvas,
+.cam-tile.live > .cam-map-host {
+  grid-row: 1;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -1279,48 +1430,28 @@ select.skill-input {
 }
 
 .cam-tile-label {
-  position: absolute;
-  left: 7px;
-  bottom: 6px;
-  padding: 1px 6px;
-  border-radius: 6px;
-  background: rgb(0 0 0 / 55%);
-  color: var(--text);
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  text-transform: lowercase;
-  pointer-events: none;
-}
-
-.cam-tile-close {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 20px;
-  height: 20px;
+  position: static;
+  grid-row: 2;
   display: flex;
   align-items: center;
-  justify-content: center;
-  border-radius: 6px;
-  background: rgb(0 0 0 / 55%);
-  color: var(--text);
-  font-size: 15px;
-  line-height: 1;
-  opacity: 0;
-  transition: opacity 150ms ease, color 150ms ease;
-}
-
-.cam-tile.live:hover .cam-tile-close {
-  opacity: 1;
-}
-
-.cam-tile-close:hover {
-  color: var(--accent);
+  height: 25px;
+  padding: 0 9px;
+  background: rgb(18 18 21 / 42%);
+  backdrop-filter: blur(12px) saturate(1.08);
+  -webkit-backdrop-filter: blur(12px) saturate(1.08);
+  border-top: 1px solid rgb(255 255 255 / 18%);
+  color: rgb(255 255 255 / 82%);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  pointer-events: none;
+  transition: color 150ms ease, background-color 150ms ease;
 }
 
 /* Map view — same ladder as a camera. As a thumbnail it's a tile-sized canvas host. */
 .cam-tile-map {
-  height: var(--pip-h);
+  height: auto;
   background: #000;
 }
 
@@ -1713,33 +1844,179 @@ select.skill-input {
 
 /* ---- telemetry strip ----------------------------------------------------- */
 
+.telemetry-overlay {
+  z-index: 12;
+  width: 360px;
+  box-sizing: border-box;
+  background: linear-gradient(135deg, rgb(18 18 21 / 72%), rgb(8 8 10 / 62%));
+  border-color: rgb(255 255 255 / 14%);
+  border-radius: 16px;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 24%);
+}
+
 .telemetry {
-  display: flex;
-  gap: 22px;
-  padding: 9px 16px;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  column-gap: 0;
+  row-gap: 9px;
+  padding: 12px 14px;
 }
 
 .telemetry-item {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+  min-width: 0;
+  padding: 0 10px;
+}
+
+.telemetry-status-dot,
+.telemetry-meta {
+  display: none;
+}
+
+.telemetry-item-robot {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+  padding-right: 0;
+  padding-bottom: 9px;
+  padding-left: 0;
+  border-bottom: 1px solid rgb(255 255 255 / 10%);
+}
+
+.telemetry-item-robot .microlabel {
+  display: none;
+}
+
+.telemetry-item-battery,
+.telemetry-item-link,
+.telemetry-item-agent {
+  grid-column: span 3;
+}
+
+.telemetry-item-battery {
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.telemetry-item-link,
+.telemetry-item-agent {
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 7px;
+  row-gap: 3px;
+}
+
+.telemetry-item-link .microlabel,
+.telemetry-item-agent .microlabel {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+.telemetry.with-battery .telemetry-item-battery,
+.telemetry.with-battery .telemetry-item-link,
+.telemetry.with-battery .telemetry-item-agent {
+  grid-column: span 2;
+}
+
+.telemetry-item-agent,
+.telemetry.with-battery .telemetry-item-link {
+  border-left: 1px solid rgb(255 255 255 / 10%);
+}
+
+.telemetry-item-battery,
+.telemetry:not(.with-battery) .telemetry-item-link {
+  padding-left: 0;
+}
+
+.telemetry-item-agent {
+  padding-right: 0;
+}
+
+.telemetry-item-link .telemetry-status-dot,
+.telemetry-item-agent .telemetry-status-dot {
+  display: block;
+  grid-column: 1;
+  grid-row: 2;
+  width: 6px;
+  height: 6px;
+  background: rgb(231 231 234 / 24%);
+  border-radius: 50%;
+}
+
+.telemetry-item-link .telemetry-value,
+.telemetry-item-agent .telemetry-value {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.telemetry-item.live .telemetry-status-dot {
+  background: var(--ok);
+  box-shadow: 0 0 5px rgb(86 194 140 / 58%);
+}
+
+.telemetry-item.warn .telemetry-status-dot {
+  background: var(--danger);
+  box-shadow: 0 0 5px rgb(255 105 97 / 52%);
 }
 
 .telemetry .microlabel {
-  color: #b9b9c2;
+  color: rgb(231 231 234 / 58%);
+  font-size: 8px;
+  letter-spacing: 0.14em;
 }
 
 .telemetry-value {
-  font-size: 12px;
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.telemetry-item-robot .telemetry-value {
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.telemetry-item-robot .telemetry-meta {
+  display: block;
+  color: rgb(231 231 234 / 52%);
+  font-size: 9px;
 }
 
 .telemetry-item.live .telemetry-value {
-  color: var(--accent);
+  color: var(--text);
 }
 
 .telemetry-item.warn .telemetry-value {
   color: var(--danger);
+}
+
+.telemetry-value-track {
+  display: inline-flex;
+  width: max-content;
+  transform: translateX(0);
+}
+
+.telemetry-value-duplicate {
+  display: none;
+}
+
+.telemetry-value.overflowing .telemetry-value-track {
+  gap: 24px;
+  will-change: transform;
+  animation: telemetry-marquee var(--telemetry-duration) linear infinite;
+}
+
+.telemetry-value.overflowing .telemetry-value-duplicate {
+  display: inline;
 }
 
 /* ---- joystick ------------------------------------------------------------ */
@@ -5700,124 +5977,270 @@ select.skill-input {
   opacity: 0.5;
 }
 
-/* Skill-execution line — which primitive the agent is running, live. */
 .chat-skill {
   align-self: stretch;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--hairline-strong);
-  border-radius: 9px;
-  background: rgb(255 255 255 / 4%);
+  border-radius: 12px;
+  background: rgb(10 10 14 / 28%);
+  overflow: hidden;
 }
 
-/* The status line (tag · name · status); becomes a click target when a failed
-   run has an expandable error detail below it. */
 .chat-skill-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto 14px;
+  width: 100%;
+  gap: 10px;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  padding: 12px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  text-align: left;
 }
 
 .chat-skill.has-detail .chat-skill-head {
   cursor: pointer;
 }
 
-.chat-skill-chevron {
-  flex: 0 0 auto;
-  font-size: 9px;
-  opacity: 0.6;
+.chat-skill:not(.has-detail) .chat-skill-head {
+  cursor: default;
 }
 
-/* Collapsible failure reason / error trace. */
-.chat-skill-detail {
-  max-height: 0;
-  overflow: hidden;
-  padding: 0 10px;
-  font-size: 11px;
-  line-height: 1.45;
-  color: rgb(231 231 234 / 80%);
-  white-space: pre-wrap;
-  word-break: break-word;
-  border-top: 0 solid var(--hairline);
-  transition: max-height 0.2s ease, padding 0.2s ease;
-}
-
-.chat-skill.open .chat-skill-detail {
-  max-height: 240px;
-  overflow-y: auto;
-  padding: 8px 10px;
-  border-top: 1px solid var(--hairline);
-}
-
-.chat-skill-tag {
-  flex: 0 0 auto;
-  font-size: 9px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+.chat-skill-icon {
+  display: grid;
+  width: 24px;
+  height: 24px;
   color: var(--muted);
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  place-items: center;
+}
+
+.chat-skill-icon::before {
+  content: "■";
+  font-size: 8px;
+}
+
+.chat-skill-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
 }
 
 .chat-skill-name {
-  flex: 0 1 auto;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 560;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.chat-skill-summary {
   min-width: 0;
-  font-size: 12px;
-  color: var(--text);
+  color: rgb(231 231 234 / 72%);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.45;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* The run's inputs, trailing the name — which emotion, which position. Takes
-   the slack so the status stays pinned right whether or not there are any. */
-.chat-skill-args {
-  flex: 1 1 auto;
-  min-width: 0;
+.chat-skill-summary:empty {
+  display: none;
+}
+
+.chat-skill-chevron {
+  display: grid;
+  color: rgb(231 231 234 / 58%);
+  transform: rotate(0deg);
+  transform-origin: center;
+  transition: transform 180ms ease;
+  place-items: center;
+}
+
+.chat-skill-chevron svg {
+  width: 14px;
+  height: 14px;
+}
+
+.chat-skill.open .chat-skill-chevron {
+  transform: rotate(90deg);
+}
+
+.chat-skill:not(.has-detail) .chat-skill-chevron {
+  visibility: hidden;
+}
+
+.chat-skill-detail {
+  display: none;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 12px 13px 14px;
+  color: rgb(231 231 234 / 84%);
+  border-top: 1px solid var(--hairline);
+}
+
+.chat-skill.open .chat-skill-detail {
+  display: grid;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-skill-chevron {
+    transition: none;
+  }
+}
+
+.chat-skill-parameters:empty,
+.chat-skill-failure:empty {
+  display: none;
+}
+
+.chat-skill-detail-label {
+  margin: 0 0 9px;
+  color: rgb(231 231 234 / 58%);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.chat-skill-parameters dl {
+  display: grid;
+  grid-template-columns: minmax(78px, auto) minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 0;
   font-size: 11px;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
+}
+
+.chat-skill-parameters dt {
+  color: rgb(231 231 234 / 58%);
+}
+
+.chat-skill-parameters dd {
+  margin: 0;
+  color: #fff;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.chat-skill-failure {
+  padding-top: 11px;
+  border-top: 1px solid var(--hairline);
+}
+
+.chat-skill-failure-message {
+  margin: 0;
+  color: #ffd6cb;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .chat-skill-status {
-  flex: 0 0 auto;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
+  padding: 5px 8px;
+  color: rgb(231 231 234 / 76%);
+  background: rgb(255 255 255 / 6%);
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 .chat-skill.running {
-  border-color: rgb(64 31 251 / 55%);
-  background: rgb(64 31 251 / 12%);
+  border-color: rgb(112 91 255 / 72%);
+  background: rgb(64 31 251 / 16%);
 }
 
+.chat-skill.running .chat-skill-icon,
 .chat-skill.running .chat-skill-status {
   color: #c0b8ff;
+  border-color: rgb(151 135 255 / 48%);
 }
 
-.chat-skill.running .chat-skill-status::after {
+.chat-skill.running .chat-skill-icon::before {
   content: "";
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  margin-left: 6px;
+  width: 8px;
+  height: 8px;
+  background: currentColor;
   border-radius: 50%;
-  background: var(--blue);
   animation: chat-think-pulse 1.4s infinite ease-in-out;
 }
 
+.chat-skill.completed {
+  border-color: var(--ok);
+}
+
+.chat-skill.completed .chat-skill-icon,
 .chat-skill.completed .chat-skill-status {
   color: var(--ok);
 }
 
+.chat-skill.completed .chat-skill-icon::before,
+.chat-skill.failed .chat-skill-icon::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+}
+
+.chat-skill.completed .chat-skill-icon,
+.chat-skill.failed .chat-skill-icon {
+  border-width: 1.5px;
+}
+
+.chat-skill.completed .chat-skill-icon::before {
+  mask: url("/js/agent/icons/check.svg") center / contain no-repeat;
+  -webkit-mask: url("/js/agent/icons/check.svg") center / contain no-repeat;
+}
+
 .chat-skill.failed {
-  border-color: var(--danger);
+  --chat-skill-failed-accent: #ffaaa1;
+  --chat-skill-failed-edge: rgb(237 108 91 / 46%);
+  background: var(--ctl-field);
+  border-color: rgb(237 108 91 / 72%);
+  box-shadow: var(--ctl-sheen);
+}
+
+.chat-skill.failed .chat-skill-icon {
+  color: var(--chat-skill-failed-accent);
+  border-color: var(--chat-skill-failed-edge);
 }
 
 .chat-skill.failed .chat-skill-status {
-  color: var(--danger);
+  color: var(--chat-skill-failed-accent);
+  background: rgb(217 106 90 / 16%);
+  border-color: var(--chat-skill-failed-edge);
+}
+
+.chat-skill.failed .chat-skill-summary {
+  color: rgb(255 255 255 / 78%);
+}
+
+.chat-skill.failed .chat-skill-icon::before {
+  mask: url("/js/agent/icons/failed.svg") center / contain no-repeat;
+  -webkit-mask: url("/js/agent/icons/failed.svg") center / contain no-repeat;
+}
+
+.chat-skill.interrupted .chat-skill-icon::before {
+  content: "■";
+  font-size: 8px;
+}
+
+.chat-skill-head:focus-visible {
+  outline: 2px solid var(--ctl-accent);
+  outline-offset: -3px;
+  border-radius: 10px;
 }
 
 .chat-input-row {
@@ -5866,19 +6289,425 @@ select.skill-input {
 }
 
 /* ---- Agent page --------------------------------------------------------- */
-/* Full-bleed live feed (reused from teleop) with one liquid-glass control
-   column pinned to the right edge. The cam PiP strip is nudged left so it
-   never tucks behind the panel. */
-
-.agent-cockpit .cam-strip {
-  right: calc(360px + 34px);
+.agent-cockpit {
+  --agent-dock-width: 360px;
 }
 
-/* The sim debug chips' default offset clears Teleop's keyboard/joystick
-   block; the agent page has nothing bottom-left, so anchor them to the
-   bottom edge instead of floating at Teleop's height. */
+.agent-cockpit .cam-strip {
+  position: relative;
+  top: auto;
+  right: auto;
+  left: auto;
+  width: max-content;
+}
+
+.agent-cockpit .agent-telemetry-overlay {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: var(--agent-dock-width);
+}
+
+@keyframes telemetry-marquee {
+  to {
+    transform: translateX(calc(-50% - 12px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cam-tile,
+  .cam-tile-label,
+  .sim-scene-panel,
+  .sim-scene-toggle,
+  .sim-scene-toggle-icon,
+  .sim-scene-button,
+  .sim-placement-switch::before,
+  .sim-placement-switch button {
+    transition: none;
+  }
+
+  .telemetry-value-track {
+    animation: none;
+  }
+
+  .telemetry-value-duplicate {
+    display: none;
+  }
+}
+
+.sim-debug-stack {
+  position: absolute;
+  bottom: 132px;
+  left: 14px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  width: min(360px, calc(100% - 28px));
+  gap: 8px;
+  color: rgb(255 255 255 / 92%);
+}
+
+.sim-scene-setup {
+  position: relative;
+  width: 56px;
+  height: 56px;
+}
+
+.sim-scene-panel {
+  position: absolute;
+  bottom: 66px;
+  left: 0;
+  display: grid;
+  width: min(360px, calc(100vw - 92px));
+  padding: 0 13px 13px;
+  gap: 14px;
+  overflow: hidden;
+  background: rgb(8 8 10 / 42%);
+  backdrop-filter: blur(30px) saturate(1.1) brightness(0.82);
+  -webkit-backdrop-filter: blur(30px) saturate(1.1) brightness(0.82);
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 18px;
+  box-shadow: 0 14px 44px rgb(0 0 0 / 48%);
+  transform-origin: bottom left;
+  will-change: transform, opacity;
+  transition:
+    opacity 220ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 240ms cubic-bezier(0.23, 1, 0.32, 1),
+    visibility 0s;
+}
+
+.sim-scene-setup:not(.open) .sim-scene-panel {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-4px, 10px) scale(0.96);
+  transition:
+    opacity 130ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+    transform 160ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+    visibility 0s linear 160ms;
+}
+
+.sim-scene-header {
+  display: grid;
+  padding: 13px 1px 12px;
+  gap: 2px;
+  border-bottom: 1px solid rgb(255 255 255 / 9%);
+}
+
+.sim-scene-header strong {
+  font-size: 12px;
+  font-weight: 620;
+  line-height: 1.2;
+}
+
+.sim-scene-header small {
+  font-size: 10px;
+  line-height: 1.25;
+  color: rgb(255 255 255 / 50%);
+}
+
+.sim-scene-toggle {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  color: rgb(255 255 255 / 82%);
+  background: rgb(8 8 10 / 76%);
+  backdrop-filter: blur(20px) saturate(1.1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.1);
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 14px;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 10%),
+    0 10px 28px rgb(0 0 0 / 38%);
+  cursor: pointer;
+  place-items: center;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease,
+    border-color 150ms ease,
+    transform 120ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.sim-scene-toggle-icon {
+  grid-area: 1 / 1;
+  width: 24px;
+  height: 24px;
+  transition:
+    opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.sim-scene-toggle-shapes {
+  background: currentColor;
+  -webkit-mask: url("/js/agent/icons/shapes.svg") center / contain no-repeat;
+  mask: url("/js/agent/icons/shapes.svg") center / contain no-repeat;
+}
+
+.sim-scene-toggle-close {
+  opacity: 0;
+  pointer-events: none;
+  transform: rotate(-10deg) scale(0.82);
+}
+
+.sim-scene-setup.open .sim-scene-toggle-shapes {
+  opacity: 0;
+  transform: rotate(10deg) scale(0.82);
+}
+
+.sim-scene-setup.open .sim-scene-toggle-close {
+  opacity: 1;
+  transform: rotate(0) scale(1);
+}
+
+.sim-scene-toggle:active {
+  transform: scale(0.96);
+}
+
+.sim-scene-toggle:focus-visible {
+  outline: 2px solid var(--ctl-accent);
+  outline-offset: 3px;
+}
+
+.sim-scene-button:focus-visible {
+  outline: 2px solid var(--agent-purple);
+  outline-offset: -2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .sim-scene-toggle:hover {
+    color: #fff;
+    background: rgb(14 14 18 / 88%);
+    border-color: rgb(255 255 255 / 30%);
+  }
+}
+
+.sim-scene-section {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.sim-scene-section-header {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sim-scene-section h3 {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgb(255 255 255 / 64%);
+}
+
+.sim-view-aids > span {
+  font-size: 9px;
+  font-weight: 620;
+  line-height: 1;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgb(255 255 255 / 42%);
+}
+
+.sim-prop-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.sim-scene-button,
+.sim-placement-switch button {
+  appearance: none;
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  color: rgb(255 255 255 / 72%);
+  background: rgb(255 255 255 / 6%);
+  border: 1px solid rgb(255 255 255 / 11%);
+  cursor: pointer;
+}
+
+.sim-scene-button {
+  min-height: 30px;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 570;
+  line-height: 1;
+  border-radius: 9px;
+  transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease;
+}
+
+.sim-scene-button:hover {
+  color: #fff;
+  background: rgb(255 255 255 / 10%);
+  border-color: rgb(255 255 255 / 20%);
+}
+
+.sim-scene-button.is-active {
+  color: var(--agent-purple);
+  background: rgb(64 31 251 / 20%);
+  border-color: rgb(151 135 255 / 48%);
+}
+
+.sim-prop-button {
+  display: grid;
+  min-width: 0;
+  height: 56px;
+  padding: 6px 3px 5px;
+  place-items: center;
+  align-content: center;
+  gap: 4px;
+}
+
+.sim-prop-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.sim-prop-name {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  font-size: 9px;
+  line-height: 1.1;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sim-add-all {
+  min-height: 56px;
+  padding: 6px 3px 5px;
+  color: rgb(255 255 255 / 58%);
+  border-style: dashed;
+}
+
+.sim-prop-add-icon {
+  font-size: 20px;
+  font-weight: 300;
+  line-height: 1;
+}
+
+.sim-placement-section {
+  padding-top: 12px;
+  border-top: 1px solid rgb(255 255 255 / 8%);
+}
+
+.sim-placement-switch {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  padding: 3px;
+  background: var(--ctl-field);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 11px;
+}
+
+.sim-placement-switch::before {
+  position: absolute;
+  z-index: 0;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 8px) / 2);
+  background: rgb(4 4 6 / 88%);
+  border-radius: 8px;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 14%),
+    0 2px 6px rgb(0 0 0 / 24%);
+  content: "";
+  transition: transform 180ms cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+.sim-placement-switch.spot-selected::before {
+  transform: translateX(calc(100% + 2px));
+}
+
+.sim-placement-switch button {
+  position: relative;
+  z-index: 1;
+  padding: 7px 14px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ctl-text-off);
+  background: transparent;
+  border-color: transparent;
+  border-radius: 8px;
+  transition: color 180ms cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+.sim-placement-switch button.is-active {
+  color: #fff;
+}
+
+.sim-placement-switch button:focus-visible {
+  outline: 2px solid var(--ctl-accent);
+  outline-offset: 1px;
+}
+
+.sim-placement-hint {
+  min-height: 14px;
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: rgb(255 255 255 / 48%);
+}
+
+.sim-scene-utilities {
+  grid-template-columns: 1fr;
+  padding-top: 12px;
+  gap: 9px;
+  border-top: 1px solid rgb(255 255 255 / 8%);
+}
+
+.sim-clear-props {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgb(255 255 255 / 56%);
+}
+
+.sim-clear-props-icon {
+  width: 13px;
+  height: 13px;
+  background: currentColor;
+  -webkit-mask: url("/js/agent/icons/trash.svg") center / contain no-repeat;
+  mask: url("/js/agent/icons/trash.svg") center / contain no-repeat;
+}
+
+.sim-view-aids {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.sim-camera-modes {
+  grid-template-columns: minmax(0, 1fr) repeat(3, auto);
+}
+
+.sim-view-aids > span {
+  white-space: nowrap;
+}
+
 .agent-cockpit .sim-debug-stack {
-  bottom: 18px !important; /* the stage sets the position inline */
+  bottom: 14px !important;
 }
 
 /* Agent page keeps every camera live (no off pill), so any off tile here is the
@@ -5893,8 +6722,6 @@ select.skill-input {
 
 .agent-mic-control {
   --agent-mic-level: 0;
-  --agent-mic-active: #e0dcff;
-  --agent-mic-active-edge: rgb(151 135 255 / 68%);
   position: absolute;
   left: 50%;
   bottom: 14px;
@@ -6091,13 +6918,58 @@ select.skill-input {
 
 .agent-mic-label {
   position: absolute;
+  left: 50%;
   bottom: calc(100% + 12px);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.16em;
   text-transform: uppercase;
+  white-space: nowrap;
   color: rgb(255 255 255 / 72%);
   text-shadow: 0 1px 8px rgb(0 0 0 / 70%);
+  transform: translateX(-50%);
+}
+
+.agent-mic-control.show-hold-hint .agent-mic-label {
+  --agent-mic-hint-bg: rgb(30 30 32);
+  --agent-mic-hint-border: rgb(255 255 255 / 18%);
+  padding: 8px 11px;
+  font-size: 11px;
+  line-height: 1.25;
+  letter-spacing: 0;
+  text-transform: none;
+  color: rgb(255 255 255 / 90%);
+  background: var(--agent-mic-hint-bg);
+  border: 1px solid var(--agent-mic-hint-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
+  text-shadow: none;
+  animation: agent-mic-hold-hint-in 180ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.agent-mic-control.show-hold-hint .agent-mic-label::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  background: var(--agent-mic-hint-bg);
+  border-right: 1px solid var(--agent-mic-hint-border);
+  border-bottom: 1px solid var(--agent-mic-hint-border);
+  transform: rotate(45deg);
+}
+
+@keyframes agent-mic-hold-hint-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -6201,7 +7073,7 @@ select.skill-input {
 }
 
 .agent-mic-control.listening .agent-mic-button {
-  color: var(--agent-mic-active);
+  color: var(--agent-purple);
   border-color: rgb(255 255 255 / 16%);
   transform: scale(0.9);
   transition:
@@ -6217,8 +7089,8 @@ select.skill-input {
 }
 
 .agent-mic-control.listening .agent-mic-button::before {
-  background: rgb(64 31 251 / 32%);
-  border-color: var(--agent-mic-active-edge);
+  background: var(--agent-purple-fill);
+  border-color: var(--agent-purple-edge);
   transform: scale(1.08);
   transition:
     transform 130ms cubic-bezier(0.215, 0.61, 0.355, 1),
@@ -6305,82 +7177,374 @@ select.skill-input {
 
 .agent-panel {
   position: absolute;
-  top: 14px;
+  top: 120px;
   right: 14px;
-  bottom: 14px;
-  width: 360px;
+  bottom: 80px;
+  width: var(--agent-dock-width);
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-  /* Liquid glass: translucent and see-through, leaning on a strong blur to read
-     as frosted. Legibility comes from brighter text (below), not an opaque
-     backing — only a light dark tint keeps the feed from blowing out the panel.
-     Both gradient stops stay dark (never a white tint) and brightness() darkens
-     the sampled backdrop itself, so the panel (and its near-white text) stays
-     readable over a bright/white background, not just a dim camera feed. */
+  justify-content: space-between;
+  gap: 10px;
+  max-height: calc(100% - 28px);
+  padding: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 0;
+  pointer-events: none;
+}
+
+.agent-control-panel,
+.agent-thoughts-panel {
   background: linear-gradient(180deg, rgb(10 10 12 / 14%), rgb(6 6 9 / 38%));
   backdrop-filter: blur(30px) saturate(1.1) brightness(0.82);
   -webkit-backdrop-filter: blur(30px) saturate(1.1) brightness(0.82);
-  border: none;
+  border: 0;
   border-radius: 18px;
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 14%),
-    0 14px 44px rgb(0 0 0 / 48%);
+  box-shadow: 0 14px 44px rgb(0 0 0 / 48%);
+  pointer-events: auto;
+}
+
+.agent-control-panel {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: rgb(8 8 10 / 42%);
+  border: 1px solid rgb(255 255 255 / 14%);
+}
+
+.agent-thoughts-panel {
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 280px;
+  max-height: none;
+  padding: 16px;
+  border: 1px solid rgb(255 255 255 / 12%);
+  transform-origin: bottom right;
+  will-change: transform, opacity;
+  transition:
+    opacity 220ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 240ms cubic-bezier(0.23, 1, 0.32, 1),
+    visibility 0s;
+}
+
+.agent-panel:not(.chat-open) .agent-thoughts-panel {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(6px, 14px) scale(0.96);
+  transition:
+    opacity 130ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+    transform 160ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+    visibility 0s linear 160ms;
+}
+
+.agent-panel.chat-open .agent-thoughts-panel > * {
+  animation: agent-chat-content-in 220ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+.agent-panel.chat-open .agent-thoughts-panel > :nth-child(1) {
+  animation-delay: 35ms;
+}
+
+.agent-panel.chat-open .agent-thoughts-panel > :nth-child(2) {
+  animation-delay: 55ms;
+}
+
+.agent-panel.chat-open .agent-thoughts-panel > :nth-child(3) {
+  animation-delay: 75ms;
+}
+
+.agent-chat-toggle {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 13;
+  display: grid;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  color: rgb(255 255 255 / 82%);
+  background: rgb(8 8 10 / 76%);
+  backdrop-filter: blur(20px) saturate(1.1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.1);
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 50%;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 38%);
+  cursor: pointer;
+  place-items: center;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease,
+    border-color 150ms ease,
+    transform 120ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.agent-chat-toggle-icon,
+.agent-chat-toggle-thinking {
+  grid-area: 1 / 1;
+}
+
+.agent-chat-toggle-icon {
+  width: 24px;
+  height: 24px;
+  transition:
+    opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.agent-chat-toggle-close,
+.agent-chat-toggle-thinking {
+  opacity: 0;
+  transform: rotate(-10deg) scale(0.82);
+  pointer-events: none;
+}
+
+.agent-chat-toggle.open:not(.thinking) .agent-chat-toggle-chat {
+  opacity: 0;
+  transform: rotate(10deg) scale(0.82);
+}
+
+.agent-chat-toggle.open:not(.thinking) .agent-chat-toggle-close {
+  opacity: 1;
+  transform: rotate(0) scale(1);
+}
+
+.agent-chat-toggle-thinking {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  transition:
+    opacity 140ms ease-out,
+    transform 140ms ease-out;
+}
+
+.agent-chat-toggle-thinking i {
+  width: 4px;
+  height: 4px;
+  background: currentColor;
+  border-radius: 50%;
+  animation: agent-chat-thinking 900ms ease-in-out infinite;
+}
+
+.agent-chat-toggle-thinking i:nth-child(2) {
+  animation-delay: 120ms;
+}
+
+.agent-chat-toggle-thinking i:nth-child(3) {
+  animation-delay: 240ms;
+}
+
+.agent-chat-toggle.thinking {
+  color: var(--ctl-accent);
+  border-color: var(--ctl-edge-accent);
+}
+
+.agent-chat-toggle.thinking .agent-chat-toggle-icon {
+  opacity: 0;
+  transform: scale(0.82);
+}
+
+.agent-chat-toggle.thinking .agent-chat-toggle-thinking {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.agent-chat-toggle:active {
+  transform: scale(0.96);
+}
+
+.agent-chat-toggle:focus-visible {
+  outline: 2px solid var(--ctl-accent);
+  outline-offset: 3px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agent-chat-toggle:hover {
+    color: #fff;
+    background: rgb(14 14 18 / 88%);
+    border-color: rgb(255 255 255 / 30%);
+  }
+}
+
+@keyframes agent-chat-thinking {
+  0%,
+  60%,
+  100% {
+    opacity: 0.34;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes agent-chat-content-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-thoughts-panel,
+  .agent-chat-toggle,
+  .agent-chat-toggle-icon,
+  .agent-chat-toggle-thinking {
+    transition: none;
+  }
+
+  .agent-chat-toggle-thinking i {
+    animation: none;
+  }
+
+  .agent-panel.chat-open .agent-thoughts-panel > * {
+    animation: none;
+  }
+}
+
+.challenge-panel .microlabel {
+  color: rgb(231 231 234 / 72%);
+}
+
+@media (min-width: 641px) {
+  .agent-cockpit {
+    --agent-dock-width: 388px;
+  }
 }
 
 .agent-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-}
-
-/* Expand/collapse chevron for the phone bottom sheet; hidden on desktop. */
-.agent-expand {
-  display: none;
-  margin-left: auto;
-  width: 30px;
-  height: 30px;
+  width: 100%;
+  min-height: 32px;
+  gap: 12px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
   font: inherit;
-  color: var(--ctl-text);
-  background: var(--ctl-glass);
-  border: 1px solid var(--hairline-strong);
-  border-radius: 8px;
-  box-shadow: var(--ctl-sheen);
+  text-align: left;
   cursor: pointer;
 }
 
+.agent-control-panel.collapsed .agent-controls,
+.agent-control-panel.collapsed .agent-status-row {
+  display: none;
+}
+
+.agent-head-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-head-label {
+  color: rgb(231 231 234 / 58%);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.agent-head-agent-name {
+  min-width: 0;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-head-chev {
+  display: flex;
+  margin-left: auto;
+  color: var(--muted);
+  opacity: 0.62;
+  transform: rotate(90deg);
+  transition: transform 180ms cubic-bezier(0.645, 0.045, 0.355, 1), color 150ms ease, opacity 150ms ease;
+}
+
+.agent-control-panel.collapsed .agent-head-chev {
+  transform: rotate(0);
+}
+
+.agent-head:focus-visible {
+  outline: 2px solid var(--ctl-accent);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agent-head:hover .agent-head-chev {
+    color: var(--text);
+    opacity: 1;
+  }
+}
+
 @media (max-width: 640px) {
+  .agent-cockpit .agent-telemetry-overlay {
+    left: 14px;
+    width: auto;
+  }
+
   /* The 360px right dock doesn't fit a phone: dock as a bottom sheet
-     instead, expandable to full height via the header chevron. */
+     instead, expandable to full height via its disclosure header. */
   .agent-panel {
     top: auto;
     left: 14px;
     right: 14px;
+    bottom: 80px;
     width: auto;
     height: 44vh;
+    max-height: none;
   }
 
-  .agent-panel.expanded {
-    top: 14px;
-    height: auto;
+  .agent-control-panel,
+  .agent-thoughts-panel {
+    padding: 12px;
   }
 
-  .agent-expand {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+  .agent-thoughts-panel {
+    min-height: 0;
+    max-height: none;
   }
 
-  /* No right dock to clear on phones. */
   .agent-cockpit .cam-strip {
-    right: 14px;
+    right: auto;
   }
 
   /* The agent bottom sheet owns the lower half; the sim debug chips would
      float over it (they live on Teleop/Collect anyway). */
   .agent-cockpit .sim-debug-stack {
     display: none !important; /* the stage sets display inline */
+  }
+
+  .agent-challenge-dock {
+    left: 14px;
+  }
+
+  .challenge-panel {
+    left: 0;
+    width: min(360px, calc(100vw - 28px));
   }
 
   .agent-mic-control {
@@ -6405,7 +7569,8 @@ select.skill-input {
   .agent-mic-hover-glow,
   .agent-mic-icon,
   .agent-mic-waveform,
-  .agent-mic-waveform-bar {
+  .agent-mic-waveform-bar,
+  .agent-mic-label {
     transition: none;
   }
 
@@ -6413,80 +7578,219 @@ select.skill-input {
   .agent-mic-control.listening .agent-mic-inner-wave {
     animation: none;
   }
+
+  .agent-mic-control.show-hold-hint .agent-mic-label {
+    animation: none;
+  }
 }
 
 .agent-title {
-  flex: 1;
-  font-size: 11px;
+  display: inline-flex;
+  flex: none;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.24em;
   text-transform: uppercase;
   color: var(--text);
 }
 
-.agent-state-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--muted);
-  opacity: 0.5;
-  transition: background 200ms ease, opacity 200ms ease;
+.agent-title-icon {
+  width: 22px;
+  height: 22px;
+  color: #fff;
+  filter: drop-shadow(0 0 6px rgb(255 255 255 / 62%));
 }
 
-/* Live/Brain stage switch in the panel header: the panel is the agent, these
-   pick which stage shows behind it. */
-.agent-views {
+.agent-panel.active .agent-title-icon {
+  color: #ffd08a;
+  filter: drop-shadow(0 0 4px rgb(255 181 94)) drop-shadow(0 0 12px rgb(242 145 48 / 90%));
+  transform-origin: center;
+  will-change: transform, opacity;
+  animation: agent-title-active-pulse 2s cubic-bezier(0.455, 0.03, 0.515, 0.955) infinite;
+}
+
+@keyframes agent-title-active-pulse {
+  0%,
+  100% {
+    opacity: 0.74;
+    transform: scale(0.97);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-panel.active .agent-title-icon {
+    animation: none;
+  }
+}
+
+.agent-stage-view-toggle {
+  position: absolute;
+  right: 80px;
+  bottom: 14px;
+  z-index: 13;
   display: inline-flex;
-  padding: 2px;
-  border-radius: 8px;
+  align-items: center;
+  height: 56px;
+  gap: 7px;
+  padding: 0 16px;
+  color: rgb(255 255 255 / 76%);
+  background: rgb(8 8 10 / 76%);
+  backdrop-filter: blur(20px) saturate(1.1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.1);
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 28px;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 38%);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease,
+    border-color 150ms ease,
+    transform 120ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.agent-stage-view-toggle svg {
+  width: 20px;
+  height: 20px;
+}
+
+.agent-stage-view-toggle.active {
+  color: var(--ctl-accent);
+  background: rgb(8 8 10 / 84%);
+  border-color: var(--ctl-edge-accent);
+}
+
+.agent-stage-view-toggle:active {
+  transform: scale(0.97);
+}
+
+.agent-stage-view-toggle:focus-visible {
+  outline: 2px solid var(--ctl-accent);
+  outline-offset: 2px;
+}
+
+.agent-skill-preview-control,
+.telemetry-preview-control {
+  position: absolute;
+  left: 190px;
+  z-index: 14;
+  display: grid;
+  width: 260px;
+  align-items: center;
+  gap: 4px;
+  padding: 7px;
+  color: var(--ctl-text);
+  background: rgb(8 8 10 / 82%);
+  backdrop-filter: blur(20px) saturate(1.1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.1);
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 12px;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 38%);
+}
+
+.agent-skill-preview-control {
+  bottom: 14px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.telemetry-preview-control {
+  bottom: 14px;
+  grid-template-columns: 38px minmax(0, 1fr) 38px;
+}
+
+.agent-cockpit .telemetry-preview-control {
+  bottom: 91px;
+}
+
+.agent-skill-preview-cycle,
+.agent-skill-preview-name,
+.telemetry-preview-cycle,
+.telemetry-preview-name {
+  height: 30px;
+  color: var(--ctl-text);
+  background-color: var(--ctl-field);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+}
+
+.agent-skill-preview-cycle,
+.telemetry-preview-cycle {
+  padding: 0;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.agent-skill-preview-name,
+.telemetry-preview-name {
+  display: grid;
+  padding: 0 8px;
+  font-size: 10px;
+  text-align: center;
+  place-items: center;
+}
+
+.agent-skill-preview-name {
+  grid-column: 2 / 5;
+}
+
+.agent-skill-preview-option {
+  height: 28px;
+  min-width: 0;
+  padding: 0 4px;
+  color: var(--ctl-text);
   background: var(--ctl-field);
   border: 1px solid var(--hairline-strong);
-  box-shadow: var(--ctl-sheen);
-}
-
-.agent-view-btn {
-  position: relative;
-  padding: 4px 10px;
-  border: none;
-  border-radius: 6px;
-  background: none;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
+  border-radius: 7px;
+  font-size: 9px;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--ctl-text-off);
   cursor: pointer;
-  transition: color 120ms ease, background 120ms ease;
 }
 
-.agent-view-btn:hover {
-  color: var(--ctl-text);
+.agent-skill-preview-option[aria-pressed="true"] {
+  background: rgb(255 255 255 / 12%);
+  border-color: rgb(255 255 255 / 32%);
 }
 
-.agent-view-btn.active {
-  color: var(--text);
-  background: var(--ctl-glass);
+.agent-skill-preview-option.running {
+  color: #c0b8ff;
 }
 
-/* While the loop runs, the Brain segment carries a small live dot — an
-   invitation to look inside. */
-.agent-view-btn.pulse::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: breathe 2.2s ease-in-out infinite;
+.agent-skill-preview-option.completed {
+  color: var(--ok);
 }
 
-.agent-state-dot.on {
-  background: var(--accent);
-  opacity: 1;
-  box-shadow: 0 0 9px var(--accent);
-  animation: breathe 2.2s ease-in-out infinite;
+.agent-skill-preview-option.failed {
+  color: var(--danger);
+}
+
+.agent-skill-preview-option.interrupted {
+  color: var(--muted);
+}
+
+.agent-skill-preview-cycle:focus-visible,
+.agent-skill-preview-option:focus-visible,
+.telemetry-preview-cycle:focus-visible {
+  outline: 2px solid var(--ctl-accent);
+  outline-offset: 1px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agent-stage-view-toggle:hover {
+    color: #fff;
+    background: rgb(14 14 18 / 84%);
+    border-color: rgb(255 255 255 / 28%);
+  }
 }
 
 /* The Brain monitor layer: an opaque stage that flips in over the camera view
@@ -6542,70 +7846,281 @@ select.skill-input {
   display: none !important; /* the sim stage sets its display inline */
 }
 
+.agent-cockpit.brain-open .agent-challenge-dock {
+  display: none;
+}
+
 .agent-controls {
   display: flex;
+  height: 36px;
   gap: 8px;
   align-items: stretch;
 }
 
-.agent-directive {
+.agent-directive-picker {
+  position: relative;
   flex: 1;
   min-width: 0;
-  padding: 8px 30px 8px 10px;
-  font-size: 12px;
-  color: var(--text);
-  /* background-color, not the shorthand: the shared select rule paints the
-     chevron as a background-image this must not clobber. */
-  background-color: var(--ctl-field);
-  border: 1px solid var(--hairline-strong);
-  border-radius: 9px;
 }
 
-.agent-directive:focus {
-  outline: none;
-  border-color: var(--accent-dim);
+.agent-directive {
+  display: flex;
+  width: 100%;
+  height: 36px;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 0 11px;
+  font-size: 12px;
+  text-align: left;
+  color: var(--text);
+  background: var(--ctl-field);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.agent-directive-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-directive-chevron {
+  display: grid;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  place-items: center;
+  transform-origin: center;
+  transition: color 150ms ease, transform 180ms cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+.agent-directive-chevron svg {
+  display: block;
+  width: 12px;
+  height: 12px;
+}
+
+.agent-directive-picker.open .agent-directive-chevron {
+  color: var(--text);
+  transform: rotate(90deg);
+}
+
+.agent-directive-picker.open .agent-directive {
+  background: var(--ctl-glass);
+  border-color: rgb(255 255 255 / 28%);
+}
+
+.agent-directive:focus-visible {
+  outline: 2px solid var(--ctl-accent);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agent-directive:hover:not(:disabled) {
+    background: var(--ctl-glass);
+    border-color: rgb(255 255 255 / 24%);
+  }
 }
 
 .agent-directive:disabled {
   color: var(--muted);
+  opacity: 0.65;
   cursor: not-allowed;
 }
 
+.agent-directive-list {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 0;
+  z-index: 4;
+  display: none;
+  width: max(100%, 280px);
+  max-height: min(42vh, 320px);
+  padding: 5px;
+  overflow-y: auto;
+  color: var(--text);
+  background: #0c0c0f;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 11px;
+  box-shadow: 0 16px 40px rgb(0 0 0 / 44%);
+}
+
+.agent-directive-picker.open .agent-directive-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: agent-directive-in 140ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+@keyframes agent-directive-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.agent-directive-option {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  color: var(--ctl-text);
+  border-radius: 7px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-directive-option:hover,
+.agent-directive-option:focus-visible {
+  color: #fff;
+  background: rgb(255 255 255 / 9%);
+  outline: none;
+}
+
+.agent-directive-option[aria-selected="true"] {
+  color: #fff;
+  background: rgb(255 255 255 / 7%);
+}
+
+.agent-directive-check {
+  display: flex;
+  flex: 0 0 14px;
+  width: 14px;
+  color: var(--agent-purple);
+  opacity: 0;
+}
+
+.agent-directive-check svg {
+  width: 14px;
+  height: 11px;
+}
+
+.agent-directive-option[aria-selected="true"] .agent-directive-check {
+  opacity: 1;
+}
+
+.agent-directive-option-name,
+.agent-directive-option-error {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-directive-option-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.agent-directive-option-error {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.agent-directive-option.broken {
+  min-height: 46px;
+  margin-top: 3px;
+  padding-top: 6px;
+  border-top: 1px solid var(--hairline);
+  border-radius: 0 0 7px 7px;
+}
+
+.agent-directive-warning {
+  display: grid;
+  flex: 0 0 15px;
+  width: 15px;
+  height: 15px;
+  color: var(--danger);
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  place-items: center;
+}
+
+.agent-directive-empty {
+  padding: 9px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-directive-picker.open .agent-directive-list {
+    animation: none;
+  }
+
+  .agent-directive-chevron {
+    transition: none;
+  }
+}
+
 .agent-toggle {
-  flex: 0 0 auto;
-  padding: 0 16px;
+  display: inline-flex;
+  flex: 0 0 82px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 13px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  /* The panel's primary action, in the shared control material (see :root). */
   color: var(--ctl-accent);
-  background: var(--ctl-glass);
+  background: rgb(232 163 61 / 13%);
   border: 1px solid var(--ctl-edge-accent);
   border-radius: 9px;
   box-shadow: var(--ctl-sheen);
-  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease,
+    border-color 150ms ease,
+    transform 120ms cubic-bezier(0.215, 0.61, 0.355, 1);
 }
 
-.agent-toggle:hover:not(:disabled) {
-  color: var(--ctl-accent-hover);
-  background: var(--ctl-glass-hover);
-  border-color: var(--ctl-edge-accent-hover);
+@media (hover: hover) and (pointer: fine) {
+  .agent-toggle:hover:not(:disabled) {
+    color: var(--ctl-accent-hover);
+    background: rgb(232 163 61 / 20%);
+    border-color: var(--ctl-edge-accent-hover);
+  }
 }
 
 .agent-toggle.stop {
   color: var(--ctl-danger);
+  background: rgb(217 106 90 / 12%);
   border-color: var(--ctl-edge-danger);
 }
 
-.agent-toggle.stop:hover:not(:disabled) {
-  color: #ffd6cb;
-  border-color: rgb(217 106 90 / 78%);
+@media (hover: hover) and (pointer: fine) {
+  .agent-toggle.stop:hover:not(:disabled) {
+    color: #ffd6cb;
+    background: rgb(217 106 90 / 19%);
+    border-color: rgb(217 106 90 / 78%);
+  }
 }
 
-/* Disabled drops the accent but keeps a base — `transparent` would put it right
-   back at the mercy of the feed, invisible over white. */
-.agent-toggle:disabled {
+.agent-toggle:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.agent-toggle:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.agent-toggle[aria-busy="true"] {
+  cursor: wait;
+}
+
+.agent-toggle:disabled:not([aria-busy="true"]) {
   color: var(--ctl-text-off);
   background: var(--ctl-field);
   border-color: var(--hairline-strong);
@@ -6613,12 +8128,17 @@ select.skill-input {
   cursor: not-allowed;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .agent-toggle {
+    transition: none;
+  }
+}
+
 .agent-reset {
-  flex: 0 0 auto;
-  padding: 0 10px;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  flex: 0 0 36px;
+  display: inline-grid;
+  width: 36px;
+  padding: 0;
   /* Secondary action: same material as the toggle, neutral instead of accent —
      the colour is the only thing separating them. */
   color: var(--ctl-text);
@@ -6627,6 +8147,16 @@ select.skill-input {
   border-radius: 9px;
   box-shadow: var(--ctl-sheen);
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+  place-items: center;
+}
+
+.agent-reset-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  mask: url("/js/agent/icons/reset.svg") center / contain no-repeat;
+  -webkit-mask: url("/js/agent/icons/reset.svg") center / contain no-repeat;
 }
 
 .agent-reset:hover:not(:disabled) {
@@ -6643,14 +8173,25 @@ select.skill-input {
   cursor: not-allowed;
 }
 
-.agent-activeskill {
-  display: flex;
+.agent-status-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  min-width: 0;
+}
+
+.agent-activeskill {
+  display: flex;
+  grid-column: 1;
+  align-items: center;
+  height: 34px;
+  min-width: 0;
+  gap: 8px;
+  padding: 0 10px;
   background: var(--ctl-field);
   border: 1px solid var(--hairline);
-  border-radius: 10px;
+  border-radius: 9px;
   transition: background 200ms ease, border-color 200ms ease;
 }
 
@@ -6677,8 +8218,81 @@ select.skill-input {
   color: var(--ctl-accent);
 }
 
+.agent-stream-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .agent-stream-label {
-  margin: 2px 2px -4px;
+  margin: 0 2px;
+}
+
+.agent-stream-mode {
+  position: relative;
+  isolation: isolate;
+  display: inline-grid;
+  grid-template-columns: repeat(2, 1fr);
+  min-width: 148px;
+  gap: 2px;
+  padding: 3px;
+  background: var(--ctl-field);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 11px;
+}
+
+.agent-stream-mode::before {
+  position: absolute;
+  z-index: 0;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 8px) / 2);
+  background: rgb(4 4 6 / 88%);
+  border-radius: 8px;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 14%),
+    0 2px 6px rgb(0 0 0 / 24%);
+  content: "";
+  transition: transform 180ms cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+.agent-stream-mode.detailed-selected::before {
+  transform: translateX(calc(100% + 2px));
+}
+
+.agent-stream-mode-btn {
+  position: relative;
+  z-index: 1;
+  padding: 7px 14px;
+  color: var(--ctl-text-off);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 180ms cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+.agent-stream-mode-btn.active {
+  color: #fff;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agent-stream-mode-btn:hover:not(.active) {
+    color: var(--ctl-text);
+  }
+}
+
+.agent-stream-mode-btn:focus-visible {
+  outline: 2px solid var(--ctl-accent);
+  outline-offset: 1px;
 }
 
 /* Over translucent glass the app's --muted grey reads too dim, so the agent
@@ -6697,13 +8311,37 @@ select.skill-input {
   color: rgb(231 231 234 / 78%);
 }
 
-/* The robot's own reply is the headline of the chat — give it a readable dark
-   backing (the default 6% white is invisible over a bright feed) and bright
-   text so it never washes out through the translucent glass. */
+.agent-panel .chat-msg:not(.system) .chat-bubble {
+  padding: 11px 14px;
+  border-radius: 20px;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.agent-panel .chat-msg.user .chat-bubble {
+  background: rgb(12 12 16 / 56%);
+  border-color: rgb(255 255 255 / 16%);
+}
+
+.agent-panel .chat-msg.robot {
+  max-width: 100%;
+  margin-block: 6px;
+}
+
+.agent-panel .chat-msg.robot:has(+ .chat-msg.robot) {
+  margin-bottom: 0;
+}
+
+.agent-panel .chat-msg.robot + .chat-msg.robot {
+  margin-top: 0;
+}
+
 .agent-panel .chat-msg.robot .chat-bubble {
   color: #fff;
-  background: rgb(12 12 16 / 68%);
-  border-color: var(--hairline-strong);
+  padding: 4px 2px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 /* Latest thought, shown while the Thoughts block is collapsed (its default). */
@@ -6716,7 +8354,94 @@ select.skill-input {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 4px 2px;
+  margin-right: -12px;
+  padding: 4px 12px 4px 2px;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 22%) transparent;
+}
+
+.agent-stream > * {
+  flex-shrink: 0;
+}
+
+.agent-stream::-webkit-scrollbar {
+  width: 7px;
+}
+
+.agent-stream::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.agent-stream::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 18%);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+
+.agent-stream::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 255 255 / 30%);
+  background-clip: padding-box;
+}
+
+.agent-stream.compact > *:not(.compact-visible, .compact-exiting) {
+  display: none;
+}
+
+.agent-stream.compact > .skill-output {
+  display: none;
+}
+
+.agent-stream.compact > .compact-entering {
+  animation: compact-message-in 180ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.agent-stream.compact > .compact-exiting {
+  animation: compact-message-out 140ms cubic-bezier(0.215, 0.61, 0.355, 1) forwards;
+  pointer-events: none;
+}
+
+.agent-stream.compact.replaying > * {
+  animation: none;
+}
+
+.agent-stream.compact .chat-sender,
+.agent-stream.compact .chat-thoughts-toggle {
+  display: none;
+}
+
+.agent-stream.compact .chat-thoughts {
+  align-self: stretch;
+  max-width: none;
+}
+
+.agent-stream.compact .chat-thoughts-list {
+  margin-top: 0;
+}
+
+.agent-stream.compact .chat-msg {
+  max-width: 100%;
+}
+
+@keyframes compact-message-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@keyframes compact-message-out {
+  to {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-stream.compact > .compact-entering,
+  .agent-stream.compact > .compact-exiting {
+    animation: none;
+  }
 }
 
 /* Reading surfaces are copy-paste material — chat history (discussion,
@@ -6729,54 +8454,146 @@ select.skill-input {
 }
 
 .agent-compose {
+  position: relative;
   display: flex;
-  gap: 8px;
-  align-items: stretch; /* input + button share one height, content centered in each */
+  gap: 4px;
+  align-items: flex-end;
+  padding: 6px 10px 6px 6px;
+  background: var(--ctl-field);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 15px;
+  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.agent-compose:focus-within {
+  background: rgb(8 8 10 / 78%);
+  border-color: var(--agent-purple-edge);
+  box-shadow: 0 0 0 2px rgb(64 31 251 / 10%);
 }
 
 .agent-compose-input {
+  position: relative;
+  z-index: 1;
   flex: 1;
-  min-height: 42px;
+  min-width: 0;
+  min-height: 43px;
   max-height: 120px;
-  padding: 11px 12px;
+  padding: 10px 12px;
   resize: none;
-  font: inherit; /* same UI font as the teleop "Make the robot speak" bar */
+  font: inherit;
+  font-size: 15px;
+  line-height: 22px;
   color: var(--text);
-  background: var(--ctl-field);
-  border: 1px solid var(--hairline-strong);
-  border-radius: 11px;
+  background: transparent;
+  border: 0;
 }
 
-.agent-compose-input::placeholder {
-  color: rgb(255 255 255 / 25%);
+.agent-compose-placeholder {
+  position: absolute;
+  z-index: 1;
+  top: 16px;
+  right: 56px;
+  left: 18px;
+  overflow: hidden;
+  color: rgb(255 255 255 / 32%);
+  font-size: 15px;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+  transition: opacity 500ms cubic-bezier(0.455, 0.03, 0.515, 0.955), transform 500ms cubic-bezier(0.455, 0.03, 0.515, 0.955);
+}
+
+.agent-compose-placeholder.exiting {
+  opacity: 0;
+  transform: translateY(-1px);
+}
+
+.agent-compose-placeholder.entering {
+  opacity: 0;
+  transform: translateY(1px);
+  transition: none;
+}
+
+.agent-compose-placeholder.hidden {
+  opacity: 0;
+  transform: none;
+  transition-duration: 100ms;
 }
 
 .agent-compose-input:focus {
   outline: none;
-  border-color: var(--accent-dim);
 }
 
 .agent-compose-send {
-  flex: 0 0 auto;
+  position: relative;
+  flex: 0 0 34px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 16px;
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ctl-accent);
-  background: var(--ctl-glass);
-  border: 1px solid var(--ctl-edge-accent);
-  border-radius: 11px;
-  box-shadow: var(--ctl-sheen);
-  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 4px;
+  padding: 0;
+  color: var(--agent-purple);
+  background: var(--agent-purple-fill);
+  border: 1px solid var(--agent-purple-edge);
+  border-radius: 50%;
+  box-shadow: var(--ctl-sheen), 0 4px 14px rgb(64 31 251 / 18%);
+  transition: transform 120ms ease-out, background-color 150ms ease, border-color 150ms ease, color 150ms ease, opacity 150ms ease;
 }
 
-.agent-compose-send:hover {
-  color: var(--ctl-accent-hover);
-  background: var(--ctl-glass-hover);
-  border-color: var(--ctl-edge-accent-hover);
+.agent-compose-send::before {
+  position: absolute;
+  inset: -8px;
+  content: "";
+}
+
+.agent-compose-send-icon {
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  -webkit-mask: url("/js/agent/icons/arrow.svg") center / contain no-repeat;
+  mask: url("/js/agent/icons/arrow.svg") center / contain no-repeat;
+}
+
+.agent-compose-send:disabled {
+  color: rgb(255 255 255 / 24%);
+  background: rgb(255 255 255 / 5%);
+  border-color: rgb(255 255 255 / 8%);
+  box-shadow: none;
+  opacity: 0.72;
+  cursor: default;
+}
+
+.agent-compose-send:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agent-compose-send:hover:not(:disabled) {
+    color: #fff;
+    background: rgb(64 31 251 / 44%);
+    border-color: rgb(151 135 255 / 84%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-compose,
+  .agent-compose-placeholder,
+  .agent-compose-send {
+    transition: none;
+  }
+
+  .agent-compose-send:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+.agent-compose-send:focus-visible {
+  outline: 2px solid var(--agent-purple);
+  outline-offset: 2px;
 }
 
 /* Top-center "<agent> is running" pill — shown on non-Agent pages while the
@@ -6930,9 +8747,7 @@ select.skill-input {
     display: none;
   }
 
-  /* The Robot/Link/Agent telemetry card costs too much of a small feed.
-     The agent page stacks that card (and, in sim, the challenge panel) in
-     .overlay-stack-top-left instead, so it needs hiding by its own name. */
+  /* The Robot/Link/Agent telemetry card costs too much of a small feed. */
   .overlay-top-left,
   .overlay-stack-top-left {
     display: none;
@@ -6967,8 +8782,10 @@ select.skill-input {
      no page keeps a top-right toggle on phones -- use the full width. */
   .cam-strip,
   .cockpit:not(.agent-cockpit) .cam-strip {
-    --pip-w: min(120px, 24vw);
-    --pip-h: min(120px, 24vw);
+    --pip-w: min(92px, 21vw);
+    --pip-h: min(92px, 21vw);
+    --pip-gap: 6px;
+    padding: 6px;
     right: 14px;
   }
 
@@ -6977,13 +8794,21 @@ select.skill-input {
     bottom: 150px;
   }
 
-  /* Sim debug chips: the bottom belongs to the joystick/sheet on phones --
-     tuck them under the camera tiles (inline styles carry the desktop
-     position, hence the overrides). */
+  /* Scene setup sits under the camera tiles on phones. */
   .sim-debug-stack {
     bottom: auto !important;
     top: calc(24px + min(120px, 24vw)) !important;
     left: 14px !important;
+  }
+
+  .sim-scene-panel {
+    top: 66px;
+    bottom: auto;
+    transform-origin: top left;
+  }
+
+  .sim-scene-setup:not(.open) .sim-scene-panel {
+    transform: translate(-4px, -10px) scale(0.96);
   }
 
   /* The camera strip spans the whole top on phones -- start below the tiles

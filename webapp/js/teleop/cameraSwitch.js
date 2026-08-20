@@ -32,7 +32,7 @@ const MAP_ZOOM_DEFAULT = { small: 6, big: 16 }; // tighter as a thumbnail, wider
  * @param {HTMLElement} parent cockpit root — owns the strip and (when big) the map layer.
  * @param {import("../webrtcSession.js").WebRtcSession} session
  * @param {import("../rosClient.js").RosClient} ros
- * @param {{ storeKey?: string }} [opts]
+ * @param {{ storeKey?: string, stripParent?: HTMLElement }} [opts]
  *   storeKey: isolate this strip's prefs (primary view, map state) per page.
  * @returns {{ destroy: () => void }}
  */
@@ -41,8 +41,10 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
 
   const strip = document.createElement("div");
   strip.className = "cam-strip";
+  strip.setAttribute("role", "group");
+  strip.setAttribute("aria-label", "Camera views");
   strip.hidden = true; // shown once we learn the camera roster
-  parent.append(strip);
+  (opts.stripParent ?? parent).append(strip);
 
   /** @type {string[]} */ let roster = []; // camera names in m-line order
   /** @type {Set<string>} */ let enabledCams = new Set();
@@ -207,7 +209,8 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
   /** @param {string} name */
   function buildCameraTile(name) {
     const index = roster.indexOf(name);
-    const tile = liveTile(name, displayLabel(name), `Make ${name} the main view`);
+    const label = displayLabel(name);
+    const tile = liveTile(name, label, `Switch to ${label} view`);
     // Sim sessions expose live canvases (no MediaStream pipeline -- canvas
     // capture pinned page composition to its capture rate); mount those
     // directly. Real robots keep the <video> + WebRTC stream path. SimSession
@@ -233,7 +236,7 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
   }
 
   function buildMapTile() {
-    const tile = liveTile(MAP_ID, "Map", "Make the map the main view · scroll to zoom");
+    const tile = liveTile(MAP_ID, "Map", "Switch to Map view · scroll to zoom");
     tile.classList.add("cam-tile-map");
     if (mapHost) tile.prepend(mapHost); // reparent the persistent host into the thumbnail
     return tile;
@@ -243,8 +246,15 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
   function liveTile(id, label, title) {
     const tile = document.createElement("div");
     tile.className = "cam-tile live";
-    tile.title = title;
+    tile.tabIndex = 0;
+    tile.setAttribute("role", "button");
+    tile.setAttribute("aria-label", title);
     tile.addEventListener("click", () => promote(id));
+    tile.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      promote(id);
+    });
     const tag = document.createElement("span");
     tag.className = "cam-tile-label";
     tag.textContent = label;

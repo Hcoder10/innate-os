@@ -19,6 +19,29 @@ const THUMB_FRAME_DIV = 2;
 const MIN_FRAME_MS = 1000 / 62;
 
 const VIEW_FOR: Record<string, CameraView> = { main: "main", arm: "arm", orbit: "orbit" };
+const ROTATION_DRAG_PX = 6;
+const PROP_FORWARD_ANGLE = Math.PI / 2;
+
+interface PlacementDrag {
+  origin: THREE.Vector3;
+  pointerId: number;
+  pointerX: number;
+  pointerY: number;
+  yaw: number;
+}
+
+type PlacementState =
+  | { kind: "near-robot" }
+  | { kind: "choose-prop" }
+  | { kind: "following"; prop: string }
+  | { kind: "rotating"; prop: string; drag: PlacementDrag };
+
+const PLACEMENT_HINT: Record<PlacementState["kind"], string> = {
+  "near-robot": "Select an object to place it within the robot's reach.",
+  "choose-prop": "Select an object, then click where it should go.",
+  following: "Move over the scene · Click to place · Drag to rotate.",
+  rotating: "Drag to rotate · Release to place.",
+};
 
 export function createSimStage(parent: HTMLElement, session: SimSession): { audioEl: null; destroy: () => void } {
   const wrap = document.createElement("div");
@@ -31,49 +54,69 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   wrap.appendChild(canvas);
   parent.appendChild(wrap);
 
-  // Sim-only debug stack (toggle chips + optional perf HUD), bottom-left just
-  // above the webapp's WASD overlay -- the corners and top-center belong to
-  // other overlays (arm panel, cam tiles, telemetry, agent status).
+  // Sim-only scene setup, bottom-left above the webapp's WASD overlay.
   const debugStack = document.createElement("div");
-  debugStack.className = "sim-debug-stack"; // pages hide it where it collides
-  debugStack.style.cssText =
-    "position:absolute;left:14px;bottom:132px;display:flex;flex-direction:column;gap:8px;z-index:5;";
+  debugStack.className = "sim-debug-stack";
   wrap.appendChild(debugStack);
-  // One controls row, built here because newChip fills it but appended after
-  // the prop rows so it sits beneath them: what a prop click does, then the
-  // view overlays. Four stacked rows crowded the WASD overlay underneath.
-  const propControls = document.createElement("div");
-  propControls.style.cssText = "display:flex;gap:6px;align-items:center;flex-wrap:wrap;";
-  const OFF_BG = "rgba(0,0,0,.45)";
-  const ON_BG = "rgba(0,255,136,.22)";
-  const ON_FG = "#7dffc4";
-  const OFF_FG = "rgba(255,255,255,.75)";
-  /** The one place a chip's lit/unlit look is decided. Every chip goes through
-   * it, so the toggles and an armed prop can never drift apart. */
-  const setChipOn = (el: HTMLElement, on: boolean) => {
-    el.style.background = on ? ON_BG : OFF_BG;
-    el.style.color = on ? ON_FG : OFF_FG;
+
+  const setup = document.createElement("div");
+  setup.className = "sim-scene-setup";
+  const setupBody = document.createElement("div");
+  setupBody.id = "sim-scene-setup-body";
+  setupBody.className = "sim-scene-panel";
+  const setupHeader = document.createElement("div");
+  setupHeader.className = "sim-scene-header";
+  setupHeader.innerHTML = "<strong>Scene setup</strong><small>Add and place objects</small>";
+  setupBody.appendChild(setupHeader);
+
+  const setupToggle = document.createElement("button");
+  setupToggle.type = "button";
+  setupToggle.className = "sim-scene-toggle";
+  setupToggle.setAttribute("aria-controls", setupBody.id);
+  setupToggle.innerHTML =
+    '<span class="sim-scene-toggle-icon sim-scene-toggle-shapes" aria-hidden="true"></span>' +
+    '<svg class="sim-scene-toggle-icon sim-scene-toggle-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>';
+
+  let setupOpen = localStorage.getItem("sim-scene-panel-open") === "true";
+  const setSetupOpen = (open: boolean) => {
+    if (open && !setupOpen) {
+      parent.dispatchEvent(new CustomEvent("innate:stage-overlay-open", { detail: "scene-setup" }));
+    }
+    setupOpen = open;
+    setup.classList.toggle("open", open);
+    setupToggle.setAttribute("aria-expanded", String(open));
+    setupToggle.setAttribute("aria-label", open ? "Close scene setup" : "Open scene setup");
+    localStorage.setItem("sim-scene-panel-open", String(open));
   };
-  // No backdrop-filter: re-blurring over an animated canvas costs fps.
-  const CHIP_CSS =
-    "padding:4px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.25);" +
-    "font:500 11px system-ui;cursor:pointer;line-height:1;";
+  setupToggle.onclick = () => setSetupOpen(!setupOpen);
+  setup.append(setupBody, setupToggle);
+  debugStack.appendChild(setup);
+  setSetupOpen(setupOpen);
+  const dismissSetup = () => setSetupOpen(false);
+  const onOverlayOpen = (event: Event) => {
+    if (event instanceof CustomEvent && event.detail !== "scene-setup") setSetupOpen(false);
+  };
+  parent.addEventListener("innate:stage-background-click", dismissSetup);
+  parent.addEventListener("innate:stage-overlay-open", onOverlayOpen);
+
+  const setChipOn = (el: HTMLElement, on: boolean) => {
+    el.classList.toggle("is-active", on);
+    el.setAttribute("aria-pressed", String(on));
+  };
+
   const makeChip = (label: string, title?: string) => {
     const b = document.createElement("button");
     b.type = "button";
+    b.className = "sim-scene-button";
     b.textContent = label;
     if (title) b.title = title;
-    b.style.cssText = CHIP_CSS;
-    setChipOn(b, false);
     return b;
   };
-  const newChip = (label: string) => {
+
+  const addToggle = (parent: HTMLElement, label: string, onToggle: (on: boolean) => void) => {
     const b = makeChip(label);
-    propControls.appendChild(b);
-    return b;
-  };
-  const addChip = (label: string, onToggle: (on: boolean) => void) => {
-    const b = newChip(label);
+    setChipOn(b, false);
+    parent.appendChild(b);
     let on = false;
     b.onclick = () => {
       on = !on;
@@ -81,159 +124,149 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       onToggle(on);
     };
   };
-  // Props, in two rows: the objects themselves, and under them the controls
-  // that say what a click on one does. One chip per prop the world server
-  // offers (props.py sidecars, relayed by session.onProps), so adding a prop
-  // is a sidecar and nothing here.
-  //
-  // The switch picks between the two ways to put a prop down:
-  //   at robot -- one click, using the prop's own reach offset. The
-  //     manipulation props' offsets put them on an arc the arm can reach
-  //     top-down, so this is the one that matters for practising grabs.
-  //   place    -- click the floor to mark the spot, drag to point the yaw,
-  //     release; physics settles it onto whatever is under it.
-  const propRows = document.createElement("div");
-  propRows.style.cssText = "display:flex;flex-direction:column;gap:6px;align-items:flex-start;";
-  debugStack.appendChild(propRows);
 
-  // Slide switch: drop | at robot -- the two verbs props.py uses, so what the
-  // chip does is what the switch says. "drop" takes over the pointer and lets
-  // the prop fall onto whatever you aimed at; "at robot" sets it down at rest
-  // at its own reach offset. Defaults to "at robot": that is the one-click
-  // layout the props have always had, and the pointer-grabbing mode is the one
-  // you opt into.
-  let dropMode = false;
-  const modeSwitch = document.createElement("button");
-  modeSwitch.type = "button";
-  modeSwitch.title = "Where clicking a prop puts it";
-  modeSwitch.style.cssText =
-    // Equal grid columns, so the half-width knob lands exactly on a label
-    // whatever the two words measure.
-    "position:relative;display:inline-grid;grid-auto-flow:column;grid-auto-columns:1fr;" +
-    "padding:2px;border-radius:999px;border:1px solid rgba(255,255,255,.28);" +
-    // Darker than a chip: the 3D scene behind this is often bright wall or
-    // floor, where 45% black leaves the inactive label unreadable.
-    "background:rgba(0,0,0,.62);cursor:pointer;font:500 11px system-ui;line-height:1;";
-  const knob = document.createElement("span");
-  knob.style.cssText =
-    "position:absolute;top:2px;bottom:2px;left:2px;width:calc(50% - 2px);border-radius:999px;" +
-    "background:rgba(0,255,136,.28);transition:transform .15s ease;pointer-events:none;";
-  const dropLabel = document.createElement("span");
-  const robotLabel = document.createElement("span");
-  dropLabel.textContent = "drop";
-  robotLabel.textContent = "at robot";
-  for (const label of [dropLabel, robotLabel]) {
-    label.style.cssText =
-      "position:relative;z-index:1;padding:4px 12px;text-align:center;white-space:nowrap;transition:color .15s ease;";
-  }
-  modeSwitch.append(knob, dropLabel, robotLabel);
-  const refreshModeSwitch = () => {
-    knob.style.transform = dropMode ? "translateX(0)" : "translateX(100%)";
-    dropLabel.style.color = dropMode ? ON_FG : OFF_FG;
-    robotLabel.style.color = dropMode ? OFF_FG : ON_FG;
-  };
-  modeSwitch.onclick = () => {
-    dropMode = !dropMode;
-    if (!dropMode) armDrop(null); // leaving drop mode disarms whatever was armed
-    refreshModeSwitch();
-  };
-  refreshModeSwitch();
-  propControls.appendChild(modeSwitch);
-
-  const clearChip = makeChip("clear", "Send every prop back off-map");
+  const objectsSection = document.createElement("section");
+  objectsSection.className = "sim-scene-section";
+  const objectsHeader = document.createElement("div");
+  objectsHeader.className = "sim-scene-section-header";
+  const objectsLabel = document.createElement("h3");
+  objectsLabel.textContent = "Objects";
+  const clearChip = makeChip("Clear all", "Send every prop back off-map");
+  clearChip.classList.add("sim-clear-props");
+  const clearIcon = document.createElement("span");
+  clearIcon.className = "sim-clear-props-icon";
+  clearIcon.setAttribute("aria-hidden", "true");
+  clearChip.prepend(clearIcon);
   clearChip.onclick = () => {
-    armDrop(null);
+    clearPlacementSelection();
     session.removeAllProps();
   };
-  propControls.appendChild(clearChip);
+  const propRows = document.createElement("div");
+  propRows.className = "sim-prop-grid";
+  objectsHeader.append(objectsLabel, clearChip);
+  objectsSection.append(objectsHeader, propRows);
+  setupBody.appendChild(objectsSection);
 
-  // Hairline between what places props and what draws overlays -- same row,
-  // different jobs.
-  const divider = document.createElement("span");
-  divider.style.cssText = "width:1px;align-self:stretch;margin:2px 2px;background:rgba(255,255,255,.18);";
-  propControls.appendChild(divider);
+  const placementSection = document.createElement("section");
+  placementSection.className = "sim-scene-section sim-placement-section";
+  const placementLabel = document.createElement("h3");
+  placementLabel.textContent = "Place objects";
+  const modeSwitch = document.createElement("div");
+  modeSwitch.className = "sim-placement-switch";
+  modeSwitch.setAttribute("role", "group");
+  modeSwitch.setAttribute("aria-label", "Object placement");
+  const robotButton = document.createElement("button");
+  robotButton.type = "button";
+  robotButton.textContent = "Near robot";
+  const spotButton = document.createElement("button");
+  spotButton.type = "button";
+  spotButton.textContent = "Choose spot";
+  modeSwitch.append(robotButton, spotButton);
+  const placementHint = document.createElement("p");
+  placementHint.className = "sim-placement-hint";
+  let placement: PlacementState = { kind: "near-robot" };
+  const selectedProp = (): string | null =>
+    placement.kind === "following" || placement.kind === "rotating" ? placement.prop : null;
+  const refreshPlacementHint = () => {
+    placementHint.textContent = PLACEMENT_HINT[placement.kind];
+  };
+  const refreshPlacementUi = () => {
+    const choosingSpot = placement.kind !== "near-robot";
+    modeSwitch.classList.toggle("spot-selected", choosingSpot);
+    robotButton.classList.toggle("is-active", !choosingSpot);
+    spotButton.classList.toggle("is-active", choosingSpot);
+    robotButton.setAttribute("aria-pressed", String(!choosingSpot));
+    spotButton.setAttribute("aria-pressed", String(choosingSpot));
+    refreshPlacementHint();
+  };
+  robotButton.onclick = () => {
+    setPlacement({ kind: "near-robot" });
+  };
+  spotButton.onclick = () => {
+    if (placement.kind === "near-robot") setPlacement({ kind: "choose-prop" });
+  };
+  refreshPlacementUi();
+  placementSection.append(placementLabel, modeSwitch, placementHint);
+  setupBody.appendChild(placementSection);
 
-  // How the orbit camera behaves (SimScene.CameraMode). The prop-placement
-  // switch above is the same control with two segments; this one generalises
-  // it, since three modes do not fit a knob that only knows left and right.
-  // Click a label to pick it, or anywhere else to cycle.
+  const utilitySection = document.createElement("section");
+  utilitySection.className = "sim-scene-section sim-scene-utilities";
+  const cameraModes = document.createElement("div");
+  cameraModes.className = "sim-view-aids sim-camera-modes";
+  const cameraModesLabel = document.createElement("span");
+  cameraModesLabel.textContent = "Camera";
   const CAMERA_MODES = ["free", "chase", "top"] as const satisfies readonly CameraMode[];
-  const cameraSwitch = document.createElement("button");
-  cameraSwitch.type = "button";
-  cameraSwitch.title = "Camera: free orbit, chased from behind, or the whole apartment from above";
-  cameraSwitch.style.cssText = modeSwitch.style.cssText;
-  const cameraKnob = document.createElement("span");
-  cameraKnob.style.cssText =
-    `position:absolute;top:2px;bottom:2px;left:2px;width:calc(${100 / CAMERA_MODES.length}% - 2px);` +
-    "border-radius:999px;background:rgba(0,255,136,.28);transition:transform .15s ease;pointer-events:none;";
-  const cameraLabels = CAMERA_MODES.map((mode) => {
-    const el = document.createElement("span");
-    el.textContent = mode;
-    el.style.cssText = dropLabel.style.cssText;
-    return el;
+  const cameraButtons = CAMERA_MODES.map((mode) => {
+    const button = makeChip(mode);
+    button.title = `Use the ${mode} camera mode`;
+    button.onclick = () => scene.setCameraMode(mode);
+    return button;
   });
-  cameraSwitch.append(cameraKnob, ...cameraLabels);
   let cameraMode = 0;
   const refreshCameraSwitch = () => {
-    cameraKnob.style.transform = `translateX(${cameraMode * 100}%)`;
-    cameraLabels.forEach((el, i) => (el.style.color = i === cameraMode ? ON_FG : OFF_FG));
+    cameraButtons.forEach((button, index) => setChipOn(button, index === cameraMode));
   };
-  cameraSwitch.onclick = (e) => {
-    const picked = cameraLabels.indexOf(e.target as HTMLSpanElement);
-    cameraMode = picked >= 0 ? picked : (cameraMode + 1) % CAMERA_MODES.length;
-    refreshCameraSwitch();
-    scene.setCameraMode(CAMERA_MODES[cameraMode]);
-  };
+  cameraModes.append(cameraModesLabel, ...cameraButtons);
   refreshCameraSwitch();
-  propControls.appendChild(cameraSwitch);
+  const viewAids = document.createElement("div");
+  viewAids.className = "sim-view-aids";
+  const viewAidsLabel = document.createElement("span");
+  viewAidsLabel.textContent = "View aids";
+  viewAids.appendChild(viewAidsLabel);
+  addToggle(viewAids, "Lidar", (on) => session.setLidarVisible(on));
+  addToggle(viewAids, "Collisions", (on) => session.setCollisionHullsVisible(on));
+  utilitySection.append(cameraModes, viewAids);
+  setupBody.appendChild(utilitySection);
 
-  addChip("lidar", (on) => session.setLidarVisible(on));
-  addChip("collisions", (on) => session.setCollisionHullsVisible(on));
-  debugStack.appendChild(propControls);
-
-  // Rebuilt whenever the roster arrives (once per observer connection).
-  //
-  // One row per group, headed by that group's set chip, then a loose row for
-  // the props that belong to no set. A set chip floating in a row of everything
-  // says nothing about WHICH props it lays out; heading its own row, it does.
   const propChips = new Map<string, HTMLButtonElement>();
   const unsubscribeProps = session.onProps((props: PropInfo[]) => {
     propRows.replaceChildren();
     propChips.clear();
 
-    const buckets = new Map<string | null, PropInfo[]>();
+    const groups = new Map<string, PropInfo[]>();
     for (const prop of props) {
-      const key = prop.group || null;
-      const bucket = buckets.get(key);
-      if (bucket) bucket.push(prop);
-      else buckets.set(key, [prop]);
+      if (prop.group) {
+        const members = groups.get(prop.group);
+        if (members) members.push(prop);
+        else groups.set(prop.group, [prop]);
+      }
+      const chip = makeChip("", prop.title);
+      chip.classList.add("sim-prop-button");
+      const icon = document.createElement("span");
+      icon.className = "sim-prop-icon";
+      icon.textContent = prop.label;
+      const label = document.createElement("span");
+      label.className = "sim-prop-name";
+      label.textContent = prop.title;
+      chip.append(icon, label);
+      setChipOn(chip, prop.name === selectedProp());
+      chip.onclick = () => {
+        if (placement.kind === "near-robot") {
+          session.placePropAtRobot(prop.name);
+          return;
+        }
+        setPlacement(selectedProp() === prop.name ? { kind: "choose-prop" } : { kind: "following", prop: prop.name });
+      };
+      propChips.set(prop.name, chip);
+      propRows.appendChild(chip);
     }
 
-    for (const [group, members] of buckets) {
-      const row = document.createElement("div");
-      row.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;align-items:center;";
-      // A set of one is just the prop's own chip, so it gets no set chip.
-      if (group && members.length > 1) {
-        const chip = makeChip(`+${group}`, `Set down all ${members.length} ${group} props in front of the robot`);
-        chip.onclick = () => {
-          armDrop(null);
-          session.placePropGroup(group);
-        };
-        row.appendChild(chip);
-      }
-      for (const prop of members) {
-        const chip = makeChip(prop.label, prop.title);
-        chip.style.fontSize = "13px"; // emoji read small at the chip's 11px
-        // A roster can arrive mid-drag; keep whatever was armed looking armed.
-        setChipOn(chip, prop.name === armedProp);
-        chip.onclick = () => {
-          if (dropMode) armDrop(armedProp === prop.name ? null : prop.name);
-          else session.placePropAtRobot(prop.name);
-        };
-        propChips.set(prop.name, chip);
-        row.appendChild(chip);
-      }
-      propRows.appendChild(row);
+    for (const [group, members] of groups) {
+      if (members.length < 2) continue;
+      const addSet = makeChip("", `Set down all ${members.length} ${group} props in front of the robot`);
+      addSet.classList.add("sim-prop-button", "sim-add-all");
+      const icon = document.createElement("span");
+      icon.className = "sim-prop-add-icon";
+      icon.textContent = "+";
+      const label = document.createElement("span");
+      label.className = "sim-prop-name";
+      label.textContent = "Add set";
+      addSet.append(icon, label);
+      addSet.onclick = () => {
+        clearPlacementSelection();
+        session.placePropGroup(group);
+      };
+      propRows.appendChild(addSet);
     }
   });
 
@@ -327,59 +360,82 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     refreshCameraSwitch();
   };
 
-  // Placement drag (mode "place"): while a prop is armed the orbit controls
-  // are off -- press marks the spot on the floor, drag points the yaw (arrow
-  // preview), release drops it there and physics settles it.
-  let armedProp: string | null = null;
-  let dropStart: THREE.Vector3 | null = null;
-  let dropArrow: THREE.ArrowHelper | null = null;
-  const clearDropDrag = () => {
-    dropStart = null;
-    if (dropArrow) {
-      scene.scene.remove(dropArrow);
-      dropArrow.dispose();
-      dropArrow = null;
+  function setPlacement(next: PlacementState): void {
+    if (placement.kind === "rotating" && canvas.hasPointerCapture(placement.drag.pointerId)) {
+      canvas.releasePointerCapture(placement.drag.pointerId);
     }
-  };
-  function armDrop(name: string | null): void {
-    armedProp = name;
-    scene.setPlacementMode(name !== null);
-    canvas.style.cursor = name !== null ? "crosshair" : "";
+    placement = next;
+    scene.clearPropPlacementPreview();
+    const prop = selectedProp();
+    scene.setPlacementMode(prop !== null);
+    canvas.style.cursor = prop ? "crosshair" : "";
     for (const [propName, chip] of propChips) {
-      const on = propName === name;
-      setChipOn(chip, on);
+      setChipOn(chip, propName === prop);
     }
-    if (name === null) clearDropDrag();
+    refreshPlacementUi();
   }
+  function clearPlacementSelection(): void {
+    setPlacement(placement.kind === "near-robot" ? { kind: "near-robot" } : { kind: "choose-prop" });
+  }
+  const yawFromDirection = (direction: THREE.Vector3): number =>
+    Math.atan2(direction.y, direction.x) - PROP_FORWARD_ANGLE;
+
   canvas.addEventListener("pointerdown", (e) => {
-    if (armedProp === null || e.button !== 0) return;
-    dropStart = scene.screenToFloor(e.clientX, e.clientY);
+    if (placement.kind !== "following" || e.button !== 0) return;
+    const origin = scene.screenToFloor(e.clientX, e.clientY);
+    if (!origin) return;
+    placement = {
+      kind: "rotating",
+      prop: placement.prop,
+      drag: {
+        origin,
+        pointerId: e.pointerId,
+        pointerX: e.clientX,
+        pointerY: e.clientY,
+        yaw: 0,
+      },
+    };
+    canvas.setPointerCapture(e.pointerId);
+    scene.showPropPlacementPreview(placement.prop, origin.x, origin.y, 0);
+    refreshPlacementUi();
   });
   canvas.addEventListener("pointermove", (e) => {
-    if (!dropStart) return;
+    if (placement.kind === "near-robot" || placement.kind === "choose-prop") return;
+    if (placement.kind === "rotating" && e.pointerId !== placement.drag.pointerId) return;
     const cur = scene.screenToFloor(e.clientX, e.clientY);
     if (!cur) return;
-    const drag = cur.sub(dropStart).setZ(0);
-    if (drag.length() < 0.05) return;
-    if (!dropArrow) {
-      dropArrow = new THREE.ArrowHelper(drag.clone().normalize(), dropStart.clone().setZ(0.05), 1, 0xff8800, 0.25, 0.15);
-      scene.scene.add(dropArrow);
+    if (placement.kind === "following") {
+      scene.showPropPlacementPreview(placement.prop, cur.x, cur.y, 0);
+      return;
     }
-    dropArrow.setDirection(drag.clone().normalize());
-    dropArrow.setLength(Math.max(drag.length(), 0.4), 0.25, 0.15);
+    const pointerDistance = Math.hypot(e.clientX - placement.drag.pointerX, e.clientY - placement.drag.pointerY);
+    if (pointerDistance < ROTATION_DRAG_PX) return;
+    const direction = cur.sub(placement.drag.origin).setZ(0);
+    if (direction.lengthSq() === 0) return;
+    placement.drag.yaw = yawFromDirection(direction);
+    scene.showPropPlacementPreview(
+      placement.prop,
+      placement.drag.origin.x,
+      placement.drag.origin.y,
+      placement.drag.yaw,
+    );
+  });
+  canvas.addEventListener("pointerleave", () => {
+    if (placement.kind === "following") scene.clearPropPlacementPreview();
   });
   // On window, not canvas: releasing outside the canvas must still finish (or
-  // cancel) the drag rather than leaving the prop armed and the arrow behind.
-  window.addEventListener("pointerup", (e) => {
-    if (armedProp === null || !dropStart) return;
-    const end = scene.screenToFloor(e.clientX, e.clientY);
-    const drag = end ? end.sub(dropStart).setZ(0) : new THREE.Vector3();
-    // An identity drop faces +y (the human's head); the drag vector is that
-    // direction, so subtract the quarter turn between them.
-    const yaw = drag.length() > 0.2 ? Math.atan2(drag.y, drag.x) - Math.PI / 2 : 0;
-    session.dropPropAt(armedProp, dropStart.x, dropStart.y, yaw);
-    armDrop(null);
-  });
+  // cancel) the drag rather than leaving the prop armed and the preview behind.
+  const finishDrop = (e: PointerEvent) => {
+    if (placement.kind !== "rotating" || e.pointerId !== placement.drag.pointerId) return;
+    session.dropPropAt(placement.prop, placement.drag.origin.x, placement.drag.origin.y, placement.drag.yaw);
+    setPlacement({ kind: "choose-prop" });
+  };
+  const cancelDrop = (e: PointerEvent) => {
+    if (placement.kind !== "rotating" || e.pointerId !== placement.drag.pointerId) return;
+    setPlacement({ kind: "following", prop: placement.prop });
+  };
+  window.addEventListener("pointerup", finishDrop);
+  window.addEventListener("pointercancel", cancelDrop);
 
   const resize = () => {
     const w = wrap.clientWidth;
@@ -492,6 +548,10 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       cancelAnimationFrame(raf);
       observer.disconnect();
       longTaskObserver?.disconnect();
+      parent.removeEventListener("innate:stage-background-click", dismissSetup);
+      parent.removeEventListener("innate:stage-overlay-open", onOverlayOpen);
+      window.removeEventListener("pointerup", finishDrop);
+      window.removeEventListener("pointercancel", cancelDrop);
       scene.dispose();
       wrap.remove();
     },
