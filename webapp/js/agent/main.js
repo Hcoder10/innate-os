@@ -42,6 +42,7 @@ const config = await getConfig();
 // WebRTC for real robots, the Three.js SimSession in simulation (see
 // robotSession.js).
 const { createSession, createStage } = await robotSessionFactory();
+const MIN_AGENT_VIEW_WIDTH = 1281;
 
 /** @param {HTMLElement} stage */
 export function mount(stage) {
@@ -54,6 +55,11 @@ export function mount(stage) {
  */
 function buildAgentView(root) {
   const session = createSession();
+
+  const widthGuard = createWidthGuard(
+    root,
+    config.simControls ? "Simulator" : "Camera view",
+  );
 
   const videoStage = createStage ? createStage(root, session) : createVideoStage(root, session);
 
@@ -178,6 +184,7 @@ function buildAgentView(root) {
     : null;
 
   const parts = [
+    widthGuard,
     videoStage,
     ...(challengePanel ? [challengePanel] : []),
     ...(telemetryPreview ? [telemetryPreview] : []),
@@ -221,6 +228,64 @@ function buildAgentView(root) {
   };
 }
 
+/**
+ * @param {HTMLElement} root
+ * @param {string} viewName
+ * @returns {{ destroy: () => void }}
+ */
+function createWidthGuard(root, viewName) {
+  const guard = document.createElement("aside");
+  guard.className = "agent-width-guard";
+  guard.setAttribute("aria-labelledby", "agent-width-guard-title");
+  guard.innerHTML = `
+    <div class="agent-width-guard-card">
+      <h2 id="agent-width-guard-title" class="agent-width-guard-title">${viewName} unavailable</h2>
+      <p class="agent-width-guard-message">Widen your browser to continue.</p>
+      <div class="agent-width-meter">
+        <div class="agent-width-meter-labels">
+          <span>Current <output class="agent-width-current"></output></span>
+          <span>Minimum <output>${MIN_AGENT_VIEW_WIDTH} px</output></span>
+        </div>
+        <div
+          class="agent-width-meter-track"
+          role="progressbar"
+          aria-label="Browser width"
+          aria-valuemin="0"
+          aria-valuemax="${MIN_AGENT_VIEW_WIDTH}"
+        ><span></span></div>
+      </div>
+    </div>
+  `;
+
+  const current = /** @type {HTMLOutputElement} */ (
+    guard.querySelector(".agent-width-current")
+  );
+  const meter = /** @type {HTMLElement} */ (
+    guard.querySelector(".agent-width-meter-track")
+  );
+  const render = () => {
+    const width = window.innerWidth;
+    const progress = Math.min(width / MIN_AGENT_VIEW_WIDTH, 1);
+    current.textContent = `${width} px`;
+    meter.setAttribute(
+      "aria-valuenow",
+      String(Math.min(width, MIN_AGENT_VIEW_WIDTH)),
+    );
+    guard.style.setProperty("--agent-width-progress", String(progress));
+  };
+
+  window.addEventListener("resize", render);
+  render();
+  root.append(guard);
+
+  return {
+    destroy() {
+      window.removeEventListener("resize", render);
+      guard.remove();
+    },
+  };
+
+}
 /**
  * @param {HTMLElement} root
  * @param {ReturnType<typeof createAgentPanel>} panel
