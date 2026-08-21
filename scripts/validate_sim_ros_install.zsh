@@ -86,6 +86,20 @@ seed_prebuilt_install() {
         return 1
     fi
 
+    # Seed only into a workspace with nothing to build on. Dropping the image's
+    # install/ over a local build tree leaves build/ facing an install/ made at
+    # a different prefix, and made without --symlink-install where the local
+    # build uses it: the next source edit then stops being incremental and
+    # becomes a full workspace rebuild. Measured at >20 min against 20 s.
+    #
+    # build/, not install/: an install that merely matches right now says
+    # nothing about whether a rebuild can be incremental, and reverting an edit
+    # would make it stale again and re-arm the same clobber on the next `up`.
+    if [[ -n "$(ls -A build 2>/dev/null)" ]]; then
+        echo "Local ROS build tree present; building incrementally rather than seeding."
+        return 1
+    fi
+
     if [[ ! -f install/setup.zsh ]] ||
         [[ "$(cat install/.innate-prebuilt-source.sha256 2>/dev/null)" != "$prebuilt_hash" ]] ||
         [[ "$(cat install/.innate-prebuilt-install.sha256 2>/dev/null)" != "$prebuilt_install_hash" ]]; then
