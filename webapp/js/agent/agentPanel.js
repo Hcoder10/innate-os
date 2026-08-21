@@ -574,7 +574,6 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
    *  head: HTMLButtonElement,
    *  summary: HTMLElement,
    *  status: HTMLElement,
-   *  chevron: HTMLElement,
    *  parameters: HTMLElement,
    *  failure: HTMLElement,
    *  hasDetail: boolean
@@ -592,7 +591,6 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   function setStreamMode(mode) {
     const compact = mode === "compact";
     stream.classList.toggle("compact", compact);
-    stream.classList.toggle("detailed", !compact);
     streamMode.classList.toggle("detailed-selected", !compact);
     compactBtn.classList.toggle("active", compact);
     detailedBtn.classList.toggle("active", !compact);
@@ -767,9 +765,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     const count = document.createElement("span");
     count.className = "chat-skill-count";
     title.append(nameEl, count);
-    const summary = document.createElement("span");
-    summary.className = "chat-skill-summary";
-    copy.append(title, summary);
+    copy.append(title);
     const statusEl = document.createElement("span");
     statusEl.className = "chat-skill-status";
     const chevron = document.createElement("span");
@@ -801,15 +797,11 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     const wraps = [...group.querySelectorAll(":scope > .chat-skill-group-list > .chat-skill")];
     const head = group.querySelector(":scope > .chat-skill-head");
     const count = head?.querySelector(".chat-skill-count");
-    const summary = head?.querySelector(".chat-skill-summary");
     const statusEl = head?.querySelector(".chat-skill-status");
     const nameEl = head?.querySelector(".chat-skill-name");
-    if (!(head instanceof HTMLButtonElement) || !count || !summary || !statusEl) return;
+    if (!(head instanceof HTMLButtonElement) || !count || !statusEl) return;
     const n = wraps.length;
     count.textContent = `${n} runs`;
-    const last = wraps[n - 1];
-    const lastSummary = last?.querySelector(".chat-skill-summary");
-    summary.textContent = lastSummary instanceof HTMLElement ? lastSummary.textContent : "";
     const cls = skillGroupStatus(wraps);
     group.classList.remove("running", "completed", "failed", "interrupted");
     group.classList.add(cls);
@@ -875,7 +867,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       failure.className = "chat-skill-failure";
       detail.append(parameters, failure);
       wrap.append(head, detail);
-      const createdRun = { wrap, head, summary, status: statusEl, chevron, parameters, failure, hasDetail: false };
+      const createdRun = { wrap, head, summary, status: statusEl, parameters, failure, hasDetail: false };
       run = createdRun;
       head.addEventListener("click", () => {
         if (!createdRun.hasDetail) return;

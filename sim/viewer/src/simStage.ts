@@ -79,9 +79,6 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
 
   let setupOpen = localStorage.getItem("sim-scene-panel-open") === "true";
   const setSetupOpen = (open: boolean) => {
-    if (open && !setupOpen) {
-      parent.dispatchEvent(new CustomEvent("innate:stage-overlay-open", { detail: "scene-setup" }));
-    }
     setupOpen = open;
     setup.classList.toggle("open", open);
     setupToggle.setAttribute("aria-expanded", String(open));
@@ -92,12 +89,6 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   setup.append(setupBody, setupToggle);
   debugStack.appendChild(setup);
   setSetupOpen(setupOpen);
-  const dismissSetup = () => setSetupOpen(false);
-  const onOverlayOpen = (event: Event) => {
-    if (event instanceof CustomEvent && event.detail !== "scene-setup") setSetupOpen(false);
-  };
-  parent.addEventListener("innate:stage-background-click", dismissSetup);
-  parent.addEventListener("innate:stage-overlay-open", onOverlayOpen);
 
   const setChipOn = (el: HTMLElement, on: boolean) => {
     el.classList.toggle("is-active", on);
@@ -548,8 +539,6 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
       cancelAnimationFrame(raf);
       observer.disconnect();
       longTaskObserver?.disconnect();
-      parent.removeEventListener("innate:stage-background-click", dismissSetup);
-      parent.removeEventListener("innate:stage-overlay-open", onOverlayOpen);
       window.removeEventListener("pointerup", finishDrop);
       window.removeEventListener("pointercancel", cancelDrop);
       scene.dispose();

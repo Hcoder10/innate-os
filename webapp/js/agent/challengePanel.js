@@ -39,7 +39,6 @@ export function createChallengePanel(root, session) {
   let open = false;
   let challengeRunning = false;
   const setOpen = (/** @type {boolean} */ next) => {
-    if (next && !open) root.dispatchEvent(new CustomEvent("innate:stage-overlay-open", { detail: "challenges" }));
     open = next;
     dock.classList.toggle("open", next);
     launcher.setAttribute("aria-expanded", String(next));
@@ -49,11 +48,7 @@ export function createChallengePanel(root, session) {
       intro = maybeShowChallengeIntro();
     }
   };
-  const onOverlayOpen = (/** @type {Event} */ event) => {
-    if (event instanceof CustomEvent && event.detail !== "challenges" && !challengeRunning) setOpen(false);
-  };
   launcher.addEventListener("click", () => setOpen(!open));
-  root.addEventListener("innate:stage-overlay-open", onOverlayOpen);
   // Subtle standing hint back to the docs — reopens the first-run intro
   // (challengeIntro.js) with the tutorial link and preview.
   const tutorial = document.createElement("button");
@@ -245,7 +240,6 @@ export function createChallengePanel(root, session) {
     destroy() {
       intro?.close();
       unsub();
-      root.removeEventListener("innate:stage-overlay-open", onOverlayOpen);
       dock.remove();
     },
   };

@@ -6085,10 +6085,6 @@ select.skill-input {
   display: none;
 }
 
-.chat-skill-group > .chat-skill-head .chat-skill-summary {
-  display: none;
-}
-
 .chat-skill-chevron {
   display: grid;
   color: rgb(231 231 234 / 58%);
@@ -7430,10 +7426,8 @@ select.skill-input {
 
 .agent-control-panel,
 .agent-thoughts-panel {
-  background: linear-gradient(180deg, rgb(10 10 12 / 14%), rgb(6 6 9 / 38%));
   backdrop-filter: blur(30px) saturate(1.1) brightness(0.82);
   -webkit-backdrop-filter: blur(30px) saturate(1.1) brightness(0.82);
-  border: 0;
   border-radius: 18px;
   box-shadow: 0 14px 44px rgb(0 0 0 / 48%);
   pointer-events: auto;
@@ -7460,6 +7454,7 @@ select.skill-input {
   min-height: 280px;
   max-height: none;
   padding: 16px;
+  background: linear-gradient(180deg, rgb(10 10 12 / 14%), rgb(6 6 9 / 38%));
   border: 1px solid rgb(255 255 255 / 12%);
 }
 
@@ -7682,13 +7677,7 @@ select.skill-input {
 .agent-title {
   display: inline-flex;
   flex: none;
-  gap: 8px;
   align-items: center;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  color: var(--text);
 }
 
 .agent-title-icon {
@@ -7727,7 +7716,6 @@ select.skill-input {
 
 .agent-stage-view-toggle {
   position: absolute;
-  left: 146px;
   bottom: 14px;
   z-index: 13;
   display: inline-flex;
@@ -8712,11 +8700,6 @@ select.skill-input {
   transition: transform 120ms ease-out, background-color 150ms ease, border-color 150ms ease, color 150ms ease, opacity 150ms ease;
 }
 
-.agent-compose-mic[hidden],
-.agent-compose-send[hidden] {
-  display: none;
-}
-
 .agent-compose-send::before {
   position: absolute;
   inset: -8px;
@@ -9336,13 +9319,16 @@ select.skill-input {
 .agent-cockpit[data-agent-theme] .agent-control-panel,
 .agent-cockpit[data-agent-theme] .agent-thoughts-panel {
   color: var(--agent-theme-text);
-  background: var(--agent-theme-surface);
   border-color: var(--agent-theme-edge);
   box-shadow: 0 14px 44px var(--agent-theme-shadow);
 }
 
 .agent-cockpit[data-agent-theme] .agent-control-panel {
   background: var(--agent-theme-surface-strong);
+}
+
+.agent-cockpit[data-agent-theme] .agent-thoughts-panel {
+  background: var(--agent-theme-surface);
 }
 
 .agent-cockpit[data-agent-theme] .agent-telemetry-overlay,
@@ -9450,8 +9436,6 @@ select.skill-input {
 .agent-theme-control {
   position: absolute;
   z-index: 13;
-  bottom: 14px;
-  left: 14px;
   display: grid;
   width: 190px;
   height: 56px;
@@ -9603,11 +9587,6 @@ select.skill-input {
     border: 0;
     border-radius: 17px;
     object-fit: cover;
-  }
-
-  .agent-cockpit.agent-sim .sim-debug-stack {
-    bottom: 14px;
-    left: 14px;
   }
 
   .agent-cockpit.agent-sim .agent-preview-stack {
@@ -9967,8 +9946,7 @@ select.skill-input {
 
   /* The Robot/Link/Agent telemetry card costs too much of a small feed.
      Agent keeps its status card, but drops the camera tiles beneath it. */
-  .overlay-top-left,
-  .cockpit:not(.agent-cockpit) .overlay-stack-top-left {
+  .overlay-top-left {
     display: none;
   }
 

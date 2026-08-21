@@ -179,7 +179,6 @@ function buildAgentView(root) {
   const onScenePointerDown = (/** @type {PointerEvent} */ event) => {
     if (!event.isPrimary || event.button !== 0 || !isSceneSurface(event.target)) return;
     challengePanel?.dismiss();
-    root.dispatchEvent(new Event("innate:stage-background-click"));
   };
   root.addEventListener("pointerdown", onScenePointerDown);
   const telemetry = createTelemetry(telemetryOverlay, ros, { showBattery: !config.simControls });
@@ -333,9 +332,7 @@ function createFeedDebugOverlay(root, frame, source) {
 
   function render() {
     const sourceRect = source.getBoundingClientRect();
-    const viewportRect = root.classList.contains("agent-sim")
-      ? frame.getBoundingClientRect()
-      : sourceRect;
+    const viewportRect = frame.getBoundingClientRect();
     browserLine.textContent = `browser ${window.innerWidth}×${window.innerHeight}`;
     viewportLine.textContent = `viewport ${dimensions(viewportRect)}`;
     sourceLine.textContent = `render ${dimensions(sourceRect)}`;

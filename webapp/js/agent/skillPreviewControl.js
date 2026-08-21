@@ -147,7 +147,8 @@ export function createSkillCardPreviewControl(root, preview) {
   const buttons = STATES.map(({ label: text, value }) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `agent-skill-preview-option mono ${value ?? "off"}`;
+    button.className = "agent-skill-preview-option mono";
+    if (value) button.classList.add(value);
     button.textContent = text;
     button.setAttribute("aria-pressed", String(value === null));
     button.addEventListener("click", () => {

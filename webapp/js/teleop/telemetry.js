@@ -68,7 +68,7 @@ export function createTelemetry(parent, rosClient, opts = {}) {
     track.append(primary, duplicate);
     value.append(track);
     el.append(status, label, value, meta);
-    return { el, value, track, primary, duplicate, meta };
+    return { el, value, primary, duplicate, meta };
   }
 
   /**
