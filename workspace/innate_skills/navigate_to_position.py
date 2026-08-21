@@ -27,6 +27,10 @@ _TERMINAL_STATUSES = frozenset(
 )
 
 
+class NavigationBlocked(SkillFailed):
+    """Nav2 exhausted its bounded planning and recovery attempts."""
+
+
 def resolve_local_goal(base_x, base_y, base_yaw, x, y, theta):
     """Compose a base_link-relative (x, y, theta) goal with the robot's pose in
     the fixed frame, returning (gx, gy, gyaw) expressed in that fixed frame."""
@@ -179,7 +183,7 @@ class Nav2Controller:
                 detail += f" with {last_distance:.2f}m still to go"
             if last_recoveries > 0:
                 detail += f" after {last_recoveries} recovery attempt{'s' if last_recoveries != 1 else ''}"
-            raise SkillFailed(detail + " — the route may be blocked or the robot may be stuck")
+            raise NavigationBlocked(detail + " — the route may be blocked or the robot may be stuck")
         except (SkillCancelled, SkillFailed):
             raise
         except Exception as exc:
