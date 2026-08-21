@@ -27,7 +27,6 @@ import { sharedAgentState } from "../teleop/agentState.js";
 import { createAgentPanel } from "./agentPanel.js";
 import { createChallengePanel } from "./challengePanel.js";
 import { createAgentMicControl } from "./agentMicControl.js";
-import { createAgentThemeControl } from "./themeControl.js";
 
 // Runtime feature flags (config.json, served static), same as teleop. simControls
 // marks a sim deployment — used here to drop the (absent) battery readout. Fetched
@@ -99,8 +98,7 @@ function buildAgentView(root) {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2-5 4 10 2-5h6"/></svg><span></span>';
   const stageViewLabel = /** @type {HTMLElement} */ (stageViewToggle.querySelector("span"));
   stageViewToggle.addEventListener("click", () => setView(view === "live" ? "brain" : "live"));
-  const themeControl = createAgentThemeControl(root);
-  root.append(themeControl.element, stageViewToggle);
+  root.append(stageViewToggle);
 
   /** @param {"live" | "brain"} next */
   function renderStageView(next) {
@@ -193,7 +191,6 @@ function buildAgentView(root) {
         root.removeEventListener("pointerdown", onScenePointerDown);
       },
     },
-    themeControl,
     { destroy: () => stageViewToggle.remove() },
     {
       destroy: () => {
