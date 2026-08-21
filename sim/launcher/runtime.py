@@ -2149,10 +2149,18 @@ def _prefetch_os_image(config: dict[str, object]) -> None:
     except StackError:
         if not config["os_image_auto"]:
             raise
-        # `up` handles this the same way, with the same fallback -- warn and
-        # let it, rather than failing a setup that has otherwise succeeded.
+        # Same fallback order as ensure_os_container, so setup downloads what
+        # `up` would and the first start is a start.
+        os_repo: Path = config["os_repo"]  # type: ignore[assignment]
+        local_image = resolve_local_os_image(os_repo)
+        env = os_compose_env()
+        if docker_image_present(local_image, cwd=os_repo, env=env):
+            return
+        if adopt_published_deps_image(local_image, cwd=os_repo, env=env):
+            return
         warn(
-            f"No prebuilt Innate OS image for this checkout ({shorten_docker_image_ref(os_image)}).\n"
+            f"No prebuilt Innate OS image for this checkout ({shorten_docker_image_ref(os_image)}), "
+            f"and no published dependency image either.\n"
             f"`{CLI_SIM} up` will build one locally instead, which takes considerably longer."
         )
 
