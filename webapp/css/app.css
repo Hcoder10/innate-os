@@ -7129,15 +7129,17 @@ select.skill-input {
   transition: opacity 120ms ease;
 }
 
-.agent-mic-control:is(.listening, .waiting, .unavailable, .show-hold-hint) .agent-mic-label {
+.agent-mic-control:is(.listening, .waiting) .agent-mic-label {
   opacity: 1;
 }
 
-.agent-mic-control.show-hold-hint .agent-mic-label {
-  --agent-mic-hint-bg: rgb(30 30 32);
-  --agent-mic-hint-border: rgb(255 255 255 / 18%);
+.agent-mic-message {
+  --agent-mic-hint-bg: rgb(26 26 29);
+  --agent-mic-hint-border: rgb(138 138 147 / 42%);
+  position: absolute;
   right: 0;
-  left: auto;
+  bottom: calc(100% + 8px);
+  z-index: 3;
   width: max-content;
   max-width: calc(100vw - 32px);
   padding: 10px 14px;
@@ -7146,18 +7148,24 @@ select.skill-input {
   letter-spacing: 0;
   text-transform: none;
   white-space: normal;
-  color: rgb(255 255 255 / 90%);
+  color: rgb(231 231 234 / 78%);
   background: var(--agent-mic-hint-bg);
   border: 1px solid var(--agent-mic-hint-border);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
+  opacity: 0;
   text-shadow: none;
-  transform: none;
-  transform-origin: calc(100% - 21px) 100%;
-  animation: agent-mic-hold-hint-in 180ms cubic-bezier(0.215, 0.61, 0.355, 1);
+  pointer-events: none;
+  transition: opacity 120ms cubic-bezier(0.215, 0.61, 0.355, 1);
+  will-change: opacity;
 }
 
-.agent-mic-control.show-hold-hint .agent-mic-label::after {
+.agent-mic-control:is(.show-hold-hint, .show-unavailable-message) .agent-mic-message {
+  opacity: 1;
+  transition-duration: 180ms;
+}
+
+.agent-mic-message::after {
   content: "";
   position: absolute;
   right: 17px;
@@ -7170,18 +7178,12 @@ select.skill-input {
   transform: rotate(45deg);
 }
 
-@keyframes agent-mic-hold-hint-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px) scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
 @media (hover: hover) and (pointer: fine) {
+  .agent-mic-control.unavailable:hover .agent-mic-message {
+    opacity: 1;
+    transition-duration: 180ms;
+  }
+
   .agent-mic-control:not(.listening):not(.waiting):not(.unavailable) .agent-mic-button:hover {
     color: #fff;
     border-color: rgb(255 255 255 / 48%);
@@ -7277,8 +7279,10 @@ select.skill-input {
   -webkit-mask: url("/js/agent/icons/mic-disabled.svg") center / contain no-repeat;
 }
 
-.agent-mic-control.unavailable .agent-mic-label {
-  color: rgb(255 255 255 / 44%);
+.agent-mic-control.unavailable .agent-mic-message {
+  --agent-mic-hint-bg: rgb(34 27 18);
+  --agent-mic-hint-border: var(--ctl-edge-accent);
+  color: var(--ctl-accent);
 }
 
 .agent-mic-control.listening .agent-mic-button {
@@ -7639,7 +7643,8 @@ select.skill-input {
   .agent-mic-icon,
   .agent-mic-waveform,
   .agent-mic-waveform-bar,
-  .agent-mic-label {
+  .agent-mic-label,
+  .agent-mic-message {
     transition: none;
   }
 
@@ -7648,9 +7653,6 @@ select.skill-input {
     animation: none;
   }
 
-  .agent-mic-control.show-hold-hint .agent-mic-label {
-    animation: none;
-  }
 }
 
 .agent-title {
@@ -8486,6 +8488,118 @@ select.skill-input {
   box-shadow: 0 0 0 2px rgb(64 31 251 / 10%);
 }
 
+.agent-cockpit.agent-sim .agent-compose:has(.agent-mic-control:is(.waiting, .listening)) {
+  flex: 0 0 auto;
+  overflow: hidden;
+  background: rgb(10 9 15 / 96%);
+  border-color: rgb(151 135 255 / 42%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 12%),
+    0 8px 24px rgb(0 0 0 / 36%);
+}
+
+.agent-cockpit.agent-sim
+  .agent-compose:has(.agent-mic-control:is(.waiting, .listening))
+  :is(.agent-compose-input, .agent-compose-placeholder) {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+.agent-cockpit.agent-sim
+  .agent-compose:has(.agent-mic-control:is(.waiting, .listening))
+  .agent-compose-mic {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  width: auto;
+  height: auto;
+  margin: 0;
+  place-items: center;
+}
+
+.agent-cockpit.agent-sim
+  .agent-compose:has(.agent-mic-control:is(.waiting, .listening))
+  :is(.agent-mic-control, .agent-mic-button) {
+  width: 100%;
+  height: 100%;
+}
+
+.agent-cockpit.agent-sim
+  .agent-compose:has(.agent-mic-control:is(.waiting, .listening))
+  .agent-mic-button {
+  background: transparent;
+  border: 0;
+  border-radius: 14px;
+  box-shadow: none;
+  transform: none;
+}
+
+.agent-cockpit.agent-sim
+  .agent-compose:has(.agent-mic-control:is(.waiting, .listening))
+  .agent-mic-button::before,
+.agent-cockpit.agent-sim
+  .agent-compose:has(.agent-mic-control:is(.waiting, .listening))
+  .agent-mic-button::after,
+.agent-cockpit.agent-sim
+  .agent-compose:has(.agent-mic-control:is(.waiting, .listening))
+  :is(.agent-mic-inner-waves, .agent-mic-outer-waves) {
+  display: none;
+}
+
+.agent-cockpit.agent-sim
+  .agent-compose:has(.agent-mic-control:is(.waiting, .listening))
+  .agent-mic-label {
+  top: 50%;
+  bottom: auto;
+  left: 18px;
+  color: rgb(231 231 234 / 68%);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  transform: translateY(-50%);
+}
+
+.agent-cockpit.agent-sim
+  .agent-compose:has(.agent-mic-control.listening)
+  .agent-mic-waveform {
+  width: 52px;
+  height: 30px;
+  gap: 3px;
+  transform-origin: center;
+  animation: agent-sim-waveform-in 180ms cubic-bezier(0.215, 0.61, 0.355, 1) 80ms both;
+}
+
+.agent-cockpit.agent-sim
+  .agent-compose:has(.agent-mic-control.listening)
+  .agent-mic-waveform-bar {
+  height: 26px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 96%), var(--agent-purple));
+}
+
+.agent-cockpit.agent-sim
+  .agent-compose:has(.agent-mic-control.listening)
+  .agent-mic-waveform-bar:is(:first-child, :last-child) {
+  opacity: 0.48;
+}
+
+.agent-cockpit.agent-sim
+  .agent-compose:has(.agent-mic-control.listening)
+  .agent-mic-waveform-bar:is(:nth-child(2), :nth-last-child(2)) {
+  opacity: 0.68;
+}
+
+@keyframes agent-sim-waveform-in {
+  from {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .agent-compose-input {
   position: relative;
   z-index: 1;
@@ -8609,6 +8723,12 @@ select.skill-input {
   .agent-compose-placeholder,
   .agent-compose-send {
     transition: none;
+  }
+
+  .agent-cockpit.agent-sim
+    .agent-compose:has(.agent-mic-control.listening)
+    .agent-mic-waveform {
+    animation: none;
   }
 
   .agent-compose-send:active:not(:disabled) {
