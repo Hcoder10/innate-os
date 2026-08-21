@@ -6147,15 +6147,20 @@ select.skill-input {
 
 .chat-skill-parameters dl {
   display: grid;
-  grid-template-columns: minmax(78px, auto) minmax(0, 1fr);
-  gap: 8px 16px;
+  grid-template-rows: auto auto;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 2px 12px;
   margin: 0;
   font-size: 11px;
-  line-height: 1.45;
+  line-height: 1.3;
 }
 
 .chat-skill-parameters dt {
   color: rgb(231 231 234 / 58%);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .chat-skill-parameters dd {

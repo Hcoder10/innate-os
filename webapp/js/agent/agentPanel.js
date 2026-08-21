@@ -1198,7 +1198,9 @@ function setSkillElementOpen(wrap, head, open) {
  */
 function formatSkillArgs(name, args) {
   if (!args || typeof args !== "object" || Array.isArray(args)) return { summary: "", rows: [] };
-  const entries = Object.entries(args).filter(([, v]) => v !== null && v !== undefined && v !== "");
+  const entries = Object.entries(args)
+    .filter(([, v]) => v !== null && v !== undefined && v !== "")
+    .sort(([a], [b]) => skillArgOrder(a) - skillArgOrder(b));
   if (!entries.length) return { summary: "", rows: [] };
   const rows = entries.map(([key, value]) => ({
     label: skillArgLabel(key),
@@ -1242,6 +1244,22 @@ function skillStatusLabel(status) {
     failed: "Failed",
     interrupted: "Interrupted",
   }[status] || "Running";
+}
+
+/** @param {string} key */
+function skillArgOrder(key) {
+  const order = [
+    "x",
+    "y",
+    "z",
+    "theta_degrees",
+    "angle_degrees",
+    "local_frame",
+    "speed",
+    "distance",
+  ];
+  const index = order.indexOf(key);
+  return index === -1 ? order.length : index;
 }
 
 /** @param {string} key */
