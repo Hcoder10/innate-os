@@ -49,7 +49,6 @@ const CHAT_EXAMPLES = [
  *   startMic: () => Promise<void>,
  *   stopMic: () => void,
  *   micMount: HTMLElement,
- *   setComposerMount: (mount: HTMLElement | null) => void,
  *   previewSkill: (sample: {
  *     name: string,
  *     args: Record<string, unknown>,
@@ -935,9 +934,6 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     startMic,
     stopMic,
     micMount,
-    setComposerMount(mount) {
-      (mount ?? thoughtsPanel).append(form);
-    },
     previewSkill,
     destroy() {
       mic?.destroy();
