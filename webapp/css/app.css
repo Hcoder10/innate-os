@@ -6425,27 +6425,6 @@ select.skill-input {
   display: contents;
 }
 
-.agent-feed-debug {
-  position: absolute;
-  top: 24px;
-  left: 24px;
-  z-index: 13;
-  display: grid;
-  gap: 2px;
-  padding: 6px 8px;
-  color: rgb(255 255 255 / 58%);
-  background: rgb(8 8 10 / 82%);
-  border: 1px solid rgb(255 255 255 / 18%);
-  border-radius: 8px;
-  font-size: 9px;
-  line-height: 1.35;
-  pointer-events: none;
-}
-
-.agent-feed-debug span:first-child {
-  color: rgb(255 255 255 / 88%);
-}
-
 .agent-width-guard {
   display: none;
 }
@@ -7762,115 +7741,6 @@ select.skill-input {
   outline-offset: 2px;
 }
 
-.agent-preview-stack {
-  position: absolute;
-  bottom: 14px;
-  left: 14px;
-  z-index: 13;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 10px;
-}
-
-.agent-skill-preview-control,
-.telemetry-preview-control {
-  position: static;
-  display: grid;
-  width: 260px;
-  align-items: center;
-  gap: 4px;
-  padding: 7px;
-  color: var(--ctl-text);
-  background: rgb(8 8 10 / 82%);
-  backdrop-filter: blur(20px) saturate(1.1);
-  -webkit-backdrop-filter: blur(20px) saturate(1.1);
-  border: 1px solid rgb(255 255 255 / 18%);
-  border-radius: 12px;
-  box-shadow: 0 10px 28px rgb(0 0 0 / 38%);
-}
-
-.agent-skill-preview-control {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-}
-
-.telemetry-preview-control {
-  grid-template-columns: 38px minmax(0, 1fr) 38px;
-}
-
-.agent-skill-preview-cycle,
-.agent-skill-preview-name,
-.telemetry-preview-cycle,
-.telemetry-preview-name {
-  height: 30px;
-  color: var(--ctl-text);
-  background-color: var(--ctl-field);
-  border: 1px solid var(--hairline-strong);
-  border-radius: 7px;
-}
-
-.agent-skill-preview-cycle,
-.telemetry-preview-cycle {
-  padding: 0;
-  font-size: 18px;
-  cursor: pointer;
-}
-
-.agent-skill-preview-name,
-.telemetry-preview-name {
-  display: grid;
-  padding: 0 8px;
-  font-size: 10px;
-  text-align: center;
-  place-items: center;
-}
-
-.agent-skill-preview-name {
-  grid-column: 2 / 5;
-}
-
-.agent-skill-preview-option {
-  height: 28px;
-  min-width: 0;
-  padding: 0 4px;
-  color: var(--ctl-text);
-  background: var(--ctl-field);
-  border: 1px solid var(--hairline-strong);
-  border-radius: 7px;
-  font-size: 9px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-
-.agent-skill-preview-option[aria-pressed="true"] {
-  background: rgb(255 255 255 / 12%);
-  border-color: rgb(255 255 255 / 32%);
-}
-
-.agent-skill-preview-option.running {
-  color: #c0b8ff;
-}
-
-.agent-skill-preview-option.completed {
-  color: var(--ok);
-}
-
-.agent-skill-preview-option.failed {
-  color: var(--danger);
-}
-
-.agent-skill-preview-option.interrupted {
-  color: var(--muted);
-}
-
-.agent-skill-preview-cycle:focus-visible,
-.agent-skill-preview-option:focus-visible,
-.telemetry-preview-cycle:focus-visible {
-  outline: 2px solid var(--ctl-accent);
-  outline-offset: 1px;
-}
-
 @media (hover: hover) and (pointer: fine) {
   .agent-stage-view-toggle:hover {
     color: #fff;
@@ -7925,7 +7795,6 @@ select.skill-input {
    monitor shows pose and frames). */
 .agent-cockpit.brain-open .overlay-stack-top-left,
 .agent-cockpit.brain-open .cam-strip,
-.agent-cockpit.brain-open .agent-feed-debug,
 .agent-cockpit.brain-open .agent-telemetry-overlay {
   display: none;
 }
@@ -9589,18 +9458,6 @@ select.skill-input {
     object-fit: cover;
   }
 
-  .agent-cockpit.agent-sim .agent-preview-stack {
-    inset: auto auto 14px 80px;
-    display: flex;
-    width: 260px;
-    pointer-events: auto;
-  }
-
-  .agent-cockpit.agent-sim .telemetry-preview-control,
-  .agent-cockpit.agent-sim .agent-skill-preview-control {
-    position: static;
-  }
-
   .agent-cockpit.agent-sim .agent-telemetry-overlay {
     top: 32px;
     bottom: auto;
@@ -9619,10 +9476,6 @@ select.skill-input {
     --pip-gap: 12px;
   }
 
-  .agent-cockpit.agent-sim .agent-feed-debug {
-    top: 84px;
-    left: 32px;
-  }
 }
 
 @media (min-width: 641px) and (max-width: 1400px) {

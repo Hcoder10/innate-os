@@ -27,8 +27,6 @@ import { sharedAgentState } from "../teleop/agentState.js";
 import { createAgentPanel } from "./agentPanel.js";
 import { createChallengePanel } from "./challengePanel.js";
 import { createAgentMicControl } from "./agentMicControl.js";
-import { createSkillCardPreviewControl } from "./skillPreviewControl.js";
-import { createTelemetryPreviewControl } from "../teleop/telemetryPreviewControl.js";
 import { createAgentThemeControl } from "./themeControl.js";
 
 // Runtime feature flags (config.json, served static), same as teleop. simControls
@@ -69,13 +67,8 @@ function buildAgentView(root) {
   const videoStage = createStage
     ? createStage(feedFrame, session)
     : createVideoStage(feedFrame, session);
-  const feedSurface = feedFrame.querySelector(".video-stage");
   const sceneSetup = feedFrame.querySelector(".sim-debug-stack");
   if (sceneSetup) root.append(sceneSetup);
-  const feedDebug =
-    config.simControls && feedSurface instanceof HTMLElement
-      ? createFeedDebugOverlay(root, feedFrame, feedSurface)
-      : null;
 
   const cornerStack = document.createElement("div");
   cornerStack.className = "overlay-stack-top-left";
@@ -168,11 +161,6 @@ function buildAgentView(root) {
   const simSession = /** @type {any} */ (session);
   const challengePanel =
     typeof simSession.onChallenge === "function" ? createChallengePanel(root, simSession) : null;
-  const previewStack = config.simControls ? document.createElement("div") : null;
-  if (previewStack) {
-    previewStack.className = "agent-preview-stack";
-    feedFrame.append(previewStack);
-  }
   const isSceneSurface = (/** @type {EventTarget | null} */ target) =>
     target instanceof Element &&
     (target.matches(".video-stage > canvas, .video-stage > video") || target.classList.contains("video-stage"));
@@ -188,25 +176,15 @@ function buildAgentView(root) {
       stopListening: panel.stopMic,
     });
   }
-  const telemetryPreview = previewStack
-    ? createTelemetryPreviewControl(previewStack, telemetry.preview)
-    : null;
-  const skillPreview = previewStack
-    ? createSkillCardPreviewControl(previewStack, panel.previewSkill)
-    : null;
 
   const parts = [
     videoStage,
     widthGuard,
-    ...(feedDebug ? [feedDebug] : []),
     ...(challengePanel ? [challengePanel] : []),
-    ...(telemetryPreview ? [telemetryPreview] : []),
     telemetry,
     // Square, always-live camera tiles (own prefs key so teleop's defaults stay put).
     cameraSwitch,
     ...(micControl ? [micControl] : []),
-    ...(skillPreview ? [skillPreview] : []),
-    ...(previewStack ? [{ destroy: () => previewStack.remove() }] : []),
     panel,
     {
       destroy: () => {
@@ -294,61 +272,6 @@ function createWidthGuard(root, viewName) {
     destroy() {
       window.removeEventListener("resize", render);
       guard.remove();
-    },
-  };
-}
-
-/**
- * @param {HTMLElement} root
- * @param {HTMLElement} frame
- * @param {HTMLElement} source
- * @returns {{ destroy: () => void }}
- */
-function createFeedDebugOverlay(root, frame, source) {
-  const readout = document.createElement("aside");
-  readout.className = "agent-feed-debug mono";
-  readout.setAttribute("aria-label", "Feed dimensions");
-
-  const browserLine = document.createElement("span");
-  const viewportLine = document.createElement("span");
-  const sourceLine = document.createElement("span");
-  readout.append(browserLine, viewportLine, sourceLine);
-  root.append(readout);
-
-  /** @param {DOMRect} rect @returns {string} */
-  function dimensions(rect) {
-    const width = Math.round(rect.width);
-    const height = Math.round(rect.height);
-    if (!width || !height) return "hidden";
-    const ratio = rect.width / rect.height;
-    const name =
-      Math.abs(ratio - 4 / 3) < 0.01
-        ? "4:3"
-        : Math.abs(ratio - 16 / 9) < 0.01
-          ? "16:9"
-          : `${ratio.toFixed(3)}:1`;
-    return `${width}×${height} · ${name} (${ratio.toFixed(3)})`;
-  }
-
-  function render() {
-    const sourceRect = source.getBoundingClientRect();
-    const viewportRect = frame.getBoundingClientRect();
-    browserLine.textContent = `browser ${window.innerWidth}×${window.innerHeight}`;
-    viewportLine.textContent = `viewport ${dimensions(viewportRect)}`;
-    sourceLine.textContent = `render ${dimensions(sourceRect)}`;
-  }
-
-  const observer = new ResizeObserver(render);
-  observer.observe(root);
-  observer.observe(source);
-  window.addEventListener("resize", render);
-  render();
-
-  return {
-    destroy() {
-      observer.disconnect();
-      window.removeEventListener("resize", render);
-      readout.remove();
     },
   };
 }

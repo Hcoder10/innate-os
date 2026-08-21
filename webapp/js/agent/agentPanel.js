@@ -48,13 +48,7 @@ const CHAT_EXAMPLES = [
  *   destroy: () => void,
  *   startMic: () => Promise<void>,
  *   stopMic: () => void,
- *   micMount: HTMLElement,
- *   previewSkill: (sample: {
- *     name: string,
- *     args: Record<string, unknown>,
- *     status: "running" | "completed" | "failed" | "interrupted",
- *     reason?: string
- *   } | null) => void
+ *   micMount: HTMLElement
  * }}
  */
 export function createAgentPanel(root, rosClient, agentState, opts) {
@@ -817,15 +811,15 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   }
 
   /** @param {string} key @param {string} name @param {string} status @param {number} ts @param {string} [reason]
-   *  @param {any} [args] @param {boolean} [preview] */
-  function addSkillRun(key, name, status, ts, reason, args, preview = false) {
+   *  @param {any} [args] */
+  function addSkillRun(key, name, status, ts, reason, args) {
     const wasAtBottom = atBottom();
     const cls = ["running", "completed", "failed", "interrupted"].includes(status) ? status : "running";
     const displayName = skillDisplayName(name);
-    if (!preview && cls === "running") {
+    if (cls === "running") {
       activeSkillName.textContent = displayName;
       activeSkill.classList.add("on");
-    } else if (!preview && activeSkillName.textContent === displayName) {
+    } else if (activeSkillName.textContent === displayName) {
       activeSkillName.textContent = "—";
       activeSkill.classList.remove("on");
     }
@@ -875,9 +869,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
         sizeCompactSpacer();
       });
       skillRuns.set(key, createdRun);
-      if (preview) {
-        appendStreamItem(wrap);
-      } else if (!attachSkillToStreak(name, wrap)) {
+      if (!attachSkillToStreak(name, wrap)) {
         appendStreamItem(wrap);
         animateCompactEnter(wrap);
       }
@@ -900,37 +892,11 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     run.wrap.classList.toggle("has-detail", run.hasDetail);
     run.head.title = run.hasDetail ? "Show skill details" : "";
     if (cls === "failed") setSkillRunOpen(run, !stream.classList.contains("compact"));
-    if (!preview) refreshStreakContaining(run.wrap);
+    refreshStreakContaining(run.wrap);
 
     lastTs = ts;
     if (cls !== "running") skillRuns.delete(key);
     settleStreamAfterAppend(wasAtBottom);
-    return run.wrap;
-  }
-
-  /** @type {HTMLElement | null} */
-  let skillPreview = null;
-  /** @param {{
-   *  name: string,
-   *  args: Record<string, unknown>,
-   *  status: "running" | "completed" | "failed" | "interrupted",
-   *  reason?: string
-   * } | null} sample */
-  function previewSkill(sample) {
-    skillPreview?.remove();
-    skillRuns.delete("__skill-preview__");
-    skillPreview = null;
-    if (!sample) return;
-    skillPreview = addSkillRun(
-      "__skill-preview__",
-      sample.name,
-      sample.status,
-      Date.now() / 1000,
-      sample.status === "failed" ? sample.reason || "The skill could not complete." : "",
-      sample.args,
-      true,
-    );
-    stream.scrollTop = stream.scrollHeight;
   }
 
   // ---- composer -----------------------------------------------------------
@@ -1120,7 +1086,6 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     startMic,
     stopMic,
     micMount,
-    previewSkill,
     destroy() {
       mic?.destroy();
       document.removeEventListener("click", onDirectiveOutsideClick);

@@ -11,7 +11,7 @@ import { BATTERY_STATE_TOPIC, ROBOT_INFO_TOPIC, WEBSOCKET_STATUS_TOPIC } from ".
  * @param {HTMLElement} parent
  * @param {import("../rosClient.js").RosClient} rosClient
  * @param {{ showBattery?: boolean }} [opts] The sim has no battery, so it opts out.
- * @returns {{ destroy: () => void, preview: (snapshot: TelemetrySnapshot | null) => void }}
+ * @returns {{ destroy: () => void }}
  */
 export function createTelemetry(parent, rosClient, opts = {}) {
   const showBattery = opts.showBattery !== false;
@@ -28,12 +28,10 @@ export function createTelemetry(parent, rosClient, opts = {}) {
   wrap.append(name.el, battery.el, link.el, agent.el);
   parent.appendChild(wrap);
   const items = [name, battery, link, agent];
-  /** @type {Map<ReturnType<typeof item>, Required<TelemetryValue>>} */
-  const liveValues = new Map(items.map((target) => [target, { text: "—", tone: "", meta: "" }]));
-  let previewActive = false;
   /** @type {number | null} */
   let measureFrame = null;
-  setBatteryVisible(showBattery);
+  battery.el.hidden = !showBattery;
+  wrap.classList.toggle("with-battery", showBattery);
 
   /**
    * @param {TelemetryKey} key
@@ -78,8 +76,6 @@ export function createTelemetry(parent, rosClient, opts = {}) {
    * @param {string} [meta]
    */
   function update(target, text, tone = "", meta = "") {
-    liveValues.set(target, { text, tone, meta });
-    if (previewActive) return;
     renderValue(target, text, tone, meta);
   }
 
@@ -97,32 +93,6 @@ export function createTelemetry(parent, rosClient, opts = {}) {
     target.el.classList.toggle("live", tone === "live");
     target.el.classList.toggle("warn", tone === "warn");
     scheduleOverflowMeasure();
-  }
-
-  /** @param {boolean} visible */
-  function setBatteryVisible(visible) {
-    battery.el.hidden = !visible;
-    wrap.classList.toggle("with-battery", visible);
-  }
-
-  /** @param {TelemetrySnapshot | null} snapshot */
-  function preview(snapshot) {
-    previewActive = snapshot !== null;
-    if (!snapshot) {
-      setBatteryVisible(showBattery);
-      for (const [target, value] of liveValues) {
-        renderValue(target, value.text, value.tone, value.meta);
-      }
-      return;
-    }
-
-    setBatteryVisible(snapshot.battery !== null);
-    renderValue(name, snapshot.robot.text, snapshot.robot.tone ?? "", snapshot.robot.meta ?? "");
-    renderValue(link, snapshot.link.text, snapshot.link.tone ?? "", snapshot.link.meta ?? "");
-    renderValue(agent, snapshot.agent.text, snapshot.agent.tone ?? "", snapshot.agent.meta ?? "");
-    if (snapshot.battery) {
-      renderValue(battery, snapshot.battery.text, snapshot.battery.tone ?? "", snapshot.battery.meta ?? "");
-    }
   }
 
   function scheduleOverflowMeasure() {
@@ -211,7 +181,6 @@ export function createTelemetry(parent, rosClient, opts = {}) {
   }
 
   return {
-    preview,
     destroy() {
       if (measureFrame !== null) cancelAnimationFrame(measureFrame);
       resizeObserver.disconnect();
@@ -223,12 +192,3 @@ export function createTelemetry(parent, rosClient, opts = {}) {
 
 /** @typedef {"robot" | "battery" | "link" | "agent"} TelemetryKey */
 /** @typedef {"" | "live" | "warn"} TelemetryTone */
-/** @typedef {{ text: string, tone?: TelemetryTone, meta?: string }} TelemetryValue */
-/**
- * @typedef {{
- *   robot: TelemetryValue,
- *   battery: TelemetryValue | null,
- *   link: TelemetryValue,
- *   agent: TelemetryValue
- * }} TelemetrySnapshot
- */
