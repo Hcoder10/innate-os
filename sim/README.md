@@ -342,6 +342,12 @@ the container, on every platform, importing straight from your checkout.
 loads it. Restart that one from the host:
 `./innate-sim down && ./innate-sim up`.
 
+**Several clones at once.** Each checkout gets its own container, network and
+named volumes, so a branch clone beside your main one keeps its own compiled
+workspace. They still share the host's ports, so only one can be `up` at a
+time — starting a second stops with the name and path of the checkout holding
+them.
+
 `innate view` is the fastest way to see why a node is unhappy: the tmux
 session has one window per subsystem (zenoh, rosbridge-app, sim-driver,
 nav-brain, behavior, arm-ik, vision-nav, console-webapp, foxglove), each

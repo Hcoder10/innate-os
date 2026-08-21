@@ -6,7 +6,12 @@
 # is bind-mounted by sim/docker-compose.dev.yml and built into persistent named
 # volumes at runtime, so source edits do not require rebuilding the image.
 
-ARG ROS_BASE_IMAGE=ros:humble-ros-base
+# The index digest, not the tag: upstream rebuilds this weekly, and a moved
+# base makes every layer above it different -- two consecutive publishes of
+# innate-os-sim-ros shared one layer out of 26. ci/build_sim_images.sh pins the
+# ROS image's own base the same way; both links have to be immutable or neither
+# is. Bump deliberately to take base updates.
+ARG ROS_BASE_IMAGE=ros:humble-ros-base@sha256:75dd3aba34a3838dadbb31a9f7bef769bdfa8713e6cec686fc868db2981b0987
 FROM ${ROS_BASE_IMAGE} AS os-deps
 
 ENV DEBIAN_FRONTEND=noninteractive \

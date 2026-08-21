@@ -1,3 +1,6 @@
+# The launcher passes `-p innate-os-<checkout id>` so each clone gets its own
+# container, network and volumes; this name is only for running the file by
+# hand, where a stable project beats the directory basename ("sim").
 name: innate-os
 
 services:
@@ -31,7 +34,9 @@ services:
       # fails with "Temporary failure resolving ...". Harmless where bridge
       # DNS already works.
       network: host
-    container_name: innate-dev
+    # config.OS_CONTAINER_NAME, matching the -p project above. The default is
+    # both the by-hand name and the one every checkout shared before.
+    container_name: ${INNATE_OS_CONTAINER_NAME:-innate-dev}
     # Use host networking if you need direct access to hardware, or use your own approach
     environment:
       # Points at the optional novnc X display (COMPOSE_PROFILES=x11);

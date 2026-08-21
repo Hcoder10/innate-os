@@ -21,10 +21,15 @@ def tags: .metadata.container.tags // [];
 def age_days:
   (.updated_at // .created_at) as $ts
   | if $ts == null then 0 else (now - ($ts | fromdateiso8601)) / 86400 end;
+# deps-<hash> moves only when the Dockerfile or an apt list does, and any
+# checkout back to those inputs pulls it rather than rebuilding for 25-30
+# minutes. A superseded version loses the tag to its successor and ages out
+# below, so this keeps the current one per hash, not every one ever built.
 def keep_forever:
   tags | any(
     . == "main" or startswith("main-")
     or startswith("buildcache")
+    or startswith("deps-")
     or . == "inputs-\($main_hash)" or startswith("inputs-\($main_hash)-")
   );
 # Commit components of this version's sha-<hex>[-<arch>] tags. Prefix-matched

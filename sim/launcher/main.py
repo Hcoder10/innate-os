@@ -55,7 +55,7 @@ from runtime import (
     open_os_container_shell,
     prefetch_runtime,
     print_startup_checks,
-    remove_legacy_cloud_agent,
+    remove_superseded_containers,
     runtime_already_running,
     stop_world_server,
     tail_file,
@@ -116,9 +116,10 @@ def cmd_up(
         # workspace dirs for the invoking user (root-owned bind-mount dirs on
         # Linux otherwise), and warns if an earlier run already claimed them.
         ensure_workspace_dirs(config)
-        # Before the fast path, not after it: the container it removes is
-        # exactly what an upgrade from a still-running older stack leaves behind.
-        remove_legacy_cloud_agent()
+        # Before the fast path, not after it: the containers it removes are
+        # exactly what an upgrade from a still-running older stack leaves
+        # behind -- and one of them holds the ports this stack needs.
+        remove_superseded_containers()
         if runtime_already_running(config):
             # A code update can leave a stale world server running (frozen
             # 3D view); ensure_world_server restarts it.
@@ -220,7 +221,7 @@ def cmd_up(
 
 
 def cmd_down(config: dict[str, object]) -> None:
-    remove_legacy_cloud_agent()
+    remove_superseded_containers()
     down_os(config)
     stop_world_server()
     log("Innate sim runtime is down.")

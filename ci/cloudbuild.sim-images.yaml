@@ -4,6 +4,7 @@ substitutions:
   _GHCR_TOKEN_SECRET: innate-os-sim-ghcr-token
   _GHCR_USERNAME_SECRET: innate-os-sim-ghcr-username
   _COMMIT_SHA: manual
+  _DEPS_INPUTS_HASH: manual
   _IMAGE_INPUTS_HASH: manual
   _IMAGE_PREFIX: ghcr.io/innate-inc
   _IMAGE_TAG: manual
@@ -25,6 +26,7 @@ steps:
       - IMAGE_PREFIX=${_IMAGE_PREFIX}
       - IMAGE_TAG=${_IMAGE_TAG}
       - IMAGE_INPUTS_HASH=${_IMAGE_INPUTS_HASH}
+      - DEPS_INPUTS_HASH=${_DEPS_INPUTS_HASH}
       - PUSH_MAIN_TAGS=${_PUSH_MAIN_TAGS}
       - COMMIT_SHA=${_COMMIT_SHA}
       - SHORT_SHA=${_SHORT_SHA}
