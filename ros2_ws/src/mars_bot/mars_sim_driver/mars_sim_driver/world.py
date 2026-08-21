@@ -279,8 +279,11 @@ def build_world_xml(
 {chr(10).join(visual_mesh_lines)}{prop_assets}
   </asset>
   <worldbody>
-    <light pos="4 -3 6" dir="-4 3 -6" diffuse="1 1 1"/>
-    <light pos="-4 3 3" dir="4 -3 -3" diffuse="0.67 0.8 1"/>
+    <!-- MuJoCo defaults an untyped light to a narrow spotlight.  The viewer's
+         key and fill are directional, so make that contract explicit here to
+         avoid dark cones at the apartment perimeter. -->
+    <light type="directional" pos="4 -3 6" dir="-4 3 -6" diffuse="1 1 1"/>
+    <light type="directional" castshadow="false" pos="-4 3 3" dir="4 -3 -3" diffuse="0.67 0.8 1"/>
     <geom name="ground" type="plane" size="20 20 0.1" friction="0.9 0.01 0.001" margin="0.007"
           solref="0.01 1" rgba="0.35 0.35 0.35 1" group="{collision_group}"/>
     <body name="apartment" quat="0.7071068 0.7071068 0 0">

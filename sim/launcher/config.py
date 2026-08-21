@@ -109,6 +109,7 @@ ASSETS_IMAGE_INPUT_FILES = (
 # name does not mention it. Cheap because sim/Dockerfile.assets copies ros2_ws
 # in below CoACD: a driver edit re-runs the nav map (minutes), not the bake.
 ASSETS_IMAGE_PATHSPECS = (
+    "sim/environments",
     "sim/tools",
     "sim/viewer/tools",
     "ros2_ws/src/mars_bot/mars_sim_driver",

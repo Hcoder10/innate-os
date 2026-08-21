@@ -28,6 +28,7 @@ import {
   FORGET_MEMORY_SERVICE,
 } from "../constants.js";
 import { MEMORY_COLOR, SEARCH_REPLAY_FRESH_S, ageAlpha, ageText, headerSkew, memoryImageUrl, parseMemories, parseSearch, withAlpha } from "./memories.js";
+import { goalCellError } from "./goalValidation.js";
 
 // The /map grid rides ONE session-lived subscription instead of one per mount.
 // The topic is latched, and rws replays the full grid — hundreds of KB of JSON
@@ -1520,6 +1521,11 @@ export function createMap(root, opts = {}) {
 
   /** @param {number} x @param {number} y @param {number} yaw */
   function publishGoal(x, y, yaw) {
+    const invalid = goalCellError(grid, gridCells, x, y, OCC_THRESH);
+    if (invalid) {
+      setStatus("fail", invalid);
+      return;
+    }
     const qz = Math.sin(yaw / 2);
     const qw = Math.cos(yaw / 2);
     // Action goal through the router, pinned to the map planner — /goal_pose

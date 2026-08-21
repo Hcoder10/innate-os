@@ -134,6 +134,10 @@ class RemoteWorld:
     def time(self) -> float:
         return float(self._fresh_state()["time"])
 
+    @property
+    def world_epoch(self) -> int:
+        return int(self._fresh_state()["world_epoch"])
+
     def pose(self) -> tuple[float, float, float]:
         return tuple(self._fresh_state()["pose"])
 
