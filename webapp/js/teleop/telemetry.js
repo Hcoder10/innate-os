@@ -10,28 +10,22 @@ import { BATTERY_STATE_TOPIC, ROBOT_INFO_TOPIC, WEBSOCKET_STATUS_TOPIC } from ".
 /**
  * @param {HTMLElement} parent
  * @param {import("../rosClient.js").RosClient} rosClient
- * @param {{ showBattery?: boolean }} [opts] The sim has no battery, so it opts out.
  * @returns {{ destroy: () => void }}
  */
-export function createTelemetry(parent, rosClient, opts = {}) {
-  const showBattery = opts.showBattery !== false;
-
+export function createTelemetry(parent, rosClient) {
   const wrap = document.createElement("div");
   wrap.className = "telemetry";
 
   const name = item("robot", "robot", "—", ROBOT_INFO_TOPIC);
   const battery = item("battery", "batt", "—", BATTERY_STATE_TOPIC);
   const link = item("link", "link", "—", "rosbridge websocket to the robot");
-  // Cloud/local agent backend connection (the brain's websocket to its agent
-  // backend) — distinct from the rosbridge LINK above.
   const agent = item("agent", "agent", "—", `the brain's connection to its agent backend — ${WEBSOCKET_STATUS_TOPIC}`);
   wrap.append(name.el, battery.el, link.el, agent.el);
   parent.appendChild(wrap);
   const items = [name, battery, link, agent];
   /** @type {number | null} */
   let measureFrame = null;
-  battery.el.hidden = !showBattery;
-  wrap.classList.toggle("with-battery", showBattery);
+  wrap.classList.add("with-battery");
 
   /**
    * @param {TelemetryKey} key
@@ -127,7 +121,8 @@ export function createTelemetry(parent, rosClient, opts = {}) {
       }
     }, undefined, "std_msgs/msg/String"),
     rosClient.onStateChange((state) => {
-      update(link, state === "connected" ? "live" : state, state === "connected" ? "live" : state === "disconnected" ? "warn" : "");
+      const text = state === "connected" ? "live" : state;
+      update(link, text, state === "connected" ? "live" : state === "disconnected" ? "warn" : "");
     }),
     rosClient.subscribe(
       WEBSOCKET_STATUS_TOPIC,
@@ -163,22 +158,20 @@ export function createTelemetry(parent, rosClient, opts = {}) {
     ),
   ];
 
-  if (showBattery) {
-    unsubs.push(
-      rosClient.subscribe(
-        BATTERY_STATE_TOPIC,
-        (/** @type {BatteryStateMsg} */ msg) => {
-          const p = msg?.percentage;
-          if (typeof p !== "number" || Number.isNaN(p)) return;
-          // The robot publishes 0–100; tolerate a spec-compliant 0–1 source.
-          const pct = p <= 1 ? p * 100 : p;
-          update(battery, `${Math.round(pct)}%`, pct <= 15 ? "warn" : "");
-        },
-        1000,
-        "sensor_msgs/msg/BatteryState",
-      ),
-    );
-  }
+  unsubs.push(
+    rosClient.subscribe(
+      BATTERY_STATE_TOPIC,
+      (/** @type {BatteryStateMsg} */ msg) => {
+        const p = msg?.percentage;
+        if (typeof p !== "number" || Number.isNaN(p)) return;
+        // The robot publishes 0–100; tolerate a spec-compliant 0–1 source.
+        const pct = p <= 1 ? p * 100 : p;
+        update(battery, `${Math.round(pct)}%`, pct <= 15 ? "warn" : "");
+      },
+      1000,
+      "sensor_msgs/msg/BatteryState",
+    ),
+  );
 
   return {
     destroy() {

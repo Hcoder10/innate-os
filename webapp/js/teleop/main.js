@@ -60,13 +60,13 @@ function buildCockpit(root) {
 
   const videoStage = createStage ? createStage(root, session) : createVideoStage(root, session);
 
-  const telemetryOverlay = overlay("overlay-top-left telemetry-overlay");
+  const telemetryOverlay = config.simControls ? null : overlay("overlay-top-left telemetry-overlay");
   const rightRail = overlay("overlay-right");
   const chipsOverlay = overlay("overlay-bottom-left");
   const stickOverlay = overlay("overlay-joystick");
   const ttsOverlay = overlay("overlay-tts");
   const armOverlay = overlay("overlay-arm");
-  root.append(telemetryOverlay, rightRail, chipsOverlay, stickOverlay, ttsOverlay, armOverlay);
+  root.append(...(telemetryOverlay ? [telemetryOverlay] : []), rightRail, chipsOverlay, stickOverlay, ttsOverlay, armOverlay);
 
   /** @param {string} className */
   function overlay(className) {
@@ -76,9 +76,8 @@ function buildCockpit(root) {
   }
 
   const keyboard = createKeyboardDrive(drive);
-  // No battery in the sim (the simulator has no power sensor).
-  const telemetry = createTelemetry(telemetryOverlay, ros, { showBattery: !config.simControls });
-  const parts = [videoStage, telemetry];
+  const telemetry = telemetryOverlay ? createTelemetry(telemetryOverlay, ros) : null;
+  const parts = [videoStage, ...(telemetry ? [telemetry] : [])];
   // Robot-mic toggle. Skipped in the sim: the simulator's WebRTC server streams
   // video only (no microphone), so the toggle would do nothing. config.simControls
   // is the sim deployment's feature flag (env-driven; false on the real robot).

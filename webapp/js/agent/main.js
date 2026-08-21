@@ -79,9 +79,11 @@ function buildAgentView(root) {
     storeKey: "innate.cameras.agent",
     stripParent: cornerStack,
   });
-  const telemetryOverlay = document.createElement("div");
-  telemetryOverlay.className = "overlay telemetry-overlay agent-telemetry-overlay";
-  root.append(telemetryOverlay);
+  const telemetryOverlay = config.simControls ? null : document.createElement("div");
+  if (telemetryOverlay) {
+    telemetryOverlay.className = "overlay telemetry-overlay agent-telemetry-overlay";
+    root.append(telemetryOverlay);
+  }
 
   // The Brain monitor's layer sits between the camera overlays and the panel
   // (DOM order + z-index): opening it covers the stage but never the controls.
@@ -169,7 +171,7 @@ function buildAgentView(root) {
     challengePanel?.dismiss();
   };
   root.addEventListener("pointerdown", onScenePointerDown);
-  const telemetry = createTelemetry(telemetryOverlay, ros, { showBattery: !config.simControls });
+  const telemetry = telemetryOverlay ? createTelemetry(telemetryOverlay, ros) : null;
   if (config.simControls) {
     micControl = createAgentMicControl(panel.micMount, {
       startListening: panel.startMic,
@@ -181,7 +183,7 @@ function buildAgentView(root) {
     videoStage,
     widthGuard,
     ...(challengePanel ? [challengePanel] : []),
-    telemetry,
+    ...(telemetry ? [telemetry] : []),
     // Square, always-live camera tiles (own prefs key so teleop's defaults stay put).
     cameraSwitch,
     ...(micControl ? [micControl] : []),
