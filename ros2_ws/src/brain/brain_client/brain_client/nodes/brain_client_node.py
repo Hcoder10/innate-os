@@ -18,7 +18,9 @@ import time
 import rclpy
 from brain_messages.srv import ForgetMemory, GetAvailableDirectives, GetChatHistory, ReloadSkillsAgents, ResetBrain
 from geometry_msgs.msg import Twist
+from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from std_msgs.msg import String
 from std_srvs.srv import SetBool, Trigger
@@ -89,6 +91,7 @@ class BrainClientNode(Node):
 
         self._proxy = self._init_proxy()
         self._tts_handler = self._init_tts()
+        self.add_on_set_parameters_callback(self._on_parameter_change)
 
         # --- helper node for synchronous service calls (not spun by the executor) ---
         self._service_call_node = rclpy.create_node("brain_client_service_caller")
@@ -134,6 +137,25 @@ class BrainClientNode(Node):
         else:
             self.get_logger().warning("⚠️ TTS handler created but Cartesia client unavailable")
         return handler
+
+    def _on_parameter_change(self, params: list[Parameter]) -> SetParametersResult:
+        """Apply the parameters that take effect without a restart.
+
+        Only the TTS voice does: every other field was copied into a collaborator at
+        construction, so accepting a write would leave the robot running the old value.
+        Those are stored for the next boot, which is what the Settings page's `live`
+        flag says about them.
+        """
+        for param in params:
+            if param.name != "cartesia_voice_id":
+                continue
+            voice_id = str(param.value).strip()
+            if not voice_id:
+                return SetParametersResult(successful=False, reason="cartesia_voice_id must not be empty")
+            if self._tts_handler is None:
+                return SetParametersResult(successful=False, reason="TTS is unavailable (no proxy)")
+            self._tts_handler.set_voice(voice_id)
+        return SetParametersResult(successful=True)
 
     def _build_collaborators(self) -> None:
         cfg, state = self.config, self.state
