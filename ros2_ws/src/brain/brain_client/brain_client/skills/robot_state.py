@@ -64,13 +64,14 @@ class RobotStateProvider:
 
         self.last_odom = None
         self.last_map = None
+        self.last_keepout_map = None
         self.last_head_position = None
         self.last_joint_states = None
         self.last_battery = None
         self.last_amcl_pose = None
         self.last_scan = None
         self._lidar_cache = None  # (msg, Lidar) of the last converted scan
-        # (msg, Map) of the last converted map — a fresh Map per 50 Hz tick
+        # ((map msg, keepout msg), Map) of the last converted map — a fresh Map per 50 Hz tick
         # would discard Map.grid's cached_property and re-decode the whole
         # grid on every skill read
         self._map_cache = None
@@ -81,6 +82,7 @@ class RobotStateProvider:
 
         self._odom_sub = None
         self._map_sub = None
+        self._keepout_map_sub = None
         self._head_position_sub = None
         self._joint_states_sub = None
         self._battery_sub = None
@@ -155,6 +157,9 @@ class RobotStateProvider:
         )
         self._odom_sub = feed_node.create_subscription(OdometryMsg, "/odom", self._on_odom, 10)
         self._map_sub = self._node.create_subscription(OccupancyGrid, "/map", self._on_map, latched_qos)
+        self._keepout_map_sub = self._node.create_subscription(
+            OccupancyGrid, "/nav/keepout_filter_mask", self._on_keepout_map, latched_qos
+        )
         self._head_position_sub = feed_node.create_subscription(
             String, self._head_current_position_topic, self._on_head_position, 10
         )
@@ -189,6 +194,11 @@ class RobotStateProvider:
         # Always-on low-rate feed: map switches while no skill is running must
         # replace the retained grid before the next skill reads it.
         self.last_map = msg
+
+    def _on_keepout_map(self, msg: OccupancyGrid) -> None:
+        # Same always-on lifecycle as /map: edits made between skill runs must
+        # affect the next run immediately.
+        self.last_keepout_map = msg
 
     def _on_joint_states(self, msg: JointState) -> None:
         if self._active:
@@ -359,8 +369,9 @@ class RobotStateProvider:
         # memoized per message, like lidar: a fresh Map every 50 Hz tick would
         # throw away Map.grid's cached_property, making every skill read of
         # .grid re-decode the whole grid
+        keepout = self.last_keepout_map
         cached = self._map_cache
-        if cached is not None and cached[0] is msg:
+        if cached is not None and cached[0][0] is msg and cached[0][1] is keepout:
             return cached[1]
         # cheap: the grid itself decodes lazily on Map.grid access
         current = Map(
@@ -373,8 +384,9 @@ class RobotStateProvider:
             stamp=msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
             frame_id=msg.header.frame_id,
             raw_source=msg,
+            keepout_source=keepout,
         )
-        self._map_cache = (msg, current)
+        self._map_cache = ((msg, keepout), current)
         return current
 
     def current_joint_states(self) -> JointStates | None:

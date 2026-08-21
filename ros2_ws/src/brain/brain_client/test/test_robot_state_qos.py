@@ -36,7 +36,7 @@ def test_map_and_pose_subscriptions_request_latched_state():
 
     provider.start_subscriptions()
 
-    for topic in ("/map", "/amcl_pose"):
+    for topic in ("/map", "/nav/keepout_filter_mask", "/amcl_pose"):
         _callback, qos = state_node.subscriptions[topic]
         assert isinstance(qos, QoSProfile)
         assert qos.reliability == QoSReliabilityPolicy.RELIABLE
@@ -63,23 +63,30 @@ def test_latched_map_and_pose_remain_current_between_skill_runs():
     provider.start_subscriptions()
 
     map_callback, _map_qos = state_node.subscriptions["/map"]
+    keepout_callback, _keepout_qos = state_node.subscriptions["/nav/keepout_filter_mask"]
     pose_callback, _pose_qos = state_node.subscriptions["/amcl_pose"]
     first_map = OccupancyGrid()
+    first_keepout = OccupancyGrid()
     first_pose = PoseWithCovarianceStamped()
     map_callback(first_map)
+    keepout_callback(first_keepout)
     pose_callback(first_pose)
 
     provider.stop_subscriptions()
     assert provider.last_map is first_map
+    assert provider.last_keepout_map is first_keepout
     assert provider.last_amcl_pose is first_pose
 
     # These callbacks live on the always-spinning node, so a map/pose update
     # while idle replaces the cached state before the next skill starts.
     latest_map = OccupancyGrid()
+    latest_keepout = OccupancyGrid()
     latest_pose = PoseWithCovarianceStamped()
     map_callback(latest_map)
+    keepout_callback(latest_keepout)
     pose_callback(latest_pose)
     provider.start_subscriptions()
 
     assert provider.last_map is latest_map
+    assert provider.last_keepout_map is latest_keepout
     assert provider.last_amcl_pose is latest_pose
