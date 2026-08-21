@@ -350,6 +350,12 @@ class LiveStep:
             self._draw(SPINNER_FRAMES[frame % len(SPINNER_FRAMES)])
             frame += 1
 
+    def retitle(self, message: str) -> None:
+        """Say what the step is doing NOW. One step can span phases that look
+        nothing alike -- starting a container, then a colcon build that runs for
+        minutes -- and a label stuck on the first of them describes a hang."""
+        self.message = message
+
     def note(self, message: str) -> None:
         """Print a full line above the spinner, which redraws on its next tick."""
         if self.live:

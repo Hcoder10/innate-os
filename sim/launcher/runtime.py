@@ -837,6 +837,13 @@ def os_container_foxglove_port_current(config: dict[str, object]) -> bool:
     return any(line.strip().endswith(f":{published}") for line in result.stdout.splitlines())
 
 
+def retitle_step(message: str) -> None:
+    """Rename the live step, when there is one, to the phase now running."""
+    step = active_step()
+    if step is not None:
+        step.retitle(message)
+
+
 def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline: bool = False) -> None:
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     os_image = str(config["os_image"]).strip()
@@ -926,6 +933,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
         compose_values["VIRTUAL_MARS_REMOTE"] = str(config.get("world_endpoint", "") or "")
         compose_env = os_compose_env(compose_values, env_file=os_env_file)
         log("Starting Innate OS dev container...")
+        retitle_step("Starting the Innate OS container")
         run_logged_with_heartbeat(
             up_cmd,
             cwd=os_repo,
@@ -945,6 +953,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
     # Outside the branch above: the common `up` reuses a warm container, and
     # that is exactly the run preceded by a `git pull` and a fresh image.
     if not offline:
+        retitle_step("Reclaiming superseded images")
         prune_superseded_pulled_images(config, cwd=os_repo, env=compose_env)
     build_cmd = (
         f"INNATE_OS_ALWAYS_BUILD={1 if config['os_always_build'] else 0} "
@@ -968,6 +977,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
         log("ROS workspace install already validated for this checkout.")
     else:
         log("Building / validating the ROS workspace inside the container...")
+        retitle_step("Building the ROS workspace (first build takes a few minutes)")
         run_logged_with_heartbeat(
             os_compose_zsh_cmd(build_cmd),
             cwd=os_repo,
@@ -980,6 +990,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
         ROS_INSTALL_STATE_PATH.write_text(f"{ros_inputs_hash}\n", encoding="utf-8")
 
     log("Launching ROS simulation nodes inside the OS container...")
+    retitle_step("Launching the ROS nodes")
     launch_script = (
         "INNATE_SIM_TMUX_SETTLE_SECONDS=${INNATE_SIM_TMUX_SETTLE_SECONDS:-0} "
         "INNATE_SIM_TMUX_CLEANUP_SETTLE_SECONDS=${INNATE_SIM_TMUX_CLEANUP_SETTLE_SECONDS:-0} "
