@@ -79,8 +79,10 @@ from dashboard import (
     NC,
     RED,
     STEP_LABEL_WIDTH,
+    STEP_TAIL_ROWS,
     USE_COLOR,
     active_step,
+    clean_log_line,
     format_bytes,
     live_step,
     render_progress_bar,
@@ -223,7 +225,9 @@ def run_logged_with_heartbeat(
     # A bar redrawn in place needs to be refreshed often to look like one; a
     # log file gets the slow cadence, so a CI transcript is not a flipbook.
     live = progress_formatter is not None and sys.stdout.isatty()
-    if live:
+    # A step draws the log tail itself (see below), which wants the same quick
+    # cadence a progress bar does -- a tail refreshed every 10s reads as stuck.
+    if live or (sys.stdout.isatty() and active_step() is not None):
         heartbeat_seconds = 0.5
     drew_progress = False
     with log_path.open("a", encoding="utf-8") as log_file:
@@ -256,6 +260,13 @@ def run_logged_with_heartbeat(
                     # says how far along. Before docker's first layer line is
                     # parseable that is just the clock.
                     step.detail = f"{progress}  {stamp}" if progress else stamp
+                    # The tail is for commands with nothing better to show. A
+                    # formatter means there IS something better -- the pull's
+                    # aggregate bar, which replaced exactly this layer chatter
+                    # on purpose -- so those keep the single line.
+                    if progress_formatter is None:
+                        lines = [clean_log_line(line) for line in appended.splitlines()]
+                        step.tail = [line for line in lines if line.strip()][-STEP_TAIL_ROWS:]
                 elif progress and live:
                     print(f"\r\033[K  {progress}  {DIM}{stamp}{NC}", end="", flush=True)
                     drew_progress = True

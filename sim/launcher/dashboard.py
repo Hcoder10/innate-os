@@ -157,6 +157,9 @@ class DashboardRuntime:
 
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 STEP_LABEL_WIDTH = 8
+# Log rows a live step shows under its status line, as scripts/install-sim.sh
+# draws them. A step that only spins cannot be told apart from a hang.
+STEP_TAIL_ROWS = 3
 SELECTED, UNSELECTED = "●", "○"
 
 
@@ -289,6 +292,9 @@ class LiveStep:
     def __init__(self, label: str, message: str, done: str | None = None) -> None:
         self.label = label
         self.message = message
+        # Recent log lines, drawn under the status line. Empty keeps the step a
+        # single line, so a step that finishes instantly never flashes a region.
+        self.tail: list[str] = []
         # What it says once finished; the message is what it says while
         # working, which wants a verb.
         self.done = done or message
@@ -310,25 +316,44 @@ class LiveStep:
         self._thread = threading.Thread(target=self._animate, daemon=True)
         self._thread.start()
 
-    def _render(self, mark: str) -> str:
-        detail = f"  {DIM}{self.detail}{NC}" if self.detail else ""
-        line = f"  {CYAN}{self.label:>{STEP_LABEL_WIDTH}}{NC}  {mark} {self.message}{detail}"
+    def _width(self) -> int:
         # A line wider than the terminal wraps, and then \r returns to the
         # start of the WRAPPED row -- every redraw leaves the previous one
         # behind, which is how a spinner becomes a wall of repeated lines.
-        return clip_to_width(line, shutil.get_terminal_size((100, 40)).columns - 1)
+        return shutil.get_terminal_size((100, 40)).columns - 1
+
+    def _render(self, mark: str) -> str:
+        detail = f"  {DIM}{self.detail}{NC}" if self.detail else ""
+        line = f"  {CYAN}{self.label:>{STEP_LABEL_WIDTH}}{NC}  {mark} {self.message}{detail}"
+        return clip_to_width(line, self._width())
+
+    def _draw(self, mark: str) -> None:
+        """Status line plus the log tail, written once and stepped back over.
+
+        One write, not a clear followed by a draw: the region is blank between
+        the two for as long as the terminal takes to paint, which reads as
+        flicker. \033[J from the top wipes however many rows the last frame
+        used, so the tail can grow and shrink without bookkeeping.
+        """
+        width = self._width()
+        gutter = " " * STEP_LABEL_WIDTH
+        rows = [self._render(mark)]
+        rows += [clip_to_width(f"  {DIM}{gutter}  │ {line}{NC}", width) for line in self.tail]
+        body = "\r\033[J" + "\n".join(f"\033[K{row}" for row in rows)
+        step_back = f"\033[{len(rows) - 1}A" if len(rows) > 1 else ""
+        sys.stdout.write(body + step_back + "\r")
+        sys.stdout.flush()
 
     def _animate(self) -> None:
         frame = 0
         while not self._stop.wait(0.12):
-            sys.stdout.write("\r\033[K" + self._render(SPINNER_FRAMES[frame % len(SPINNER_FRAMES)]))
-            sys.stdout.flush()
+            self._draw(SPINNER_FRAMES[frame % len(SPINNER_FRAMES)])
             frame += 1
 
     def note(self, message: str) -> None:
         """Print a full line above the spinner, which redraws on its next tick."""
         if self.live:
-            sys.stdout.write("\r\033[K")
+            sys.stdout.write("\r\033[J")
         print(message)
 
     def finish(self, *, ok: bool = True) -> None:
@@ -336,8 +361,10 @@ class LiveStep:
         if self._thread is not None:
             self._thread.join()
         if self.live:
-            sys.stdout.write("\r\033[K")
+            # \033[J, not \033[K: the tail rows below have to go too.
+            sys.stdout.write("\r\033[J")
             _set_cursor(CURSOR_SHOW)
+        self.tail = []
         self.detail = ""
         self.message = self.done
         print(self._render(f"{GREEN}✔{NC}" if ok else f"{RED}✗{NC}"))
@@ -365,6 +392,17 @@ def live_step(label: str, message: str, done: str | None = None):
         step.finish(ok=step.ok)
     finally:
         _active_step = previous
+
+
+def clean_log_line(line: str) -> str:
+    """One log line, safe to draw inside a step's frame.
+
+    Escapes are stripped because a cursor move from the log would walk out of
+    the region the step redraws; tabs because they mis-measure the width; and
+    only the last carriage-return segment survives, which is what a terminal
+    would have shown for a progress line rewritten in place.
+    """
+    return ANSI_ESCAPE_RE.sub("", line.split("\r")[-1]).replace("\t", " ").rstrip()
 
 
 def clip_to_width(text: str, width: int) -> str:
