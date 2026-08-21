@@ -7694,7 +7694,7 @@ select.skill-input {
   display: inline-flex;
   align-items: center;
   height: 56px;
-  gap: 7px;
+  gap: 10px;
   padding: 0 16px;
   color: rgb(255 255 255 / 76%);
   background: rgb(8 8 10 / 76%);
@@ -7715,9 +7715,25 @@ select.skill-input {
     transform 120ms cubic-bezier(0.215, 0.61, 0.355, 1);
 }
 
-.agent-stage-view-toggle svg {
+.agent-stage-view-icon {
   width: 20px;
   height: 20px;
+  flex: none;
+  background: currentColor;
+  -webkit-mask: url("/js/agent/icons/brain-full.svg") center / contain no-repeat;
+  mask: url("/js/agent/icons/brain-full.svg") center / contain no-repeat;
+}
+
+.agent-stage-view-label {
+  width: 54px;
+  line-height: 1.45;
+  text-align: left;
+  white-space: pre-line;
+}
+
+.agent-stage-view-toggle.active .agent-stage-view-icon {
+  -webkit-mask-image: url("/js/agent/icons/live.svg");
+  mask-image: url("/js/agent/icons/live.svg");
 }
 
 .agent-stage-view-toggle.active {

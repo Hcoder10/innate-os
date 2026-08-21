@@ -95,8 +95,10 @@ function buildAgentView(root) {
   stageViewToggle.type = "button";
   stageViewToggle.className = "agent-stage-view-toggle";
   stageViewToggle.innerHTML =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2-5 4 10 2-5h6"/></svg><span></span>';
-  const stageViewLabel = /** @type {HTMLElement} */ (stageViewToggle.querySelector("span"));
+    '<span class="agent-stage-view-icon" aria-hidden="true"></span><span class="agent-stage-view-label">Inspect\nBrain</span>';
+  const stageViewLabel = /** @type {HTMLElement} */ (
+    stageViewToggle.querySelector(".agent-stage-view-label")
+  );
   stageViewToggle.addEventListener("click", () => setView(view === "live" ? "brain" : "live"));
   root.append(stageViewToggle);
 
@@ -109,7 +111,7 @@ function buildAgentView(root) {
     stageViewToggle.title = brain
       ? "Return to the robot's live camera"
       : "Inspect model frames, tools, latency, and turn history";
-    stageViewLabel.textContent = brain ? "Back to Live" : "Inspect Brain";
+    stageViewLabel.textContent = brain ? "Back to\nLive" : "Inspect\nBrain";
   }
   renderStageView("live");
 
