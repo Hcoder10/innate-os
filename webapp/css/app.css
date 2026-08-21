@@ -6295,6 +6295,31 @@ select.skill-input {
   --agent-telemetry-height: 56px;
 }
 
+.agent-cockpit .agent-feed-frame {
+  display: contents;
+}
+
+.agent-feed-debug {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  z-index: 13;
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px;
+  color: rgb(255 255 255 / 58%);
+  background: rgb(8 8 10 / 82%);
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 8px;
+  font-size: 9px;
+  line-height: 1.35;
+  pointer-events: none;
+}
+
+.agent-feed-debug span:first-child {
+  color: rgb(255 255 255 / 88%);
+}
+
 .agent-width-guard {
   display: none;
 }
@@ -6352,6 +6377,27 @@ select.skill-input {
   .agent-telemetry-overlay
   .telemetry-item:not(.telemetry-item-robot) {
   border-left: 1px solid rgb(255 255 255 / 10%);
+}
+
+.agent-cockpit.agent-sim .agent-telemetry-overlay {
+  width: 132px;
+  height: 44px;
+  border-radius: 12px;
+}
+
+.agent-cockpit.agent-sim .agent-telemetry-overlay .telemetry {
+  padding: 6px 12px;
+}
+
+.agent-cockpit.agent-sim
+  .agent-telemetry-overlay
+  :is(.telemetry-item-robot, .telemetry-item-agent) {
+  display: none;
+}
+
+.agent-cockpit.agent-sim .agent-telemetry-overlay .telemetry-item-link {
+  padding: 0;
+  border-left: 0;
 }
 
 @keyframes telemetry-marquee {
@@ -8156,6 +8202,7 @@ select.skill-input {
    monitor shows pose and frames). */
 .agent-cockpit.brain-open .overlay-stack-top-left,
 .agent-cockpit.brain-open .cam-strip,
+.agent-cockpit.brain-open .agent-feed-debug,
 .agent-cockpit.brain-open .agent-telemetry-overlay {
   display: none;
 }
@@ -9718,6 +9765,261 @@ select.skill-input {
   }
 }
 
+/* Temporary sixth composer-layout study: the framed 4:3 simulator cockpit. */
+@media (min-width: 641px) {
+  .agent-cockpit.agent-reference-layout .agent-feed-frame {
+    position: absolute;
+    display: block;
+    top: var(--agent-dock-gutter);
+    right: auto;
+    bottom: auto;
+    left: var(--agent-dock-gutter);
+    width: calc(
+      100% - var(--agent-dock-width) - var(--agent-dock-gutter) -
+        var(--agent-dock-gutter) - var(--agent-dock-gutter)
+    );
+    height: auto;
+    aspect-ratio: 4 / 3;
+    overflow: hidden;
+    background: #000;
+    border: 1px solid color-mix(in srgb, var(--text) 34%, var(--bg));
+    border-radius: 18px;
+  }
+
+  .agent-cockpit.agent-reference-layout .agent-feed-frame > .video-stage {
+    position: absolute !important;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    aspect-ratio: 4 / 3;
+    transform: none;
+  }
+
+  .agent-cockpit.agent-reference-layout .video-stage > :is(canvas, video) {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 17px;
+    object-fit: cover;
+  }
+
+  .agent-cockpit.agent-reference-layout .sim-debug-stack {
+    bottom: 14px;
+    left: 14px;
+  }
+
+  .agent-cockpit.agent-reference-layout .agent-preview-stack {
+    inset: auto auto 14px 80px;
+    display: flex;
+    width: 260px;
+    pointer-events: auto;
+  }
+
+  .agent-cockpit.agent-reference-layout .telemetry-preview-control,
+  .agent-cockpit.agent-reference-layout .agent-skill-preview-control {
+    position: static;
+  }
+
+  .agent-cockpit.agent-reference-layout .agent-composer-layout-control {
+    position: static;
+    order: 3;
+  }
+
+  .agent-cockpit.agent-reference-layout .agent-telemetry-overlay {
+    top: 32px;
+    bottom: auto;
+    left: 32px;
+  }
+
+  .agent-cockpit.agent-reference-layout .overlay-stack-top-left {
+    top: 32px;
+    right: calc(
+      var(--agent-dock-width) + var(--agent-dock-gutter) + var(--agent-dock-gutter) +
+        14px
+    );
+  }
+
+  .agent-cockpit.agent-reference-layout .cam-strip {
+    --pip-gap: 12px;
+  }
+
+  .agent-cockpit.agent-reference-layout .agent-feed-debug {
+    top: 84px;
+    left: 32px;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1400px) {
+  .agent-cockpit .video-stage {
+    position: absolute !important;
+    inset: 0;
+    width: auto;
+    height: auto;
+  }
+
+  .agent-cockpit .video-stage video {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    object-position: center;
+    object-fit: cover;
+  }
+
+  .agent-cockpit.agent-reference-layout .agent-feed-frame {
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    aspect-ratio: auto;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .agent-cockpit.agent-reference-layout .agent-feed-frame > .video-stage {
+    width: 100%;
+    height: 100%;
+    aspect-ratio: auto;
+  }
+
+  .agent-cockpit.agent-reference-layout .video-stage > :is(canvas, video) {
+    border-radius: 0;
+  }
+}
+
+@media (max-width: 1280px) {
+  .agent-width-guard {
+    position: fixed;
+    z-index: 1000;
+    inset: 0;
+    isolation: isolate;
+    display: grid;
+    padding: clamp(20px, 4vw, 36px);
+    place-items: center;
+    color: var(--text);
+    background: rgb(4 4 7 / 58%);
+    backdrop-filter: blur(42px) saturate(0.72) brightness(0.5);
+    -webkit-backdrop-filter: blur(42px) saturate(0.72) brightness(0.5);
+  }
+
+  .agent-width-guard-card {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    box-sizing: border-box;
+    width: min(420px, 100%);
+    padding: 34px clamp(24px, 6vw, 42px);
+    gap: 6px;
+    text-align: center;
+    background: rgb(10 10 14 / 62%);
+    border: 1px solid rgb(255 255 255 / 16%);
+    border-radius: 20px;
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 10%),
+      0 24px 80px rgb(0 0 0 / 52%);
+  }
+
+  .agent-width-guard-title {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 620;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+
+  .agent-width-guard-message {
+    max-width: 300px;
+    margin: 0;
+    justify-self: center;
+    color: rgb(231 231 234 / 62%);
+    font-size: 12px;
+    line-height: 1.6;
+    text-wrap: balance;
+  }
+
+  .agent-width-meter {
+    display: grid;
+    margin-top: 18px;
+    gap: 11px;
+    text-align: left;
+  }
+
+  .agent-width-meter-labels {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .agent-width-meter-labels > span {
+    display: grid;
+    gap: 5px;
+    color: rgb(231 231 234 / 42%);
+    font-size: 8px;
+    line-height: 1;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .agent-width-meter-labels output {
+    color: rgb(231 231 234 / 88%);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 540;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .agent-width-meter-track {
+    position: relative;
+    height: 20px;
+    overflow: hidden;
+    background:
+      repeating-linear-gradient(
+        90deg,
+        transparent 0 39px,
+        rgb(255 255 255 / 7%) 39px 40px
+      ),
+      rgb(255 255 255 / 5%);
+    border: 1px solid rgb(255 255 255 / 14%);
+    border-radius: 6px;
+    box-shadow: inset 0 2px 8px rgb(0 0 0 / 38%);
+  }
+
+  .agent-width-meter-track > span {
+    position: absolute;
+    inset: 3px;
+    background: rgb(151 135 255 / 42%);
+    border-radius: 3px;
+    box-shadow:
+      inset -3px 0 0 rgb(236 232 255 / 92%),
+      0 0 18px rgb(111 88 255 / 34%);
+    transform: scaleX(var(--agent-width-progress));
+    transform-origin: left center;
+    transition: transform 180ms cubic-bezier(0.645, 0.045, 0.355, 1);
+  }
+
+  .agent-width-meter-track::after {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    bottom: 5px;
+    width: 2px;
+    background: rgb(255 255 255 / 68%);
+    content: "";
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-width-meter-track > span {
+    transition: none;
+  }
+}
+
 /* Top-center "<agent> is running" pill — shown on non-Agent pages while the
    brain runs. Clickable: jumps to the Agent page. Glass + full pill match the
    speak bar (same translucency, even rounder edges). */
@@ -10934,134 +11236,5 @@ select.skill-input {
   .nav-side {
     border-left: none;
     border-top: 1px solid var(--hairline);
-  }
-}
-@media (max-width: 1280px) {
-  .agent-width-guard {
-    position: fixed;
-    z-index: 1000;
-    inset: 0;
-    isolation: isolate;
-    display: grid;
-    padding: clamp(20px, 4vw, 36px);
-    place-items: center;
-    color: var(--text);
-    background: rgb(4 4 7 / 58%);
-    backdrop-filter: blur(42px) saturate(0.72) brightness(0.5);
-    -webkit-backdrop-filter: blur(42px) saturate(0.72) brightness(0.5);
-  }
-
-  .agent-width-guard-card {
-    position: relative;
-    z-index: 1;
-    display: grid;
-    box-sizing: border-box;
-    width: min(420px, 100%);
-    padding: 34px clamp(24px, 6vw, 42px);
-    gap: 6px;
-    text-align: center;
-    background: rgb(10 10 14 / 62%);
-    border: 1px solid rgb(255 255 255 / 16%);
-    border-radius: 20px;
-    box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 10%),
-      0 24px 80px rgb(0 0 0 / 52%);
-  }
-
-  .agent-width-guard-title {
-    margin: 0;
-    font-size: 17px;
-    font-weight: 620;
-    line-height: 1.3;
-    letter-spacing: -0.01em;
-    text-wrap: balance;
-  }
-
-  .agent-width-guard-message {
-    max-width: 300px;
-    margin: 0;
-    justify-self: center;
-    color: rgb(231 231 234 / 62%);
-    font-size: 12px;
-    line-height: 1.6;
-    text-wrap: balance;
-  }
-
-  .agent-width-meter {
-    display: grid;
-    margin-top: 18px;
-    gap: 11px;
-    text-align: left;
-  }
-
-  .agent-width-meter-labels {
-    display: flex;
-    align-items: end;
-    justify-content: space-between;
-    gap: 16px;
-  }
-
-  .agent-width-meter-labels > span {
-    display: grid;
-    gap: 5px;
-    color: rgb(231 231 234 / 42%);
-    font-size: 8px;
-    line-height: 1;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-  }
-
-  .agent-width-meter-labels output {
-    color: rgb(231 231 234 / 88%);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 540;
-    letter-spacing: 0;
-    text-transform: none;
-  }
-
-  .agent-width-meter-track {
-    position: relative;
-    height: 20px;
-    overflow: hidden;
-    background:
-      repeating-linear-gradient(
-        90deg,
-        transparent 0 39px,
-        rgb(255 255 255 / 7%) 39px 40px
-      ),
-      rgb(255 255 255 / 5%);
-    border: 1px solid rgb(255 255 255 / 14%);
-    border-radius: 6px;
-    box-shadow: inset 0 2px 8px rgb(0 0 0 / 38%);
-  }
-
-  .agent-width-meter-track > span {
-    position: absolute;
-    inset: 3px;
-    background: rgb(151 135 255 / 42%);
-    border-radius: 3px;
-    box-shadow:
-      inset -3px 0 0 rgb(236 232 255 / 92%),
-      0 0 18px rgb(111 88 255 / 34%);
-    transform: scaleX(var(--agent-width-progress));
-    transform-origin: left center;
-    transition: transform 180ms cubic-bezier(0.645, 0.045, 0.355, 1);
-  }
-
-  .agent-width-meter-track::after {
-    position: absolute;
-    top: 5px;
-    right: 5px;
-    bottom: 5px;
-    width: 2px;
-    background: rgb(255 255 255 / 68%);
-    content: "";
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .agent-width-meter-track > span {
-    transition: none;
   }
 }

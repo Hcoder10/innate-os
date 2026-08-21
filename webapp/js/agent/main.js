@@ -46,7 +46,10 @@ const MIN_AGENT_VIEW_WIDTH = 1281;
 
 /** @param {HTMLElement} stage */
 export function mount(stage) {
-  return mountPage(stage, "cockpit agent-cockpit", buildAgentView);
+  const className = config.simControls
+    ? "cockpit agent-cockpit agent-sim"
+    : "cockpit agent-cockpit";
+  return mountPage(stage, className, buildAgentView);
 }
 
 /**
@@ -55,13 +58,24 @@ export function mount(stage) {
  */
 function buildAgentView(root) {
   const session = createSession();
-
   const widthGuard = createWidthGuard(
     root,
     config.simControls ? "Simulator" : "Camera view",
   );
 
-  const videoStage = createStage ? createStage(root, session) : createVideoStage(root, session);
+  const feedFrame = document.createElement("div");
+  feedFrame.className = "agent-feed-frame";
+  root.append(feedFrame);
+  const videoStage = createStage
+    ? createStage(feedFrame, session)
+    : createVideoStage(feedFrame, session);
+  const feedSurface = feedFrame.querySelector(".video-stage");
+  const sceneSetup = feedFrame.querySelector(".sim-debug-stack");
+  if (sceneSetup) root.append(sceneSetup);
+  const feedDebug =
+    config.simControls && feedSurface instanceof HTMLElement
+      ? createFeedDebugOverlay(root, feedFrame, feedSurface)
+      : null;
 
   const cornerStack = document.createElement("div");
   cornerStack.className = "overlay-stack-top-left";
@@ -154,12 +168,13 @@ function buildAgentView(root) {
   const simSession = /** @type {any} */ (session);
   const challengePanel =
     typeof simSession.onChallenge === "function" ? createChallengePanel(root, simSession) : null;
-  const composerLayout = config.simControls ? createComposerLayoutToggle(root, panel) : null;
   const previewStack = config.simControls ? document.createElement("div") : null;
   if (previewStack) {
     previewStack.className = "agent-preview-stack";
     root.append(previewStack);
   }
+  const composerLayout =
+    previewStack ? createComposerLayoutToggle(root, panel, previewStack, feedFrame) : null;
   const isSceneSurface = (/** @type {EventTarget | null} */ target) =>
     target instanceof Element &&
     (target.matches(".video-stage > canvas, .video-stage > video") || target.classList.contains("video-stage"));
@@ -184,8 +199,9 @@ function buildAgentView(root) {
     : null;
 
   const parts = [
-    widthGuard,
     videoStage,
+    widthGuard,
+    ...(feedDebug ? [feedDebug] : []),
     ...(challengePanel ? [challengePanel] : []),
     ...(telemetryPreview ? [telemetryPreview] : []),
     telemetry,
@@ -284,13 +300,72 @@ function createWidthGuard(root, viewName) {
       guard.remove();
     },
   };
-
 }
+
+/**
+ * @param {HTMLElement} root
+ * @param {HTMLElement} frame
+ * @param {HTMLElement} source
+ * @returns {{ destroy: () => void }}
+ */
+function createFeedDebugOverlay(root, frame, source) {
+  const readout = document.createElement("aside");
+  readout.className = "agent-feed-debug mono";
+  readout.setAttribute("aria-label", "Feed dimensions");
+
+  const browserLine = document.createElement("span");
+  const viewportLine = document.createElement("span");
+  const sourceLine = document.createElement("span");
+  readout.append(browserLine, viewportLine, sourceLine);
+  root.append(readout);
+
+  /** @param {DOMRect} rect @returns {string} */
+  function dimensions(rect) {
+    const width = Math.round(rect.width);
+    const height = Math.round(rect.height);
+    if (!width || !height) return "hidden";
+    const ratio = rect.width / rect.height;
+    const name =
+      Math.abs(ratio - 4 / 3) < 0.01
+        ? "4:3"
+        : Math.abs(ratio - 16 / 9) < 0.01
+          ? "16:9"
+          : `${ratio.toFixed(3)}:1`;
+    return `${width}×${height} · ${name} (${ratio.toFixed(3)})`;
+  }
+
+  function render() {
+    const sourceRect = source.getBoundingClientRect();
+    const viewportRect = root.classList.contains("agent-reference-layout")
+      ? frame.getBoundingClientRect()
+      : sourceRect;
+    browserLine.textContent = `browser ${window.innerWidth}×${window.innerHeight}`;
+    viewportLine.textContent = `viewport ${dimensions(viewportRect)}`;
+    sourceLine.textContent = `render ${dimensions(sourceRect)}`;
+  }
+
+  const observer = new ResizeObserver(render);
+  observer.observe(root);
+  observer.observe(source);
+  window.addEventListener("resize", render);
+  render();
+
+  return {
+    destroy() {
+      observer.disconnect();
+      window.removeEventListener("resize", render);
+      readout.remove();
+    },
+  };
+}
+
 /**
  * @param {HTMLElement} root
  * @param {ReturnType<typeof createAgentPanel>} panel
+ * @param {HTMLElement} previewStack
+ * @param {HTMLElement} feedFrame
  */
-function createComposerLayoutToggle(root, panel) {
+function createComposerLayoutToggle(root, panel, previewStack, feedFrame) {
   const mount = document.createElement("div");
   mount.className = "agent-stage-compose";
   const control = document.createElement("aside");
@@ -301,32 +376,37 @@ function createComposerLayoutToggle(root, panel) {
   label.className = "agent-composer-layout-name";
   const next = composerLayoutButton("›", "Next chat input layout");
   control.append(previous, label, next);
-  let layout = 0;
+  let layout = 5;
 
   function render() {
-    const stage = layout !== 1;
+    const reference = layout === 5;
+    const stage = layout !== 1 && !reference;
     panel.setComposerMount(stage ? mount : null);
     mount.hidden = !stage;
     mount.classList.toggle("mic-focus", layout >= 2);
     mount.classList.toggle("pill", layout >= 3);
     mount.classList.toggle("pill-polished", layout === 4);
-    label.textContent = `Chat input · ${layout + 1}/5`;
+    root.classList.toggle("agent-reference-layout", reference);
+    (reference ? feedFrame : root).append(previewStack);
+    (reference ? previewStack : root).append(control);
+    label.textContent = reference ? "4:3 cockpit · 6/6" : `Chat input · ${layout + 1}/6`;
   }
 
   previous.addEventListener("click", () => {
-    layout = (layout + 4) % 5;
+    layout = (layout + 5) % 6;
     render();
   });
   next.addEventListener("click", () => {
-    layout = (layout + 1) % 5;
+    layout = (layout + 1) % 6;
     render();
   });
-  root.append(mount, control);
+  root.append(mount);
   render();
 
   return {
     destroy() {
       panel.setComposerMount(null);
+      root.classList.remove("agent-reference-layout");
       mount.remove();
       control.remove();
     },
