@@ -67,10 +67,9 @@ SIM_IMAGE_INPUT_FILES = (
     "ros2_ws/apt-dependencies.hardware.txt",
     "ros2_ws/apt-dependencies.sim.txt",
 )
-# The deps-only image CI publishes, addressed by compute_local_image_inputs_hash
-# and NOT the sim-image hash the ROS image carries: that one covers all of
-# ros2_ws/src, which this image does not contain, so a source edit would rename
-# an identical image out of reach -- the case this exists to serve.
+# Addressed by compute_local_image_inputs_hash, not the ROS image's hash: that
+# one covers ros2_ws/src, which this image does not contain, so a source edit
+# would rename an identical image out of reach.
 DEFAULT_SIM_DEPS_IMAGE = "ghcr.io/innate-inc/innate-os-sim-deps"
 DEPS_IMAGE_TAG_PREFIX = "deps-"
 # What the local (deps-only) sim/Dockerfile build actually reads from the repo.
@@ -120,10 +119,9 @@ ASSETS_IMAGE_PATHSPECS = (
     "ros2_ws/src/mars_bot/mars_sim_driver",
     "ros2_ws/src/mars_bot/mars_sim",
 )
-# Hashed because export_nav_map.py reads them, not because they build anything.
-# Geometry is carved out by EXCLUSION so a pathspec added above joins the
-# geometry hash by default: one wrongly excluded costs a needless refusal, one
-# wrongly included reuses geometry that no longer matches the checkout.
+# Geometry is carved out by EXCLUSION, so a pathspec added above joins the
+# geometry hash by default: wrongly excluded costs a needless refusal, wrongly
+# included reuses geometry that no longer matches.
 NON_GEOMETRY_PATHSPECS = (
     "ros2_ws/src/mars_bot/mars_sim_driver",
     "ros2_ws/src/mars_bot/mars_sim",
@@ -166,15 +164,14 @@ SIM_ASSET_UNITS = SIM_ASSET_UNITS_DERIVED + SIM_ASSET_UNITS_AUTHORED
 # tests/test_assets_image_inputs.py holds the dockerignore (which IS hashed)
 # EQUAL to this set; weaken it to a subset check and that stops being true.
 OS_CONTAINER_SERVICE = "innate"
-# One stack per checkout: clones of this repo used to share a container and a
-# set of named volumes, so `up` from the second either served the first one's
-# bind-mounted code or wiped its workspace build. The compose file cannot
-# compute this, so it arrives as `-p` and INNATE_OS_CONTAINER_NAME.
+# One stack per checkout: clones used to share a container and a volume set, so
+# `up` from the second served the first one's code or wiped its build. The
+# compose file cannot compute this; it arrives as `-p` and
+# INNATE_OS_CONTAINER_NAME.
 HOST_REPO_ID = hashlib.sha256(str(REPO_ROOT.resolve()).encode("utf-8")).hexdigest()[:16]
 COMPOSE_PROJECT_NAME = f"innate-os-{HOST_REPO_ID}"
 OS_CONTAINER_NAME = f"innate-dev-{HOST_REPO_ID}"
-# Removed once on upgrade: it publishes 443/80/9090, so leaving it running
-# would fail the first per-checkout `up` on a port conflict.
+# Removed once on upgrade: it holds 443/80/9090.
 LEGACY_SHARED_CONTAINER = "innate-dev"
 LEGACY_SHARED_PROJECT = "innate-os"
 LEGACY_CLOUD_AGENT_CONTAINER = "innate-cloud-agent"
@@ -530,10 +527,9 @@ def resolve_assets_image(repo_root: Path) -> str:
 def compute_geometry_inputs_hash(repo_root: Path) -> str:
     """Whether the geometry already installed still describes this checkout.
 
-    A second hash, not a second identity: the asset image is rightly renamed by
-    a driver edit (it can move the nav map), but that alone must not hard-stop
-    `up`, because geometry has no local build path to fall back to and a fork
-    has no CI to publish a new one.
+    A second hash, not a second identity: a driver edit rightly renames the
+    asset image, but must not hard-stop `up` -- geometry has no local build path
+    to fall back to, and a fork has no CI to publish a new one.
     """
     digest = hashlib.sha256()
     _hash_input_files(
@@ -622,8 +618,8 @@ def resolve_local_os_image(repo_root: Path) -> str:
 
 def resolve_deps_image(repo_root: Path) -> str:
     """The published twin of resolve_local_os_image: same Dockerfile, same
-    inputs, same hash. Its own tag prefix, because the ROS image in the
-    neighbouring repository names a different hash under `inputs-`."""
+    inputs, same hash. Its own prefix, because the ROS image alongside it names
+    a different hash under `inputs-`."""
     return f"{DEFAULT_SIM_DEPS_IMAGE}:{DEPS_IMAGE_TAG_PREFIX}{compute_local_image_inputs_hash(repo_root)}"
 
 

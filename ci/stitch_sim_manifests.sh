@@ -29,8 +29,6 @@ fi
 # run leaves some tags stitched and others stale to near zero.
 for image in "${IMAGE_PREFIX}/innate-os-sim-deps" "${IMAGE_PREFIX}/innate-os-sim-ros"; do
   image_tags=("${tags[@]}")
-  # deps-<hash> names the deps image's own inputs; the ROS image on top has a
-  # different content address.
   if [[ "$image" == *"/innate-os-sim-deps" && -n "${DEPS_INPUTS_HASH:-}" && "${DEPS_INPUTS_HASH}" != "manual" ]]; then
     image_tags+=("deps-${DEPS_INPUTS_HASH}")
   fi

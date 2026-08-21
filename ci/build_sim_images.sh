@@ -28,9 +28,8 @@ inputs_tag=""
 if [[ -n "${IMAGE_INPUTS_HASH:-}" && "${IMAGE_INPUTS_HASH}" != "manual" ]]; then
   inputs_tag="inputs-${IMAGE_INPUTS_HASH}"
 fi
-# The deps image's own content address (config.resolve_deps_image): the files
-# sim/Dockerfile reads, not ros2_ws/src, which it does not contain. This is
-# what the launcher pulls when no ROS prebuilt matches a checkout.
+# config.resolve_deps_image -- what the launcher pulls when no ROS prebuilt
+# matches a checkout.
 deps_inputs_tag=""
 if [[ -n "${DEPS_INPUTS_HASH:-}" && "${DEPS_INPUTS_HASH}" != "manual" ]]; then
   deps_inputs_tag="deps-${DEPS_INPUTS_HASH}"
@@ -56,9 +55,8 @@ push_tags() {
   done
 }
 
-# Reuse rather than rebuild when this arch already has one for these inputs: a
-# rebuild that misses its cache re-resolves apt and pip into layers that are
-# byte-different for identical content, and each difference is a
+# Reuse rather than rebuild: a rebuild that misses its cache re-resolves apt and
+# pip into byte-different layers for identical content, and each difference is a
 # multi-hundred-MB download for every user downstream.
 deps_reused=false
 if [[ -n "$deps_inputs_tag" ]] && docker pull "$deps_image:${deps_inputs_tag}-${ARCH}"; then
@@ -93,10 +91,8 @@ if [[ "${PUSH_MAIN_TAGS:-false}" == "true" ]]; then
 fi
 push_tags "$deps_image" "${IMAGE_TAG}-${ARCH}" "${deps_tags[@]}"
 
-# By digest, never the mutable buildcache tag it used to be: `docker push`
-# records the pushed manifest as a RepoDigest, so this is the exact image just
-# published. `|| true` because pipefail would make a no-match grep abort here,
-# and the explicit check below is the better error.
+# By digest, never the mutable buildcache tag it used to be. `|| true` because
+# pipefail would make a no-match grep abort before the explicit check below.
 deps_ros_base="$(
   docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$deps_image:${IMAGE_TAG}-${ARCH}" |
     grep "^${deps_image}@sha256:" | head -n1 || true

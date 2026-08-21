@@ -86,15 +86,11 @@ seed_prebuilt_install() {
         return 1
     fi
 
-    # Seed only into a workspace with nothing to build on. Dropping the image's
-    # install/ over a local build tree leaves build/ facing an install/ made at
-    # a different prefix, and made without --symlink-install where the local
-    # build uses it: the next source edit then stops being incremental and
-    # becomes a full workspace rebuild. Measured at >20 min against 20 s.
-    #
-    # build/, not install/: an install that merely matches right now says
-    # nothing about whether a rebuild can be incremental, and reverting an edit
-    # would make it stale again and re-arm the same clobber on the next `up`.
+    # Seed only into a workspace with nothing to build on. The image's install/
+    # is made at a different prefix and without --symlink-install, so dropping it
+    # over a local build tree turns the next edit into a full rebuild: measured
+    # >20 min against 20 s. Keyed on build/ rather than install/ matching, since
+    # reverting an edit would make install/ stale again and re-arm the clobber.
     if [[ -n "$(ls -A build 2>/dev/null)" ]]; then
         echo "Local ROS build tree present; building incrementally rather than seeding."
         return 1
@@ -135,11 +131,10 @@ install_is_stale() {
     return 1
 }
 
-# Reserved for an install that cannot be built ON: no setup.zsh, or symlinks
-# pointing at nothing. A CHECKOUT change is deliberately no longer in that set
-# -- volumes are per-checkout now, the paths inside the container are identical
+# Reserved for an install that cannot be built ON. A CHECKOUT change is no
+# longer in that set: volumes are per-checkout now, container paths are identical
 # either way, and colcon_build_with_retry already cleans on the stale-symlink
-# failure when one actually happens.
+# failure when one happens.
 install_needs_clean_rebuild() {
     [[ ! -f install/setup.zsh ]] && return 0
     find install -xtype l -print -quit | grep -q . && return 0

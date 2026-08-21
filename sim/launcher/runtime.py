@@ -225,8 +225,6 @@ def run_logged_with_heartbeat(
     # A bar redrawn in place needs to be refreshed often to look like one; a
     # log file gets the slow cadence, so a CI transcript is not a flipbook.
     live = progress_formatter is not None and sys.stdout.isatty()
-    # A step draws the log tail itself (see below), which wants the same quick
-    # cadence a progress bar does -- a tail refreshed every 10s reads as stuck.
     if live or (sys.stdout.isatty() and active_step() is not None):
         heartbeat_seconds = 0.5
     drew_progress = False
@@ -260,10 +258,8 @@ def run_logged_with_heartbeat(
                     # says how far along. Before docker's first layer line is
                     # parseable that is just the clock.
                     step.detail = f"{progress}  {stamp}" if progress else stamp
-                    # The tail is for commands with nothing better to show. A
-                    # formatter means there IS something better -- the pull's
-                    # aggregate bar, which replaced exactly this layer chatter
-                    # on purpose -- so those keep the single line.
+                    # A formatter means there is something better to show: for
+                    # the pulls, the bar that replaced this very chatter.
                     if progress_formatter is None:
                         lines = [clean_log_line(line) for line in appended.splitlines()]
                         step.tail = [line for line in lines if line.strip()][-STEP_TAIL_ROWS:]
@@ -575,8 +571,6 @@ def os_compose_env(
     *,
     env_file: Path = GENERATED_OS_ENV_PATH,
 ) -> dict[str, str]:
-    # On every compose call, not just `up`: it is interpolated into
-    # `container_name:`, and compose refuses a file it cannot resolve.
     values = {
         "INNATE_OS_ENV_FILE": str(env_file),
         "INNATE_OS_CONTAINER_NAME": OS_CONTAINER_NAME,
@@ -671,11 +665,8 @@ def ensure_os_image_available(
 def adopt_published_deps_image(local_image: str, *, cwd: Path, env: dict[str, str]) -> bool:
     """Pull the published deps image and give it the local build's name.
 
-    Retagged rather than used under its own name: the two are the same bytes at
-    the same content address, so the offline resolution, the prune and the next
-    run's fast path keep working with no second notion of "the deps image".
-
-    False on any failure: a shortcut past a local build, never a prerequisite.
+    Retagged rather than used under its own name: same bytes at the same content
+    address, so every path that already looks for the local build keeps working.
     """
     deps_image = resolve_deps_image(REPO_ROOT)
     log(f"Fetching prebuilt dependencies {shorten_docker_image_ref(deps_image)}...")
@@ -710,10 +701,9 @@ def prune_stale_local_images(
 ) -> None:
     """Untag superseded content-addressed tags sharing `current_image`'s repo.
 
-    `keep_recent` holds back that many newest superseded tags, so bouncing
-    between two branches does not re-download either. Affordable only because
-    the bases are digest-pinned: a second copy costs its own layers rather than
-    a duplicate of everything beneath them.
+    `keep_recent` holds back that many newest, so a branch bounce does not
+    re-download. Affordable only because the bases are digest-pinned: a second
+    copy costs its own layers, not a duplicate of everything beneath them.
 
     The repo comes off `current_image` rather than a second argument: sweeping
     a different repo than the one being kept is the only way this can be wrong.
@@ -725,7 +715,7 @@ def prune_stale_local_images(
     try:
         listing = subprocess.run(
             # Timestamp first: keep_recent must not rest on the undocumented
-            # default ordering of a formatted listing.
+            # ordering of a formatted listing.
             ["docker", "images", "--format", "{{.CreatedAt}}\t{{.Repository}}:{{.Tag}}", repo],
             cwd=cwd,
             env=env,
@@ -749,11 +739,8 @@ def prune_stale_local_images(
 
 
 def prune_superseded_pulled_images(config: dict[str, object], *, cwd: Path, env: dict[str, str]) -> None:
-    """Sweep the image families the launcher PULLS, not just the ones it builds.
-
-    Never called under --offline: deleting the only copy of something that
-    cannot be re-fetched is a different kind of mistake from using disk.
-    """
+    """Never under --offline: deleting the only copy of something that cannot be
+    re-fetched is a different mistake from using disk."""
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     families = (
         (resolve_auto_os_image(os_repo), "inputs-", "Innate OS prebuilt", 1),
@@ -838,7 +825,6 @@ def os_container_foxglove_port_current(config: dict[str, object]) -> bool:
 
 
 def retitle_step(message: str) -> None:
-    """Rename the live step, when there is one, to the phase now running."""
     step = active_step()
     if step is not None:
         step.retitle(message)
@@ -950,8 +936,6 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
         compose_values["INNATE_OS_IMAGE"] = os_image
     compose_values["VIRTUAL_MARS_REMOTE"] = str(config.get("world_endpoint", "") or "")
     compose_env = os_compose_env(compose_values, env_file=os_env_file)
-    # Outside the branch above: the common `up` reuses a warm container, and
-    # that is exactly the run preceded by a `git pull` and a fresh image.
     if not offline:
         retitle_step("Reclaiming superseded images")
         prune_superseded_pulled_images(config, cwd=os_repo, env=compose_env)
@@ -1090,9 +1074,7 @@ def force_remove_container(name: str) -> bool:
 
 def container_in_compose_project(name: str, project: str = COMPOSE_PROJECT_NAME) -> bool:
     """True when `name` is a container `project` created, rather than a
-    hand-started one that happens to share the name. The project is a
-    parameter because the superseded shared stack is identified by the name it
-    used to have, not by this checkout's."""
+    hand-started one that happens to share the name."""
     try:
         result = subprocess.run(
             ["docker", "inspect", "-f", '{{index .Config.Labels "com.docker.compose.project"}}', name],
@@ -1124,10 +1106,8 @@ def remove_legacy_cloud_agent() -> None:
 def running_stack_from_another_checkout() -> tuple[str, str] | None:
     """(container, that checkout's path) for another clone's running stack.
 
-    Stacks are per-checkout but the ports are not (9090 and 9999 are not even
-    overridable), so the second clone to start would otherwise fail deep inside
-    compose with "already allocated". The path is read back off the container's
-    own ros2_ws bind mount, so the remedy can name where to run `down`.
+    Stacks are per-checkout but the ports are not. The path comes off the
+    container's own ros2_ws bind mount, so the remedy can name it.
     """
     try:
         listing = subprocess.run(
@@ -1170,7 +1150,6 @@ def running_stack_from_another_checkout() -> tuple[str, str] | None:
 
 
 def refuse_if_another_checkout_is_running() -> None:
-    """Stop before compose does, with the other clone's path in hand."""
     found = running_stack_from_another_checkout()
     if found is None:
         return
@@ -1187,9 +1166,8 @@ def refuse_if_another_checkout_is_running() -> None:
 def remove_legacy_shared_container() -> None:
     """Drop the single container every checkout used to share.
 
-    Only a container the OLD compose project created, so the same name run by
-    hand is left alone. Its volumes are named in the log rather than removed:
-    deleting someone's workspace build unasked is not this function's call.
+    Only one the OLD compose project created, so the same name run by hand is
+    left alone. Its volumes are named in the log rather than removed.
     """
     if not container_in_compose_project(LEGACY_SHARED_CONTAINER, LEGACY_SHARED_PROJECT):
         return
@@ -1204,7 +1182,6 @@ def remove_legacy_shared_container() -> None:
 
 
 def remove_superseded_containers() -> None:
-    """Every container an older layout of this launcher left behind."""
     remove_legacy_cloud_agent()
     remove_legacy_shared_container()
 
@@ -1239,8 +1216,8 @@ def docker_compose_cmd(*parts: str) -> list[str]:
     # only WHICH image varies (see viewer_image_ref), so there is no overlay to
     # apply on `up` and forget on every later subcommand.
     #
-    # `-p` rather than `name:` or COMPOSE_PROJECT_NAME: the flag outranks both,
-    # so no reader has to recall their precedence.
+    # `-p` rather than `name:` or COMPOSE_PROJECT_NAME: it outranks both, so no
+    # reader has to recall their precedence.
     return ["docker", "compose", "-p", COMPOSE_PROJECT_NAME, "-f", "sim/docker-compose.dev.yml", *parts]
 
 
@@ -1705,9 +1682,8 @@ def ensure_sim_assets(config: dict[str, object]) -> None:
                 f"The geometry is fetched over the registry API, so an override has to name a pushed "
                 f"image -- one that exists only in the local Docker store cannot be read here."
             ) from exc
-        # Nothing published under this name -- but the name also moves for
-        # inputs that cannot change geometry, and "push the branch" is not
-        # advice a fork can take.
+        # The name also moves for inputs that cannot change geometry, and
+        # "push the branch" is not advice a fork can take.
         if parts[2:3] == [geometry_hash] and installed:
             log("Reusing the installed geometry (geometry inputs unchanged).")
             return

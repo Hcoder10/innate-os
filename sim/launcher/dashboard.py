@@ -157,8 +157,8 @@ class DashboardRuntime:
 
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 STEP_LABEL_WIDTH = 8
-# Log rows a live step shows under its status line, as scripts/install-sim.sh
-# draws them. A step that only spins cannot be told apart from a hang.
+# As scripts/install-sim.sh draws them: a step that only spins cannot be told
+# apart from a hang.
 STEP_TAIL_ROWS = 3
 SELECTED, UNSELECTED = "●", "○"
 
@@ -292,8 +292,6 @@ class LiveStep:
     def __init__(self, label: str, message: str, done: str | None = None) -> None:
         self.label = label
         self.message = message
-        # Recent log lines, drawn under the status line. Empty keeps the step a
-        # single line, so a step that finishes instantly never flashes a region.
         self.tail: list[str] = []
         # What it says once finished; the message is what it says while
         # working, which wants a verb.
@@ -330,10 +328,9 @@ class LiveStep:
     def _draw(self, mark: str) -> None:
         """Status line plus the log tail, written once and stepped back over.
 
-        One write, not a clear followed by a draw: the region is blank between
-        the two for as long as the terminal takes to paint, which reads as
-        flicker. \033[J from the top wipes however many rows the last frame
-        used, so the tail can grow and shrink without bookkeeping.
+        One write, not a clear then a draw: the gap between them reads as
+        flicker. \033[J from the top wipes whatever the last frame used, so the
+        tail can grow and shrink without bookkeeping.
         """
         width = self._width()
         gutter = " " * STEP_LABEL_WIDTH
@@ -351,9 +348,6 @@ class LiveStep:
             frame += 1
 
     def retitle(self, message: str) -> None:
-        """Say what the step is doing NOW. One step can span phases that look
-        nothing alike -- starting a container, then a colcon build that runs for
-        minutes -- and a label stuck on the first of them describes a hang."""
         self.message = message
 
     def note(self, message: str) -> None:
@@ -401,13 +395,8 @@ def live_step(label: str, message: str, done: str | None = None):
 
 
 def clean_log_line(line: str) -> str:
-    """One log line, safe to draw inside a step's frame.
-
-    Escapes are stripped because a cursor move from the log would walk out of
-    the region the step redraws; tabs because they mis-measure the width; and
-    only the last carriage-return segment survives, which is what a terminal
-    would have shown for a progress line rewritten in place.
-    """
+    """Safe to draw inside a step's frame: an escape would walk the cursor out of
+    the redrawn region, and only the last \r segment is what a terminal shows."""
     return ANSI_ESCAPE_RE.sub("", line.split("\r")[-1]).replace("\t", " ").rstrip()
 
 
