@@ -8220,7 +8220,6 @@ select.skill-input {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding-right: 12px;
 }
 
 .agent-stream-label {
@@ -8461,7 +8460,7 @@ select.skill-input {
   position: absolute;
   z-index: 1;
   top: 25px;
-  right: 12px;
+  right: 0;
   left: 46px;
   height: 1px;
   background: rgb(255 255 255 / 10%);
