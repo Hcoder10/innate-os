@@ -17,7 +17,7 @@ export function createTelemetry(parent, rosClient) {
   wrap.className = "telemetry";
 
   const name = item("robot", "robot", "—", ROBOT_INFO_TOPIC);
-  const battery = item("battery", "batt", "—", BATTERY_STATE_TOPIC);
+  const battery = item("battery", "battery", "—", BATTERY_STATE_TOPIC);
   const link = item("link", "link", "—", "rosbridge websocket to the robot");
   const agent = item("agent", "agent", "—", `the brain's connection to its agent backend — ${WEBSOCKET_STATUS_TOPIC}`);
   wrap.append(name.el, battery.el, link.el, agent.el);
