@@ -47,10 +47,13 @@ frozen time 17-29 s/min -> 0.5 s and PLIs -> 0 with FEC at 100%.
 ## Fleet rollout (the executed pipeline)
 
 1. `scripts/update/build_gst_opt.sh` (this repo) builds the deb natively on any Jetson:
-   meson/ninja build into a DESTDIR, element + NVIDIA-plugin verification, then
-   `dpkg-deb` -> `innate-gstreamer-opt_<v>-1_arm64.deb` (~15 MB).
-2. Drop the deb at the **innate-packages** repo root — its `publish.sh` signs and
-   indexes every `*.deb` it finds, so no pipeline changes there.
+   meson/ninja build into a DESTDIR, runtime-only prune, strip + RUNPATH pinning,
+   element + NVIDIA-plugin verification, DT_NEEDED-derived Depends, then
+   `dpkg-deb -Zxz` -> `innate-gstreamer-opt_<v>-<N>jammy_arm64.deb`. Bump `DEB_INC`
+   on any rebuild of the same upstream version or apt never sees an upgrade.
+2. Commit the deb at the **innate-packages** repo root (`git add -f` — `*.deb` is
+   gitignored, exempted by name; delete the previous file). CI gates it with
+   `check-prebuilt-deb.sh --install`, and `publish.sh` signs and indexes it.
 3. `ros2_ws/apt-dependencies.hardware.txt` lists `innate-gstreamer-opt`; the normal
    `innate update apply` (post_update.sh) installs it fleet-wide.
 4. `camera_composable.launch.py` activates `/opt/gst` automatically when present.
