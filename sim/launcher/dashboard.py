@@ -157,6 +157,9 @@ class DashboardRuntime:
 
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 STEP_LABEL_WIDTH = 8
+# As scripts/install-sim.sh draws them: a step that only spins cannot be told
+# apart from a hang.
+STEP_TAIL_ROWS = 3
 SELECTED, UNSELECTED = "●", "○"
 
 
@@ -289,6 +292,7 @@ class LiveStep:
     def __init__(self, label: str, message: str, done: str | None = None) -> None:
         self.label = label
         self.message = message
+        self.tail: list[str] = []
         # What it says once finished; the message is what it says while
         # working, which wants a verb.
         self.done = done or message
@@ -310,25 +314,46 @@ class LiveStep:
         self._thread = threading.Thread(target=self._animate, daemon=True)
         self._thread.start()
 
-    def _render(self, mark: str) -> str:
-        detail = f"  {DIM}{self.detail}{NC}" if self.detail else ""
-        line = f"  {CYAN}{self.label:>{STEP_LABEL_WIDTH}}{NC}  {mark} {self.message}{detail}"
+    def _width(self) -> int:
         # A line wider than the terminal wraps, and then \r returns to the
         # start of the WRAPPED row -- every redraw leaves the previous one
         # behind, which is how a spinner becomes a wall of repeated lines.
-        return clip_to_width(line, shutil.get_terminal_size((100, 40)).columns - 1)
+        return shutil.get_terminal_size((100, 40)).columns - 1
+
+    def _render(self, mark: str) -> str:
+        detail = f"  {DIM}{self.detail}{NC}" if self.detail else ""
+        line = f"  {CYAN}{self.label:>{STEP_LABEL_WIDTH}}{NC}  {mark} {self.message}{detail}"
+        return clip_to_width(line, self._width())
+
+    def _draw(self, mark: str) -> None:
+        """Status line plus the log tail, written once and stepped back over.
+
+        One write, not a clear then a draw: the gap between them reads as
+        flicker. \033[J from the top wipes whatever the last frame used, so the
+        tail can grow and shrink without bookkeeping.
+        """
+        width = self._width()
+        gutter = " " * STEP_LABEL_WIDTH
+        rows = [self._render(mark)]
+        rows += [clip_to_width(f"  {DIM}{gutter}  │ {line}{NC}", width) for line in self.tail]
+        body = "\r\033[J" + "\n".join(f"\033[K{row}" for row in rows)
+        step_back = f"\033[{len(rows) - 1}A" if len(rows) > 1 else ""
+        sys.stdout.write(body + step_back + "\r")
+        sys.stdout.flush()
 
     def _animate(self) -> None:
         frame = 0
         while not self._stop.wait(0.12):
-            sys.stdout.write("\r\033[K" + self._render(SPINNER_FRAMES[frame % len(SPINNER_FRAMES)]))
-            sys.stdout.flush()
+            self._draw(SPINNER_FRAMES[frame % len(SPINNER_FRAMES)])
             frame += 1
+
+    def retitle(self, message: str) -> None:
+        self.message = message
 
     def note(self, message: str) -> None:
         """Print a full line above the spinner, which redraws on its next tick."""
         if self.live:
-            sys.stdout.write("\r\033[K")
+            sys.stdout.write("\r\033[J")
         print(message)
 
     def finish(self, *, ok: bool = True) -> None:
@@ -336,8 +361,10 @@ class LiveStep:
         if self._thread is not None:
             self._thread.join()
         if self.live:
-            sys.stdout.write("\r\033[K")
+            # \033[J, not \033[K: the tail rows below have to go too.
+            sys.stdout.write("\r\033[J")
             _set_cursor(CURSOR_SHOW)
+        self.tail = []
         self.detail = ""
         self.message = self.done
         print(self._render(f"{GREEN}✔{NC}" if ok else f"{RED}✗{NC}"))
@@ -365,6 +392,12 @@ def live_step(label: str, message: str, done: str | None = None):
         step.finish(ok=step.ok)
     finally:
         _active_step = previous
+
+
+def clean_log_line(line: str) -> str:
+    """Safe to draw inside a step's frame: an escape would walk the cursor out of
+    the redrawn region, and only the last \r segment is what a terminal shows."""
+    return ANSI_ESCAPE_RE.sub("", line.split("\r")[-1]).replace("\t", " ").rstrip()
 
 
 def clip_to_width(text: str, width: int) -> str:

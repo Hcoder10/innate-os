@@ -29,10 +29,15 @@ from config import (
     CLI_SIM,
     COMPOSE_LOG_PATH,
     COMPOSE_PROJECT_NAME,
+    DEPS_IMAGE_TAG_PREFIX,
     DOWN_LOG_PATH,
     GENERATED_OS_ENV_PATH,
+    GEOMETRY_INPUT_PATHSPECS,
+    HOST_REPO_ID,
     INNATE_BACKEND,
     LEGACY_CLOUD_AGENT_CONTAINER,
+    LEGACY_SHARED_CONTAINER,
+    LEGACY_SHARED_PROJECT,
     NO_BACKEND,
     OS_BUILD_LOG_PATH,
     OS_CONTAINER_NAME,
@@ -54,10 +59,13 @@ from config import (
     WORLD_SERVER_PORT,
     DockerUnresponsiveError,
     StackError,
+    compute_geometry_inputs_hash,
     compute_ros_install_validation_hash,
     ensure_state_dir,
     log,
     resolve_assets_image,
+    resolve_auto_os_image,
+    resolve_deps_image,
     resolve_local_os_image,
     resolve_local_viewer_image,
     resolve_viewer_image,
@@ -71,8 +79,10 @@ from dashboard import (
     NC,
     RED,
     STEP_LABEL_WIDTH,
+    STEP_TAIL_ROWS,
     USE_COLOR,
     active_step,
+    clean_log_line,
     format_bytes,
     live_step,
     render_progress_bar,
@@ -215,7 +225,7 @@ def run_logged_with_heartbeat(
     # A bar redrawn in place needs to be refreshed often to look like one; a
     # log file gets the slow cadence, so a CI transcript is not a flipbook.
     live = progress_formatter is not None and sys.stdout.isatty()
-    if live:
+    if live or (sys.stdout.isatty() and active_step() is not None):
         heartbeat_seconds = 0.5
     drew_progress = False
     with log_path.open("a", encoding="utf-8") as log_file:
@@ -248,6 +258,11 @@ def run_logged_with_heartbeat(
                     # says how far along. Before docker's first layer line is
                     # parseable that is just the clock.
                     step.detail = f"{progress}  {stamp}" if progress else stamp
+                    # A formatter means there is something better to show: for
+                    # the pulls, the bar that replaced this very chatter.
+                    if progress_formatter is None:
+                        lines = [clean_log_line(line) for line in appended.splitlines()]
+                        step.tail = [line for line in lines if line.strip()][-STEP_TAIL_ROWS:]
                 elif progress and live:
                     print(f"\r\033[K  {progress}  {DIM}{stamp}{NC}", end="", flush=True)
                     drew_progress = True
@@ -556,7 +571,10 @@ def os_compose_env(
     *,
     env_file: Path = GENERATED_OS_ENV_PATH,
 ) -> dict[str, str]:
-    values = {"INNATE_OS_ENV_FILE": str(env_file)}
+    values = {
+        "INNATE_OS_ENV_FILE": str(env_file),
+        "INNATE_OS_CONTAINER_NAME": OS_CONTAINER_NAME,
+    }
     if base_env:
         values.update(base_env)
     return docker_compose_env(values)
@@ -644,24 +662,61 @@ def ensure_os_image_available(
     )
 
 
-def prune_stale_local_images(current_image: str, *, cwd: Path, env: dict[str, str], label: str) -> None:
-    """Untag superseded local builds sharing `current_image`'s repo.
+def adopt_published_deps_image(local_image: str, *, cwd: Path, env: dict[str, str]) -> bool:
+    """Pull the published deps image and give it the local build's name.
 
-    Both local builds -- the OS fallback and the viewer bundle -- are tagged
-    `<repo>:inputs-<hash>`, so each input change mints a new tag and strands
-    the old one in `docker images` forever.
+    Retagged rather than used under its own name: same bytes at the same content
+    address, so every path that already looks for the local build keeps working.
+    """
+    deps_image = resolve_deps_image(REPO_ROOT)
+    log(f"Fetching prebuilt dependencies {shorten_docker_image_ref(deps_image)}...")
+    plat = _docker_platform()
+    try:
+        run_logged_with_heartbeat(
+            ["docker", "pull", *(["--platform", plat] if plat else []), deps_image],
+            cwd=cwd,
+            env=env,
+            log_path=COMPOSE_LOG_PATH,
+            failure_message=f"Could not pull the prebuilt dependency image: {shorten_docker_image_ref(deps_image)}",
+            progress_message="Docker is still pulling the dependency image.",
+            include_recent_log_on_failure=False,
+            progress_formatter=docker_pull_progress,
+        )
+    except StackError:
+        return False
+    if not command_succeeds(["docker", "tag", deps_image, local_image], cwd=cwd, env=env):
+        return False
+    log("Using the published dependency image; skipping the local Docker build.")
+    return True
+
+
+def prune_stale_local_images(
+    current_image: str,
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    label: str,
+    tag_prefix: str = "inputs-",
+    keep_recent: int = 0,
+) -> None:
+    """Untag superseded content-addressed tags sharing `current_image`'s repo.
+
+    `keep_recent` holds back that many newest, so a branch bounce does not
+    re-download. Affordable only because the bases are digest-pinned: a second
+    copy costs its own layers, not a duplicate of everything beneath them.
 
     The repo comes off `current_image` rather than a second argument: sweeping
     a different repo than the one being kept is the only way this can be wrong.
     rpartition takes the LAST colon, so a registry:port survives.
 
-    Best-effort: an image still used by a container simply fails to untag and
-    is left alone.
+    Best-effort: an image still used by a container fails to untag and is left.
     """
     repo = current_image.rpartition(":")[0]
     try:
         listing = subprocess.run(
-            ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}", repo],
+            # Timestamp first: keep_recent must not rest on the undocumented
+            # ordering of a formatted listing.
+            ["docker", "images", "--format", "{{.CreatedAt}}\t{{.Repository}}:{{.Tag}}", repo],
             cwd=cwd,
             env=env,
             text=True,
@@ -674,13 +729,27 @@ def prune_stale_local_images(current_image: str, *, cwd: Path, env: dict[str, st
         return
     if listing.returncode != 0:
         return
-    stale = [ref for ref in listing.stdout.split() if ref != current_image and ref.startswith(f"{repo}:inputs-")]
-    pruned = 0
-    for ref in stale:
-        if command_succeeds(["docker", "rmi", ref], cwd=cwd, env=env):
-            pruned += 1
+    rows = [line.split("\t", 1) for line in listing.stdout.splitlines() if "\t" in line]
+    stale = [
+        ref for _, ref in sorted(rows, reverse=True) if ref != current_image and ref.startswith(f"{repo}:{tag_prefix}")
+    ]
+    pruned = sum(command_succeeds(["docker", "rmi", ref], cwd=cwd, env=env) for ref in stale[keep_recent:])
     if pruned:
-        log(f"Pruned {pruned} superseded local {label} image tag(s).")
+        log(f"Pruned {pruned} superseded {label} image tag(s).")
+
+
+def prune_superseded_pulled_images(config: dict[str, object], *, cwd: Path, env: dict[str, str]) -> None:
+    """Never under --offline: deleting the only copy of something that cannot be
+    re-fetched is a different mistake from using disk."""
+    os_repo: Path = config["os_repo"]  # type: ignore[assignment]
+    families = (
+        (resolve_auto_os_image(os_repo), "inputs-", "Innate OS prebuilt", 1),
+        (resolve_deps_image(os_repo), DEPS_IMAGE_TAG_PREFIX, "dependency", 1),
+        (resolve_viewer_image(os_repo), "inputs-", "sim viewer bundle", 1),
+        (resolve_assets_image(os_repo), "inputs-", "sim asset", 0),
+    )
+    for current, prefix, label, keep in families:
+        prune_stale_local_images(current, cwd=cwd, env=env, label=label, tag_prefix=prefix, keep_recent=keep)
 
 
 # Directories the container's ROS nodes create lazily on the workspace
@@ -755,6 +824,12 @@ def os_container_foxglove_port_current(config: dict[str, object]) -> bool:
     return any(line.strip().endswith(f":{published}") for line in result.stdout.splitlines())
 
 
+def retitle_step(message: str) -> None:
+    step = active_step()
+    if step is not None:
+        step.retitle(message)
+
+
 def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline: bool = False) -> None:
     os_repo: Path = config["os_repo"]  # type: ignore[assignment]
     os_image = str(config["os_image"]).strip()
@@ -770,6 +845,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
     if reuse_running_container:
         log("Innate OS dev container already running.")
     else:
+        refuse_if_another_checkout_is_running()
         up_cmd = docker_compose_cmd("up", "-d")
         if offline:
             # Reuse an image that is already local; never pull or build, which
@@ -820,11 +896,17 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
                     )
                     os_image = local_image
                     up_cmd.append("--no-build")
+                elif bool(config["os_pull_image"]) and adopt_published_deps_image(
+                    local_image, cwd=os_repo, env=compose_probe_env
+                ):
+                    os_image = local_image
+                    up_cmd.append("--no-build")
                 else:
                     warn(
                         "No matching prebuilt Innate OS image is available for this checkout "
-                        f"({shorten_docker_image_ref(os_image)}). Building it locally instead. "
-                        f"Pull details are in {COMPOSE_LOG_PATH}."
+                        f"({shorten_docker_image_ref(os_image)}), and no published dependency image "
+                        "either. Building it locally instead -- this takes 25-30 minutes once. "
+                        f"Details are in {COMPOSE_LOG_PATH}."
                     )
                     os_image = local_image
                     up_cmd.append("--build")
@@ -837,6 +919,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
         compose_values["VIRTUAL_MARS_REMOTE"] = str(config.get("world_endpoint", "") or "")
         compose_env = os_compose_env(compose_values, env_file=os_env_file)
         log("Starting Innate OS dev container...")
+        retitle_step("Starting the Innate OS container")
         run_logged_with_heartbeat(
             up_cmd,
             cwd=os_repo,
@@ -853,11 +936,12 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
         compose_values["INNATE_OS_IMAGE"] = os_image
     compose_values["VIRTUAL_MARS_REMOTE"] = str(config.get("world_endpoint", "") or "")
     compose_env = os_compose_env(compose_values, env_file=os_env_file)
-    host_repo_id = hashlib.sha256(str(os_repo.resolve()).encode("utf-8")).hexdigest()[:16]
-
+    if not offline:
+        retitle_step("Reclaiming superseded images")
+        prune_superseded_pulled_images(config, cwd=os_repo, env=compose_env)
     build_cmd = (
         f"INNATE_OS_ALWAYS_BUILD={1 if config['os_always_build'] else 0} "
-        f"INNATE_OS_HOST_REPO_ID={shlex.quote(host_repo_id)} "
+        f"INNATE_OS_HOST_REPO_ID={shlex.quote(HOST_REPO_ID)} "
         "~/innate-os/scripts/validate_sim_ros_install.zsh"
     )
 
@@ -877,6 +961,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
         log("ROS workspace install already validated for this checkout.")
     else:
         log("Building / validating the ROS workspace inside the container...")
+        retitle_step("Building the ROS workspace (first build takes a few minutes)")
         run_logged_with_heartbeat(
             os_compose_zsh_cmd(build_cmd),
             cwd=os_repo,
@@ -889,6 +974,7 @@ def ensure_os_container(config: dict[str, object], os_env_file: Path, *, offline
         ROS_INSTALL_STATE_PATH.write_text(f"{ros_inputs_hash}\n", encoding="utf-8")
 
     log("Launching ROS simulation nodes inside the OS container...")
+    retitle_step("Launching the ROS nodes")
     launch_script = (
         "INNATE_SIM_TMUX_SETTLE_SECONDS=${INNATE_SIM_TMUX_SETTLE_SECONDS:-0} "
         "INNATE_SIM_TMUX_CLEANUP_SETTLE_SECONDS=${INNATE_SIM_TMUX_CLEANUP_SETTLE_SECONDS:-0} "
@@ -957,7 +1043,7 @@ def down_os(config: dict[str, object], *, remove_volumes: bool = False) -> None:
 
 def clean_runtime(config: dict[str, object]) -> None:
     """Stop the runtime and delete all related Docker resources."""
-    remove_legacy_cloud_agent()
+    remove_superseded_containers()
     log("Removing Innate OS containers, networks, and named volumes...")
     down_os(config, remove_volumes=True)
     # Belt-and-suspenders: force-remove named containers that may linger outside
@@ -986,9 +1072,9 @@ def force_remove_container(name: str) -> bool:
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
-def container_in_compose_project(name: str) -> bool:
-    """True when `name` is a container this launcher's compose project created,
-    rather than a hand-started one that happens to share the name."""
+def container_in_compose_project(name: str, project: str = COMPOSE_PROJECT_NAME) -> bool:
+    """True when `name` is a container `project` created, rather than a
+    hand-started one that happens to share the name."""
     try:
         result = subprocess.run(
             ["docker", "inspect", "-f", '{{index .Config.Labels "com.docker.compose.project"}}', name],
@@ -1000,7 +1086,7 @@ def container_in_compose_project(name: str) -> bool:
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
-    return result.returncode == 0 and result.stdout.strip() == COMPOSE_PROJECT_NAME
+    return result.returncode == 0 and result.stdout.strip() == project
 
 
 def remove_legacy_cloud_agent() -> None:
@@ -1015,6 +1101,89 @@ def remove_legacy_cloud_agent() -> None:
         return
     if force_remove_container(LEGACY_CLOUD_AGENT_CONTAINER):
         log("Removed the leftover cloud-agent container; the brain now runs inside brain_client.")
+
+
+def running_stack_from_another_checkout() -> tuple[str, str] | None:
+    """(container, that checkout's path) for another clone's running stack.
+
+    Stacks are per-checkout but the ports are not. The path comes off the
+    container's own ros2_ws bind mount, so the remedy can name it.
+    """
+    try:
+        listing = subprocess.run(
+            ["docker", "ps", "--filter", "label=com.docker.compose.project", "--format", "{{.Names}}"],
+            text=True,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+            timeout=DOCKER_PROBE_TIMEOUT_S,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None  # a probe that cannot answer must not block a start
+    if listing.returncode != 0:
+        return None
+    for name in listing.stdout.split():
+        if name == OS_CONTAINER_NAME or not name.startswith(f"{LEGACY_SHARED_CONTAINER}-"):
+            continue
+        try:
+            mounts = subprocess.run(
+                [
+                    "docker",
+                    "inspect",
+                    "-f",
+                    '{{range .Mounts}}{{if eq .Destination "/root/innate-os/ros2_ws"}}{{.Source}}{{end}}{{end}}',
+                    name,
+                ],
+                text=True,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                check=False,
+                timeout=DOCKER_PROBE_TIMEOUT_S,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return (name, "")
+        source = mounts.stdout.strip() if mounts.returncode == 0 else ""
+        # Docker Desktop prefixes the host path; strip it to something cd-able.
+        checkout = source[len("/host_mnt") :] if source.startswith("/host_mnt/") else source
+        return (name, str(Path(checkout).parent) if checkout else "")
+    return None
+
+
+def refuse_if_another_checkout_is_running() -> None:
+    found = running_stack_from_another_checkout()
+    if found is None:
+        return
+    container, checkout = found
+    where = f"  cd {checkout} && {CLI_SIM} down" if checkout else f"  docker stop {container}"
+    raise StackError(
+        f"Another checkout's simulator is already running ({container}).\n"
+        "Each checkout keeps its own container and workspace build, but they share this machine's "
+        "ports (9090 and 9999 are not overridable), so only one can be up at a time.\n"
+        f"Stop that one first:\n{where}"
+    )
+
+
+def remove_legacy_shared_container() -> None:
+    """Drop the single container every checkout used to share.
+
+    Only one the OLD compose project created, so the same name run by hand is
+    left alone. Its volumes are named in the log rather than removed.
+    """
+    if not container_in_compose_project(LEGACY_SHARED_CONTAINER, LEGACY_SHARED_PROJECT):
+        return
+    if force_remove_container(LEGACY_SHARED_CONTAINER):
+        log(
+            "Removed the shared Innate OS container; each checkout now gets its own.\n"
+            "This checkout rebuilds its ROS workspace once. Reclaim the old shared one with:\n"
+            f"  docker volume rm {LEGACY_SHARED_PROJECT}_ros2_ws_build "
+            f"{LEGACY_SHARED_PROJECT}_ros2_ws_install {LEGACY_SHARED_PROJECT}_ros2_ws_log "
+            f"{LEGACY_SHARED_PROJECT}_ccache"
+        )
+
+
+def remove_superseded_containers() -> None:
+    remove_legacy_cloud_agent()
+    remove_legacy_shared_container()
 
 
 def tail_file(path: Path, limit: int = 40) -> str:
@@ -1046,7 +1215,10 @@ def docker_compose_cmd(*parts: str) -> list[str]:
     # One compose file for every invocation: dist-lib is always an image mount,
     # only WHICH image varies (see viewer_image_ref), so there is no overlay to
     # apply on `up` and forget on every later subcommand.
-    return ["docker", "compose", "-f", "sim/docker-compose.dev.yml", *parts]
+    #
+    # `-p` rather than `name:` or COMPOSE_PROJECT_NAME: it outranks both, so no
+    # reader has to recall their precedence.
+    return ["docker", "compose", "-p", COMPOSE_PROJECT_NAME, "-f", "sim/docker-compose.dev.yml", *parts]
 
 
 def os_compose_exec_cmd(*parts: str) -> list[str]:
@@ -1474,7 +1646,8 @@ def ensure_sim_assets(config: dict[str, object]) -> None:
     marker = sim_repo / "assets" / ".assets-tag"
     image = assets_image_ref(config)
 
-    # The marker holds "<digest> <image ref>". Keyed on the geometry layer's
+    # The marker holds "<digest> <image ref> <geometry inputs hash>". Keyed on
+    # the geometry layer's
     # digest, not the tag: the tag moves whenever any tracked input changes,
     # so re-extracting 168 MB for a viewer-source edit would be waste.
     #
@@ -1493,7 +1666,8 @@ def ensure_sim_assets(config: dict[str, object]) -> None:
     # ref is content-addressed and ci/build_assets_image.sh never rebuilds an
     # existing tag. NOT valid for an INNATE_SIM_ASSETS_IMAGE override, which
     # may name a mutable tag -- those probe the manifest every time.
-    if not os.environ.get("INNATE_SIM_ASSETS_IMAGE", "").strip() and parts[1:] == [image] and installed:
+    geometry_hash = compute_geometry_inputs_hash(config["os_repo"])  # type: ignore[arg-type]
+    if not os.environ.get("INNATE_SIM_ASSETS_IMAGE", "").strip() and parts[1:2] == [image] and installed:
         return
 
     try:
@@ -1508,17 +1682,23 @@ def ensure_sim_assets(config: dict[str, object]) -> None:
                 f"The geometry is fetched over the registry API, so an override has to name a pushed "
                 f"image -- one that exists only in the local Docker store cannot be read here."
             ) from exc
+        # The name also moves for inputs that cannot change geometry, and
+        # "push the branch" is not advice a fork can take.
+        if parts[2:3] == [geometry_hash] and installed:
+            log("Reusing the installed geometry (geometry inputs unchanged).")
+            return
         raise StackError(
             f"No published sim asset image for this checkout ({shorten_docker_image_ref(image)}): {exc}\n"
-            f"Editing anything the image is built from renames it. Push the branch so CI publishes "
-            f"it, or set INNATE_SIM_ASSETS_IMAGE to one that exists."
+            f"The geometry inputs themselves changed ({', '.join(GEOMETRY_INPUT_PATHSPECS)}), so what is "
+            f"installed no longer describes this checkout. Push the branch so CI publishes it, or set "
+            f"INNATE_SIM_ASSETS_IMAGE to one that exists."
         ) from exc
     digest = manifest["layers"][ASSETS_IMAGE_LAYERS.index("work")]["digest"]
 
     if parts[:1] == [digest] and installed:
         # Same geometry under a new ref (or an old digest-only marker):
         # remember the ref so the next run skips the probe above.
-        marker.write_text(f"{digest} {image}\n")
+        marker.write_text(f"{digest} {image} {geometry_hash}\n")
         return
 
     log(f"Downloading sim assets {digest[7:19]} (~85 MB, one-time)...")
@@ -1572,7 +1752,7 @@ def ensure_sim_assets(config: dict[str, object]) -> None:
         # OUTSIDE the units, so the per-unit replacement leaves it behind.
         shutil.rmtree(sim_repo / "assets" / ".model_cache", ignore_errors=True)
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(f"{digest} {image}\n")
+        marker.write_text(f"{digest} {image} {geometry_hash}\n")
         log(f"Sim assets {digest[7:19]} installed.")
     finally:
         blob.unlink(missing_ok=True)
@@ -1593,6 +1773,7 @@ def ensure_viewer_public_assets(config: dict[str, object]) -> None:
         sim_repo / "viewer" / "public",
         sim_repo / "viewer" / "public" / ".installed-tag",
         label="viewer assets",
+        geometry_hash=compute_geometry_inputs_hash(config["os_repo"]),  # type: ignore[arg-type]
     )
 
 
@@ -1604,6 +1785,7 @@ def install_layer_subtree(
     marker: Path,
     *,
     label: str,
+    geometry_hash: str | None = None,
 ) -> None:
     """Put one subtree of one image layer on disk, idempotently.
 
@@ -1617,19 +1799,28 @@ def install_layer_subtree(
     (like sim/assets/.assets-tag): both are gitignored, so neither shows up as
     a working-tree change -- which would make every checkout look dirty and
     send the viewer bundle down the local-build path forever -- and deleting
-    the directory forgets the marker with it. It holds "<layer digest> <ref>" --
-    the digest, so a tag that moved for an unrelated input does not re-fetch,
-    and the ref, so an override that renames the image does.
+    the directory forgets the marker with it. It holds
+    "<layer digest> <ref> [<geometry inputs hash>]" -- the digest, so a tag
+    that moved for an unrelated input does not re-fetch; the ref, so an
+    override that renames the image does; and the narrow hash, so an
+    unpublished tag can be told from a real change (see ensure_sim_assets).
     """
     parts = marker.read_text().split() if marker.exists() else []
-    if parts[1:] == [image] and destination.is_dir() and any(destination.iterdir()):
+    populated = destination.is_dir() and any(destination.iterdir())
+    if parts[1:2] == [image] and populated:
         return
 
-    manifest = oci.manifest_for_image(image)
+    try:
+        manifest = oci.manifest_for_image(image)
+    except oci.OciError:
+        if geometry_hash is not None and parts[2:3] == [geometry_hash] and populated:
+            log(f"Reusing the installed {label} (geometry inputs unchanged).")
+            return
+        raise
     digest = manifest["layers"][layer_index]["digest"]
-    if parts[:1] == [digest] and destination.is_dir() and any(destination.iterdir()):
+    if parts[:1] == [digest] and populated:
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(f"{digest} {image}\n")
+        marker.write_text(f"{digest} {image} {geometry_hash or ''}\n")
         return
 
     # Staged beside the destination so the install is a rename, not a copy
@@ -1651,7 +1842,7 @@ def install_layer_subtree(
         shutil.rmtree(destination, ignore_errors=True)
         shutil.move(str(source), str(destination))
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(f"{digest} {image}\n")
+        marker.write_text(f"{digest} {image} {geometry_hash or ''}\n")
         log(f"{label} {digest[7:19]} installed.")
     finally:
         blob.unlink(missing_ok=True)

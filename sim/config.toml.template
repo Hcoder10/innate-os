@@ -3,14 +3,22 @@
 # Leave values commented to use the built-in defaults.
 
 [os]
-# Optional prebuilt Innate OS image. By default, the launcher tries a
-# content-addressed prebuilt image matching this checkout, then falls back to
-# the local Docker build if no matching image is available.
+# Optional prebuilt Innate OS image. By default ("auto") the launcher tries a
+# content-addressed prebuilt image matching this checkout; failing that, the
+# published dependency image (which carries no workspace, so it matches any
+# source tree); failing that, a local Docker build.
 # image = "auto"
 #
 # Other options:
-# image = "local"
+# image = "local"    # never consult the registry, and use the compose default
+#                    # innate-os-sim-clean-innate:latest -- a MUTABLE tag, so
+#                    # it is not rebuilt when sim/Dockerfile or the apt lists
+#                    # change. Prefer pull_image = false below, which stays
+#                    # content-addressed.
 # image = "ghcr.io/innate-inc/innate-os-sim-ros:main"
+#
+# Whether "auto" may reach the network: false uses whatever is already on this
+# machine and builds anything missing locally.
 # pull_image = true
 
 # Run `colcon build` on every startup. Leave false for incremental startup:

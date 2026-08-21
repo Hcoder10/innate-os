@@ -62,6 +62,7 @@ jobs:
     outputs:
       image_tag: ${{ steps.image_tags.outputs.image_tag }}
       image_inputs_hash: ${{ steps.image_tags.outputs.image_inputs_hash }}
+      deps_inputs_hash: ${{ steps.image_tags.outputs.deps_inputs_hash }}
       assets_inputs_hash: ${{ steps.image_tags.outputs.assets_inputs_hash }}
       assets_published: ${{ steps.image_tags.outputs.assets_published }}
       push_main_tags: ${{ steps.image_tags.outputs.push_main_tags }}
@@ -83,6 +84,11 @@ jobs:
           # Shared with cleanup-sim-images.yml, which pins main's
           # inputs-<hash> versions against retention.
           image_inputs_hash="$(python3 sim/launcher/config.py sim-image-hash)"
+          # The deps image's own address: sim/Dockerfile plus the apt lists,
+          # with no ros2_ws/src in it, so this tag stands still while the ROS
+          # image's moves per commit. That standing-still is the point -- it is
+          # what the launcher pulls instead of a 25-30 min local build.
+          deps_inputs_hash="$(python3 sim/launcher/config.py deps-image-hash)"
           assets_inputs_hash="$(python3 sim/launcher/config.py assets-image-hash)"
           short_sha="${GITHUB_SHA::12}"
           # Every build is content/commit-addressed (sha-, inputs-); only
@@ -104,6 +110,7 @@ jobs:
 
           echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
           echo "image_inputs_hash=${image_inputs_hash}" >> "$GITHUB_OUTPUT"
+          echo "deps_inputs_hash=${deps_inputs_hash}" >> "$GITHUB_OUTPUT"
           echo "assets_inputs_hash=${assets_inputs_hash}" >> "$GITHUB_OUTPUT"
           echo "assets_published=${assets_published}" >> "$GITHUB_OUTPUT"
           echo "push_main_tags=${push_main_tags}" >> "$GITHUB_OUTPUT"
@@ -140,7 +147,7 @@ jobs:
             --gcs-source-staging-dir="${{ vars.GCP_CLOUD_BUILD_SOURCE_STAGING_DIR }}" \
             --service-account="projects/${{ vars.GCP_PROJECT_ID }}/serviceAccounts/${{ vars.GCP_CLOUD_BUILD_SERVICE_ACCOUNT }}" \
             --config=ci/cloudbuild.sim-images.yaml \
-            --substitutions="_IMAGE_PREFIX=${{ vars.SIM_IMAGE_PREFIX }},_IMAGE_TAG=${{ needs.tags.outputs.image_tag }},_IMAGE_INPUTS_HASH=${{ needs.tags.outputs.image_inputs_hash }},_PUSH_MAIN_TAGS=${{ needs.tags.outputs.push_main_tags }},_GHCR_USERNAME_SECRET=${{ vars.GHCR_USERNAME_SECRET }},_GHCR_TOKEN_SECRET=${{ vars.GHCR_TOKEN_SECRET }},_COMMIT_SHA=${GITHUB_SHA},_SHORT_SHA=${{ needs.tags.outputs.short_sha }}"
+            --substitutions="_IMAGE_PREFIX=${{ vars.SIM_IMAGE_PREFIX }},_IMAGE_TAG=${{ needs.tags.outputs.image_tag }},_IMAGE_INPUTS_HASH=${{ needs.tags.outputs.image_inputs_hash }},_DEPS_INPUTS_HASH=${{ needs.tags.outputs.deps_inputs_hash }},_PUSH_MAIN_TAGS=${{ needs.tags.outputs.push_main_tags }},_GHCR_USERNAME_SECRET=${{ vars.GHCR_USERNAME_SECRET }},_GHCR_TOKEN_SECRET=${{ vars.GHCR_TOKEN_SECRET }},_COMMIT_SHA=${GITHUB_SHA},_SHORT_SHA=${{ needs.tags.outputs.short_sha }}"
 
   arm64:
     needs: tags
@@ -169,6 +176,7 @@ jobs:
           IMAGE_PREFIX: ${{ vars.SIM_IMAGE_PREFIX }}
           IMAGE_TAG: ${{ needs.tags.outputs.image_tag }}
           IMAGE_INPUTS_HASH: ${{ needs.tags.outputs.image_inputs_hash }}
+          DEPS_INPUTS_HASH: ${{ needs.tags.outputs.deps_inputs_hash }}
           PUSH_MAIN_TAGS: ${{ needs.tags.outputs.push_main_tags }}
           COMMIT_SHA: ${{ github.sha }}
           SHORT_SHA: ${{ needs.tags.outputs.short_sha }}
@@ -198,6 +206,7 @@ jobs:
           IMAGE_PREFIX: ${{ vars.SIM_IMAGE_PREFIX }}
           IMAGE_TAG: ${{ needs.tags.outputs.image_tag }}
           IMAGE_INPUTS_HASH: ${{ needs.tags.outputs.image_inputs_hash }}
+          DEPS_INPUTS_HASH: ${{ needs.tags.outputs.deps_inputs_hash }}
           PUSH_MAIN_TAGS: ${{ needs.tags.outputs.push_main_tags }}
           SHORT_SHA: ${{ needs.tags.outputs.short_sha }}
         run: bash ci/stitch_sim_manifests.sh
@@ -205,6 +214,7 @@ jobs:
       - name: Published image tags
         run: |
           echo "${{ vars.SIM_IMAGE_PREFIX }}/innate-os-sim-deps:inputs-${{ needs.tags.outputs.image_inputs_hash }} (multi-arch)"
+          echo "${{ vars.SIM_IMAGE_PREFIX }}/innate-os-sim-deps:deps-${{ needs.tags.outputs.deps_inputs_hash }} (multi-arch)"
           echo "${{ vars.SIM_IMAGE_PREFIX }}/innate-os-sim-ros:inputs-${{ needs.tags.outputs.image_inputs_hash }} (multi-arch)"
 
   # The layered sim asset image. Independent of the colcon images above: no

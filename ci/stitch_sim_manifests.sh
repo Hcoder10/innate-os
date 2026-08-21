@@ -9,7 +9,7 @@
 #   - .github/workflows/publish-sim-images.yml (manifest job)
 #
 # Required env: IMAGE_PREFIX, IMAGE_TAG, SHORT_SHA
-# Optional env: IMAGE_INPUTS_HASH, PUSH_MAIN_TAGS
+# Optional env: IMAGE_INPUTS_HASH, DEPS_INPUTS_HASH, PUSH_MAIN_TAGS
 # The caller must already be logged in to the registry.
 set -euo pipefail
 
@@ -28,9 +28,13 @@ fi
 # tag pointers are written back-to-back, keeping the window where a cancelled
 # run leaves some tags stitched and others stale to near zero.
 for image in "${IMAGE_PREFIX}/innate-os-sim-deps" "${IMAGE_PREFIX}/innate-os-sim-ros"; do
+  image_tags=("${tags[@]}")
+  if [[ "$image" == *"/innate-os-sim-deps" && -n "${DEPS_INPUTS_HASH:-}" && "${DEPS_INPUTS_HASH}" != "manual" ]]; then
+    image_tags+=("deps-${DEPS_INPUTS_HASH}")
+  fi
   tag_args=()
   seen="|"
-  for tag in "${tags[@]}"; do
+  for tag in "${image_tags[@]}"; do
     if [[ "$seen" == *"|$tag|"* ]]; then
       continue
     fi
