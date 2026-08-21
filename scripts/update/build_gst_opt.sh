@@ -57,8 +57,8 @@ GST="$ROOT$PREFIX"
 # home. Each pruned plugin below is the sole consumer of a heavy external dep
 # (qmlgl alone drags in Qt5); openh264/fdk-aac also carry licenses we must
 # not redistribute from a public apt repo.
-rm -rf "$GST/include" "$GST/$LIBDIR/pkgconfig" "$GST/$LIBDIR/cmake" \
-       "$GST/$LIBDIR/gstreamer-1.0/include" "$GST/libexec/installed-tests" \
+rm -rf "$GST/$LIBDIR/pkgconfig" "$GST/$LIBDIR/cmake" \
+       "$GST/libexec/installed-tests" \
        "$GST/share/man" "$GST/share/aclocal" "$GST/share/gdb" \
        "$GST/share/installed-tests" "$GST/share/bash-completion"
 find "$GST/bin" -maxdepth 1 \( -type f -o -type l \) ! -name 'gst-*' -delete
@@ -73,15 +73,18 @@ for p in openh264 fdkaac qmlgl ximagesrc ximagesink rfbsrc aom dc1394 de265 \
   rm -f "$GST/$LIBDIR/gstreamer-1.0/libgst$p.so"
 done
 find "$GST/$LIBDIR" -maxdepth 1 -type l -name 'lib*.so' -delete
+# Subprojects nest more include/ dirs under lib (graphene does).
+find "$GST" -type d -name include -prune -exec rm -rf {} +
 
 # $ORIGIN-relative RUNPATH (not LD_LIBRARY_PATH) is what makes /opt/gst
 # self-contained next to the system GStreamer: without it, gst-inspect-1.0
 # run by hand binds the system 1.20 core and rejects every 1.24 plugin.
 find "$ROOT" -type f | while read -r f; do
+  readelf -h "$f" >/dev/null 2>&1 || continue
+  strip --strip-unneeded "$f"
   # grep without -q: an early exit would SIGPIPE readelf and, under pipefail,
   # silently skip ELFs that do have NEEDED entries.
   readelf -d "$f" 2>/dev/null | grep NEEDED >/dev/null || continue
-  strip --strip-unneeded "$f"
   rel=$(realpath --relative-to="$(dirname "$f")" "$GST/$LIBDIR")
   patchelf --set-rpath "\$ORIGIN/$rel" "$f"
 done
