@@ -13,6 +13,7 @@
 // props.ts do not form a runtime cycle.
 
 import * as THREE from "three";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { PropInfo, PropViewerDef } from "./props";
 
@@ -83,7 +84,7 @@ export class PropModels {
 
   async #parse(info: PropInfo): Promise<THREE.Group | null> {
     try {
-      const gltf = await new GLTFLoader().loadAsync(info.viewer.glb!);
+      const gltf = await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(info.viewer.glb!);
       normalizeModel(gltf.scene, info.viewer);
       gltf.scene.traverse((obj) => {
         if (obj instanceof THREE.Mesh) {
