@@ -580,6 +580,13 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
    *  hasDetail: boolean
    * }>} */
   const skillRuns = new Map();
+  /** @type {{
+   *  name: string,
+   *  wraps: HTMLElement[],
+   *  group: HTMLElement | null,
+   *  list: HTMLElement | null,
+   * } | null} */
+  let skillStreak = null;
 
   /** @param {"compact" | "detailed"} mode */
   function setStreamMode(mode) {
@@ -690,6 +697,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   function addMessage(kind, text, ts, label) {
     const wasAtBottom = atBottom();
     finalizeThoughts();
+    if (kind === "user" || kind === "robot") skillStreak = null;
     const el = document.createElement("div");
     el.className = `chat-msg ${kind}`;
     el.classList.toggle("skill-output", label === "skill_output");
@@ -714,15 +722,118 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     }
   }
 
+  /** @param {string} name */
+  function startSkillStreak(name) {
+    skillStreak = {
+      name,
+      wraps: [],
+      group: null,
+      list: null,
+    };
+  }
+
+  /** @param {string} name @param {HTMLElement} wrap @returns {boolean} */
+  function attachSkillToStreak(name, wrap) {
+    const key = skillNameKey(name);
+    if (!skillStreak || skillStreak.name !== key) startSkillStreak(key);
+    if (!skillStreak) return false;
+    skillStreak.wraps.push(wrap);
+    if (skillStreak.wraps.length < SKILL_GROUP_MIN) return false;
+    if (!skillStreak.group) promoteSkillStreak(skillStreak);
+    else skillStreak.list?.append(wrap);
+    if (skillStreak.group) refreshSkillGroupEl(skillStreak.group);
+    return true;
+  }
+
+  /** @param {NonNullable<typeof skillStreak>} streak */
+  function promoteSkillStreak(streak) {
+    const group = document.createElement("div");
+    group.className = "chat-skill-group";
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "chat-skill-head";
+    head.setAttribute("aria-expanded", "false");
+    const icon = document.createElement("span");
+    icon.className = "chat-skill-icon";
+    icon.setAttribute("aria-hidden", "true");
+    const copy = document.createElement("span");
+    copy.className = "chat-skill-copy";
+    const title = document.createElement("span");
+    title.className = "chat-skill-name-row";
+    const nameEl = document.createElement("span");
+    nameEl.className = "chat-skill-name";
+    const firstName = streak.wraps[0]?.querySelector(".chat-skill-name");
+    nameEl.textContent = firstName instanceof HTMLElement ? firstName.textContent : streak.name;
+    const count = document.createElement("span");
+    count.className = "chat-skill-count";
+    title.append(nameEl, count);
+    const summary = document.createElement("span");
+    summary.className = "chat-skill-summary";
+    copy.append(title, summary);
+    const statusEl = document.createElement("span");
+    statusEl.className = "chat-skill-status";
+    const chevron = document.createElement("span");
+    chevron.className = "chat-skill-chevron";
+    chevron.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9,6 15,12 9,18"/></svg>';
+    chevron.setAttribute("aria-hidden", "true");
+    head.append(icon, copy, statusEl, chevron);
+    const list = document.createElement("div");
+    list.className = "chat-skill-group-list";
+    group.append(head, list);
+    const first = streak.wraps[0];
+    first?.before(group);
+    list.append(...streak.wraps);
+    head.addEventListener("click", () => {
+      const open = !group.classList.contains("open");
+      setSkillElementOpen(group, head, open);
+      head.title = open ? "Hide repeated skill calls" : "Show each skill call";
+      sizeCompactSpacer();
+    });
+    head.title = "Show each skill call";
+    streak.group = group;
+    streak.list = list;
+    animateCompactEnter(group);
+  }
+
+  /** @param {HTMLElement} group */
+  function refreshSkillGroupEl(group) {
+    const wraps = [...group.querySelectorAll(":scope > .chat-skill-group-list > .chat-skill")];
+    const head = group.querySelector(":scope > .chat-skill-head");
+    const count = head?.querySelector(".chat-skill-count");
+    const summary = head?.querySelector(".chat-skill-summary");
+    const statusEl = head?.querySelector(".chat-skill-status");
+    const nameEl = head?.querySelector(".chat-skill-name");
+    if (!(head instanceof HTMLButtonElement) || !count || !summary || !statusEl) return;
+    const n = wraps.length;
+    count.textContent = `${n} runs`;
+    const last = wraps[n - 1];
+    const lastSummary = last?.querySelector(".chat-skill-summary");
+    summary.textContent = lastSummary instanceof HTMLElement ? lastSummary.textContent : "";
+    const cls = skillGroupStatus(wraps);
+    group.classList.remove("running", "completed", "failed", "interrupted");
+    group.classList.add(cls);
+    statusEl.textContent = skillStatusLabel(cls);
+    const skill = nameEl instanceof HTMLElement ? nameEl.textContent : "skill";
+    head.setAttribute("aria-label", `${skill}, ${n} calls, ${statusEl.textContent}`);
+  }
+
+  /** @param {HTMLElement} wrap */
+  function refreshStreakContaining(wrap) {
+    const group = wrap.closest(".chat-skill-group");
+    if (group instanceof HTMLElement) refreshSkillGroupEl(group);
+  }
+
   /** @param {string} key @param {string} name @param {string} status @param {number} ts @param {string} [reason]
    *  @param {any} [args] @param {boolean} [preview] */
   function addSkillRun(key, name, status, ts, reason, args, preview = false) {
     const wasAtBottom = atBottom();
     const cls = ["running", "completed", "failed", "interrupted"].includes(status) ? status : "running";
+    const displayName = skillDisplayName(name);
     if (!preview && cls === "running") {
-      activeSkillName.textContent = name.replace(/_/g, " ");
+      activeSkillName.textContent = displayName;
       activeSkill.classList.add("on");
-    } else if (!preview && activeSkillName.textContent === name.replace(/_/g, " ")) {
+    } else if (!preview && activeSkillName.textContent === displayName) {
       activeSkillName.textContent = "—";
       activeSkill.classList.remove("on");
     }
@@ -743,7 +854,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       copy.className = "chat-skill-copy";
       const nameEl = document.createElement("span");
       nameEl.className = "chat-skill-name";
-      nameEl.textContent = name.replace(/_/g, " ");
+      nameEl.textContent = displayName;
       const summary = document.createElement("span");
       summary.className = "chat-skill-summary";
       copy.append(nameEl, summary);
@@ -772,8 +883,12 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
         sizeCompactSpacer();
       });
       skillRuns.set(key, createdRun);
-      appendStreamItem(wrap);
-      if (!preview) animateCompactEnter(wrap);
+      if (preview) {
+        appendStreamItem(wrap);
+      } else if (!attachSkillToStreak(name, wrap)) {
+        appendStreamItem(wrap);
+        animateCompactEnter(wrap);
+      }
     }
     run.wrap.classList.remove("running", "completed", "failed", "interrupted");
     run.wrap.classList.add(cls);
@@ -784,7 +899,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       run.hasDetail = true;
     }
     run.status.textContent = skillStatusLabel(cls);
-    run.head.setAttribute("aria-label", `${name.replace(/_/g, " ")}: ${run.status.textContent}`);
+    run.head.setAttribute("aria-label", `${displayName}: ${run.status.textContent}`);
 
     if (cls === "failed" && reason) {
       renderSkillFailure(run.failure, reason);
@@ -793,6 +908,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     run.wrap.classList.toggle("has-detail", run.hasDetail);
     run.head.title = run.hasDetail ? "Show skill details" : "";
     if (cls === "failed") setSkillRunOpen(run, !stream.classList.contains("compact"));
+    if (!preview) refreshStreakContaining(run.wrap);
 
     lastTs = ts;
     if (cls !== "running") skillRuns.delete(key);
@@ -905,6 +1021,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     compactEnterTimers.clear();
     thoughts = null;
     skillRuns.clear();
+    skillStreak = null;
     lastTs = 0;
     replayingHistory = true;
     stream.classList.add("replaying");
@@ -1028,6 +1145,29 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       panel.remove();
     },
   };
+}
+
+const SKILL_GROUP_MIN = 3;
+
+/** @param {string} name */
+function skillDisplayName(name) {
+  return name.replace(/_/g, " ");
+}
+
+/** @param {string} name */
+function skillNameKey(name) {
+  return skillDisplayName(name).toLowerCase();
+}
+
+/** @param {Element[]} wraps */
+function skillGroupStatus(wraps) {
+  const order = ["running", "failed", "interrupted", "completed"];
+  const present = new Set();
+  for (const wrap of wraps) {
+    const status = order.find((cls) => wrap.classList.contains(cls));
+    if (status) present.add(status);
+  }
+  return order.find((cls) => present.has(cls)) || "completed";
 }
 
 /** @param {string} label */

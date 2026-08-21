@@ -5977,7 +5977,8 @@ select.skill-input {
   opacity: 0.5;
 }
 
-.chat-skill {
+.chat-skill,
+.chat-skill-group {
   align-self: stretch;
   display: flex;
   flex-direction: column;
@@ -6033,12 +6034,40 @@ select.skill-input {
   gap: 1px;
 }
 
+.chat-skill-name-row {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.chat-skill-name-row .chat-skill-name {
+  min-width: 0;
+}
+
 .chat-skill-name {
   color: #fff;
   font-size: 14px;
   font-weight: 560;
   line-height: 1.3;
   overflow-wrap: anywhere;
+}
+
+.chat-skill-count {
+  flex: none;
+  padding: 3px 7px;
+  color: rgb(231 231 234 / 76%);
+  background: rgb(255 255 255 / 7%);
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.05em;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .chat-skill-summary {
@@ -6056,6 +6085,10 @@ select.skill-input {
   display: none;
 }
 
+.chat-skill-group > .chat-skill-head .chat-skill-summary {
+  display: none;
+}
+
 .chat-skill-chevron {
   display: grid;
   color: rgb(231 231 234 / 58%);
@@ -6070,7 +6103,7 @@ select.skill-input {
   height: 14px;
 }
 
-.chat-skill.open .chat-skill-chevron {
+:is(.chat-skill, .chat-skill-group).open > .chat-skill-head .chat-skill-chevron {
   transform: rotate(90deg);
 }
 
@@ -6137,6 +6170,11 @@ select.skill-input {
   border-top: 1px solid var(--hairline);
 }
 
+.chat-skill-parameters:empty + .chat-skill-failure {
+  padding-top: 0;
+  border-top: 0;
+}
+
 .chat-skill-failure-message {
   margin: 0;
   color: #ffd6cb;
@@ -6157,18 +6195,18 @@ select.skill-input {
   letter-spacing: 0.04em;
 }
 
-.chat-skill.running {
+:is(.chat-skill, .chat-skill-group).running {
   border-color: rgb(112 91 255 / 72%);
   background: rgb(64 31 251 / 16%);
 }
 
-.chat-skill.running .chat-skill-icon,
-.chat-skill.running .chat-skill-status {
+:is(.chat-skill, .chat-skill-group).running > .chat-skill-head .chat-skill-icon,
+:is(.chat-skill, .chat-skill-group).running > .chat-skill-head .chat-skill-status {
   color: #c0b8ff;
   border-color: rgb(151 135 255 / 48%);
 }
 
-.chat-skill.running .chat-skill-icon::before {
+:is(.chat-skill, .chat-skill-group).running > .chat-skill-head .chat-skill-icon::before {
   content: "";
   width: 8px;
   height: 8px;
@@ -6177,34 +6215,34 @@ select.skill-input {
   animation: chat-think-pulse 1.4s infinite ease-in-out;
 }
 
-.chat-skill.completed {
+:is(.chat-skill, .chat-skill-group).completed {
   border-color: var(--ok);
 }
 
-.chat-skill.completed .chat-skill-icon,
-.chat-skill.completed .chat-skill-status {
+:is(.chat-skill, .chat-skill-group).completed > .chat-skill-head .chat-skill-icon,
+:is(.chat-skill, .chat-skill-group).completed > .chat-skill-head .chat-skill-status {
   color: var(--ok);
 }
 
-.chat-skill.completed .chat-skill-icon::before,
-.chat-skill.failed .chat-skill-icon::before {
+:is(.chat-skill, .chat-skill-group).completed > .chat-skill-head .chat-skill-icon::before,
+:is(.chat-skill, .chat-skill-group).failed > .chat-skill-head .chat-skill-icon::before {
   content: "";
   width: 14px;
   height: 14px;
   background: currentColor;
 }
 
-.chat-skill.completed .chat-skill-icon,
-.chat-skill.failed .chat-skill-icon {
+:is(.chat-skill, .chat-skill-group).completed > .chat-skill-head .chat-skill-icon,
+:is(.chat-skill, .chat-skill-group).failed > .chat-skill-head .chat-skill-icon {
   border-width: 1.5px;
 }
 
-.chat-skill.completed .chat-skill-icon::before {
+:is(.chat-skill, .chat-skill-group).completed > .chat-skill-head .chat-skill-icon::before {
   mask: url("/js/agent/icons/check.svg") center / contain no-repeat;
   -webkit-mask: url("/js/agent/icons/check.svg") center / contain no-repeat;
 }
 
-.chat-skill.failed {
+:is(.chat-skill, .chat-skill-group).failed {
   --chat-skill-failed-accent: #ffaaa1;
   --chat-skill-failed-edge: rgb(237 108 91 / 46%);
   background: var(--ctl-field);
@@ -6212,29 +6250,116 @@ select.skill-input {
   box-shadow: var(--ctl-sheen);
 }
 
-.chat-skill.failed .chat-skill-icon {
+:is(.chat-skill, .chat-skill-group).failed > .chat-skill-head .chat-skill-icon {
   color: var(--chat-skill-failed-accent);
   border-color: var(--chat-skill-failed-edge);
 }
 
-.chat-skill.failed .chat-skill-status {
+:is(.chat-skill, .chat-skill-group).failed > .chat-skill-head .chat-skill-status {
   color: var(--chat-skill-failed-accent);
   background: rgb(217 106 90 / 16%);
   border-color: var(--chat-skill-failed-edge);
 }
 
-.chat-skill.failed .chat-skill-summary {
+:is(.chat-skill, .chat-skill-group).failed > .chat-skill-head .chat-skill-summary {
   color: rgb(255 255 255 / 78%);
 }
 
-.chat-skill.failed .chat-skill-icon::before {
+:is(.chat-skill, .chat-skill-group).failed > .chat-skill-head .chat-skill-icon::before {
   mask: url("/js/agent/icons/failed.svg") center / contain no-repeat;
   -webkit-mask: url("/js/agent/icons/failed.svg") center / contain no-repeat;
 }
 
-.chat-skill.interrupted .chat-skill-icon::before {
+:is(.chat-skill, .chat-skill-group).interrupted > .chat-skill-head .chat-skill-icon::before {
   content: "■";
   font-size: 8px;
+}
+
+.chat-skill-group > .chat-skill-head {
+  cursor: pointer;
+}
+
+.chat-skill-group-list {
+  display: none;
+  flex-direction: column;
+  max-height: 176px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--hairline);
+  scrollbar-color: rgb(255 255 255 / 22%) transparent;
+  scrollbar-width: thin;
+}
+
+.chat-skill-group.open > .chat-skill-group-list {
+  display: flex;
+}
+
+.chat-skill-group-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-skill-group-list::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 22%);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.chat-skill-group-list .chat-skill {
+  flex: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.chat-skill-group-list .chat-skill + .chat-skill {
+  border-top: 1px solid var(--hairline);
+}
+
+.chat-skill-group-list .chat-skill-head {
+  grid-template-columns: 18px minmax(0, 1fr) auto 12px;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 10px;
+}
+
+.chat-skill-group-list .chat-skill-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.chat-skill-group-list .chat-skill-icon::before {
+  width: 11px;
+  height: 11px;
+}
+
+.chat-skill-group-list .chat-skill:has(.chat-skill-summary:not(:empty)) .chat-skill-name {
+  display: none;
+}
+
+.chat-skill-group-list .chat-skill-summary {
+  color: rgb(231 231 234 / 72%);
+  font-size: 9.5px;
+  line-height: 1.35;
+}
+
+.chat-skill-group-list .chat-skill-status {
+  padding: 3px 6px;
+  font-size: 8px;
+}
+
+.chat-skill-group-list .chat-skill-chevron svg {
+  width: 12px;
+  height: 12px;
+}
+
+.chat-skill-group-list .chat-skill.running {
+  background: rgb(64 31 251 / 12%);
+}
+
+.chat-skill-group-list .chat-skill.failed {
+  background: rgb(217 106 90 / 10%);
 }
 
 .chat-skill-head:focus-visible {
@@ -8193,6 +8318,7 @@ select.skill-input {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  padding-right: 12px;
 }
 
 .agent-stream-label {
@@ -8295,15 +8421,10 @@ select.skill-input {
 
 .agent-panel .chat-msg.robot {
   max-width: 100%;
+}
+
+.agent-panel .agent-stream > .chat-msg {
   margin-block: 6px;
-}
-
-.agent-panel .chat-msg.robot:has(+ .chat-msg.robot) {
-  margin-bottom: 0;
-}
-
-.agent-panel .chat-msg.robot + .chat-msg.robot {
-  margin-top: 0;
 }
 
 .agent-panel .chat-msg.robot .chat-bubble {
@@ -8312,6 +8433,10 @@ select.skill-input {
   background: transparent;
   border: 0;
   border-radius: 0;
+}
+
+.agent-panel .agent-stream > :is(.chat-skill, .chat-skill-group) {
+  margin-block: 6px;
 }
 
 /* Latest thought, shown while the Thoughts block is collapsed (its default). */
