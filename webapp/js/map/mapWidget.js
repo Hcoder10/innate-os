@@ -298,7 +298,6 @@ export function createMap(root, opts = {}) {
   // against the growing grid is mode_manager's /mapping_pose (map frame, from
   // TF): raw odom drifts against it and any AMCL fix predates the map.
   let mappingMode = false;
-  let memoriesBeforeMapping = false; // restore the memories layer when mapping ends
   /** @type {{ x: number, y: number, yaw: number } | null} */
   let mappingPose = null;
   /** @type {(() => void) | null} */
@@ -362,6 +361,12 @@ export function createMap(root, opts = {}) {
   /** @type {ReturnType<typeof parseSearch>} latest fresh search verdict */
   let memSearch = null;
   let memSearchUntil = 0; // performance.now() deadline for the recalled-spot glow
+  // Browser-time watermark: a verdict answered before this instant points into
+  // a frame that has since died (clearing memSearch alone can't hold — a later
+  // resubscribe replays the latched verdict straight back). Skewed at compare
+  // time, not here: the floor can be latched before odom teaches memClockSkew,
+  // and a robotNowS() floor taken then would mute live verdicts for hours.
+  let memSearchFloorBrowserS = 0;
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let memSearchCardTimer;
   let memCardsViewSig = ""; // the view framing the cards were last placed against
@@ -472,6 +477,7 @@ export function createMap(root, opts = {}) {
     if (!verdict) return;
     const replay = !memSearchSeen;
     memSearchSeen = true;
+    if (verdict.stamp <= memSearchFloorBrowserS + memClockSkew) return; // answered on a frame that has since died
     if (replay && robotNowS() - verdict.stamp > SEARCH_REPLAY_FRESH_S) return; // stale latched replay
     memSearch = verdict;
     memSearchUntil = performance.now() + (verdict.found ? MEM_SEARCH_GLOW_MS : 0);
@@ -579,15 +585,20 @@ export function createMap(root, opts = {}) {
     meta.textContent = `seen ${ageText(m.stamp, robotNowS())} · x ${m.x.toFixed(2)} m, y ${m.y.toFixed(2)} m`;
     const actions = document.createElement("div");
     actions.className = "mem-card-actions";
-    const goHere = document.createElement("button");
-    goHere.type = "button";
-    goHere.className = "mem-card-btn mem-card-btn-go";
-    goHere.textContent = "Go here";
-    goHere.title = "/navigate_to_pose (action) — drive to this remembered viewpoint";
-    goHere.addEventListener("click", () => {
-      closeMemPopup();
-      publishGoal(m.x, m.y, m.theta);
-    });
+    // Mid-mapping only slam_toolbox runs — /navigate_to_pose has no server, so
+    // the tour's popups keep the picture and Forget but never offer Go here.
+    if (!mappingMode) {
+      const goHere = document.createElement("button");
+      goHere.type = "button";
+      goHere.className = "mem-card-btn mem-card-btn-go";
+      goHere.textContent = "Go here";
+      goHere.title = "/navigate_to_pose (action) — drive to this remembered viewpoint";
+      goHere.addEventListener("click", () => {
+        closeMemPopup();
+        publishGoal(m.x, m.y, m.theta);
+      });
+      actions.append(goHere);
+    }
     const forget = document.createElement("button");
     forget.type = "button";
     forget.className = "mem-card-btn mem-card-btn-forget";
@@ -615,7 +626,7 @@ export function createMap(root, opts = {}) {
     close.className = "mem-card-btn";
     close.textContent = "Close";
     close.addEventListener("click", closeMemPopup);
-    actions.append(goHere, forget, close);
+    actions.append(forget, close);
     memPopup.append(img, meta, actions);
     memPopup.hidden = false;
     placeMemCard(memPopup, m);
@@ -1780,6 +1791,7 @@ export function createMap(root, opts = {}) {
     closeMemPopup();
     hideMemSearchCard();
     memSearch = null;
+    memSearchFloorBrowserS = Date.now() / 1000;
     pose = composedPose();
   }
 
@@ -1855,12 +1867,15 @@ export function createMap(root, opts = {}) {
       if (on) {
         amclPose = null;
         odomAtAmcl = null;
-        // Memory marks are frames of the *finished* map — meaningless against
-        // the one being built. Forced off here, in the widget, so every host
-        // (teleop PiP included) honors it, not just the Nav page's chips.
-        memoriesBeforeMapping = layers.memories;
-        layers.memories = false;
-        syncLayerSubs();
+        // The tour records its own memories, in the very frame being built, so
+        // the marks stay — but everything tied to the *previous* map goes: its
+        // recall verdict and any open card point into a frame that just died.
+        // (The positions feed swaps to the mapping session within a tick, and
+        // dropping both here keeps the old frame's marks off the new grid in
+        // the meantime.)
+        memState = null;
+        memKnown = null;
+        memSearchFloorBrowserS = Date.now() / 1000;
         setMemHover(null);
         closeMemPopup();
         hideMemSearchCard();
@@ -1881,10 +1896,6 @@ export function createMap(root, opts = {}) {
         unsubMappingPose?.();
         unsubMappingPose = null;
         mappingPose = null;
-        if (memoriesBeforeMapping) {
-          layers.memories = true;
-          syncLayerSubs();
-        }
       }
       pose = composedPose();
       render();
@@ -1912,7 +1923,6 @@ export function createMap(root, opts = {}) {
     },
     /** Gallery click: centre the view on a memory and open its popup. @param {number} id */
     focusMemory(id) {
-      if (mappingMode) return; // the coordinates belong to the finished map, and Go-here mid-mapping is wrong
       const m = memState?.memories.find((mem) => mem.id === id);
       if (!m) return;
       panCenter = { x: m.x, y: m.y };

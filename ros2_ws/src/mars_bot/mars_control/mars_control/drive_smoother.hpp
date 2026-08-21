@@ -70,6 +70,7 @@ constexpr std::array<SpeedMode, 4> SPEED_MODES{
     {{"slow", "Slow", 0.35}, {"medium", "Med", 0.65}, {"fast", "Fast", 1.0}, {"mad", "Mad", 2.0}}};
 constexpr const char* MAD_MODE_ID = "mad";
 constexpr const char* RECORDING_SCALE_ID = "medium";
+constexpr const char* MAPPING_SCALE_ID = "slow";
 constexpr double SPEED_SCALE = 1.0;
 
 // Mad states its accelerations outright: it wants 2.0 m/s^2 where scaling gives 0.4 and

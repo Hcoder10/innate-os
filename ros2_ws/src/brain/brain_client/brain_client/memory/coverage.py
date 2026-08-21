@@ -114,9 +114,12 @@ class Coverage:
         return union
 
     def _mask(self, memory: Memory, grid: Map) -> np.ndarray | None:
-        if grid is not self._grid:  # a new map message repaints the world
-            self._grid = grid
+        # Geometry, not identity (Map.__eq__ excludes the cells): mapping
+        # republishes the same geometry at 2 Hz, and rebuilding every mask per
+        # message costs more than paint one refinement stale is worth.
+        if self._grid is None or grid != self._grid:
             self._masks.clear()
+        self._grid = grid
         key = (memory.id, memory.stamp)
         mask = self._masks.get(key)
         if mask is None:

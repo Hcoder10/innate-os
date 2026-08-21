@@ -192,7 +192,7 @@ function buildView(root) {
       forceLayer("scan", true);
       forceLayer("costmap", false);
       forceLayer("trail", false);
-      forceLayer("memories", false); // memory marks are frames of the finished map
+      forceLayer("memories", true); // the tour records them; watching them land is the point
       createDriveKit(scene).then((kit) => {
         if (gen !== kitGen) kit.destroy(); // mapping ended while mounting
         else driveKit = kit;
