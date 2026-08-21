@@ -172,13 +172,30 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   streamMode.className = "agent-stream-mode";
   streamMode.setAttribute("role", "group");
   streamMode.setAttribute("aria-label", "Chat detail");
-  const compactBtn = modeButton("Simple");
+  const compactBtn = modeButton("Compact");
   const detailedBtn = modeButton("Detailed");
   streamMode.append(compactBtn, detailedBtn);
   streamHead.append(streamLabel, streamMode);
 
+  const streamWrap = document.createElement("div");
+  streamWrap.className = "agent-stream-wrap";
   const stream = document.createElement("div");
   stream.className = "agent-stream compact";
+  // Extra scroll range lets a short current turn align to the top.
+  const compactSpacer = document.createElement("div");
+  compactSpacer.className = "agent-stream-compact-spacer";
+  compactSpacer.setAttribute("aria-hidden", "true");
+  stream.append(compactSpacer);
+  const earlierBtn = document.createElement("button");
+  earlierBtn.type = "button";
+  earlierBtn.className = "agent-stream-earlier";
+  earlierBtn.setAttribute("aria-label", "Earlier messages");
+  earlierBtn.setAttribute("aria-hidden", "true");
+  earlierBtn.title = "Earlier messages";
+  earlierBtn.tabIndex = -1;
+  earlierBtn.innerHTML =
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6,14 12,8 18,14"/></svg>';
+  streamWrap.append(stream, earlierBtn);
   compactBtn.classList.add("active");
   compactBtn.setAttribute("aria-pressed", "true");
   detailedBtn.setAttribute("aria-pressed", "false");
@@ -238,7 +255,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   statusRow.className = "agent-status-row";
   statusRow.append(activeSkill);
   controlPanel.append(head, controls, statusRow);
-  thoughtsPanel.append(streamHead, stream, form);
+  thoughtsPanel.append(streamHead, streamWrap, form);
   panel.append(controlPanel, thoughtsPanel);
   root.append(panel);
 
@@ -453,31 +470,116 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
 
   // ---- stream helpers -----------------------------------------------------
 
-  // Sticky-bottom scrolling. Capture whether we're pinned to the bottom BEFORE
-  // mutating the stream, then snap down afterwards only if we were. Measuring
-  // *after* appending is the bug that left tall robot replies off-screen: the
-  // freshly added height makes the distance-from-bottom exceed any threshold, so
-  // it wrongly concludes the user had scrolled up.
+  // Detailed stays sticky-bottom. Compact pins the current user prompt to the
+  // top (older turns sit above it) so each send feels like a fresh page.
   function atBottom() {
     return stream.scrollHeight - stream.scrollTop - stream.clientHeight < 80;
   }
   /** @param {boolean} wasAtBottom */
-  function snapIfAtBottom(wasAtBottom) {
+  function settleStreamAfterAppend(wasAtBottom) {
+    if (stream.classList.contains("compact")) {
+      sizeCompactSpacer();
+      updateScrollHint();
+      return;
+    }
     if (wasAtBottom) stream.scrollTop = stream.scrollHeight;
+    updateScrollHint();
+  }
+
+  function updateScrollHint() {
+    const show =
+      stream.classList.contains("compact") &&
+      compactPrompt !== null &&
+      hasEarlierMessages(compactPrompt) &&
+      stream.scrollTop > 0;
+    streamWrap.classList.toggle("can-scroll-up", show);
+    earlierBtn.setAttribute("aria-hidden", String(!show));
+    earlierBtn.tabIndex = show ? 0 : -1;
+  }
+
+  /** @type {HTMLElement | null} */
+  let compactPrompt = null;
+
+  /** @param {HTMLElement} el */
+  function appendStreamItem(el) {
+    stream.insertBefore(el, compactSpacer);
+  }
+
+  function sizeCompactSpacer() {
+    if (!stream.classList.contains("compact") || !compactPrompt) {
+      if (compactSpacer.style.height !== "0px") compactSpacer.style.height = "0px";
+      return;
+    }
+    const styles = getComputedStyle(stream);
+    const gap = Number.parseFloat(styles.rowGap) || 0;
+    const topInset = Number.parseFloat(styles.paddingTop) || 0;
+    let used = compactPrompt.offsetHeight;
+    for (
+      let node = compactPrompt.nextElementSibling;
+      node && node !== compactSpacer;
+      node = node.nextElementSibling
+    ) {
+      if (!(node instanceof HTMLElement)) continue;
+      if (getComputedStyle(node).display === "none") continue;
+      used += node.offsetHeight + gap;
+    }
+    const next = `${Math.max(0, stream.clientHeight - used - topInset)}px`;
+    if (compactSpacer.style.height !== next) compactSpacer.style.height = next;
+  }
+
+  /** @param {HTMLElement} el */
+  function hasEarlierMessages(el) {
+    for (let node = el.previousElementSibling; node; node = node.previousElementSibling) {
+      if (!(node instanceof HTMLElement)) continue;
+      if (getComputedStyle(node).display === "none") continue;
+      return true;
+    }
+    return false;
+  }
+
+  /** @param {HTMLElement} el */
+  function pinCompactPrompt(el) {
+    compactPrompt = el;
+    if (!stream.classList.contains("compact") || replayingHistory) {
+      updateScrollHint();
+      return;
+    }
+    sizeCompactSpacer();
+    const topInset = Number.parseFloat(getComputedStyle(stream).paddingTop) || 0;
+    const promptTop = el.getBoundingClientRect().top;
+    const streamTop = stream.getBoundingClientRect().top;
+    stream.scrollTop += promptTop - streamTop - topInset;
+    updateScrollHint();
+  }
+
+  function pinLatestCompactTurn() {
+    const users = stream.querySelectorAll(".chat-msg.user");
+    const prompt = compactPrompt ?? users[users.length - 1] ?? null;
+    if (!(prompt instanceof HTMLElement)) {
+      sizeCompactSpacer();
+      updateScrollHint();
+      return;
+    }
+    pinCompactPrompt(prompt);
   }
 
   /** @type {{ wrap: HTMLElement, status: HTMLElement, list: HTMLElement, lastByKind: Record<string, string>, startTs: number, latestTs: number } | null} */
   let thoughts = null;
   let lastTs = 0;
-  /** @type {HTMLElement | null} */
-  let compactPrompt = null;
-  /** @type {HTMLElement[]} */
-  const compactMessages = [];
   let replayingHistory = false;
   /** @type {Set<ReturnType<typeof setTimeout>>} */
   const compactEnterTimers = new Set();
-  /** @type {Set<ReturnType<typeof setTimeout>>} */
-  const compactExitTimers = new Set();
+  /** @type {Map<string, {
+   *  wrap: HTMLElement,
+   *  head: HTMLButtonElement,
+   *  summary: HTMLElement,
+   *  status: HTMLElement,
+   *  chevron: HTMLElement,
+   *  parameters: HTMLElement,
+   *  failure: HTMLElement,
+   *  hasDetail: boolean
+   * }>} */
+  const skillRuns = new Map();
 
   /** @param {"compact" | "detailed"} mode */
   function setStreamMode(mode) {
@@ -495,55 +597,38 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
         setSkillElementOpen(card, head, !compact);
       }
     }
-    if (!compact) stream.scrollTop = stream.scrollHeight;
-  }
-
-  /** @param {HTMLElement} message */
-  function hideCompactMessage(message) {
-    message.classList.remove("compact-visible", "compact-entering");
-    if (stream.classList.contains("compact") && !replayingHistory) {
-      message.classList.add("compact-exiting");
-      const timer = setTimeout(() => {
-        message.classList.remove("compact-exiting");
-        compactExitTimers.delete(timer);
-      }, 140);
-      compactExitTimers.add(timer);
-    } else {
-      message.classList.remove("compact-exiting");
+    if (compact) pinLatestCompactTurn();
+    else {
+      compactSpacer.style.height = "0px";
+      stream.scrollTop = stream.scrollHeight;
+      updateScrollHint();
     }
   }
 
-  /** @param {HTMLElement} next @param {boolean} isPrompt */
-  function showCompactMessage(next, isPrompt) {
-    if (isPrompt) {
-      if (compactPrompt) {
-        compactPrompt.classList.remove("compact-prompt");
-        hideCompactMessage(compactPrompt);
-      }
-      for (const message of compactMessages) hideCompactMessage(message);
-      compactMessages.length = 0;
-      compactPrompt = next;
-      next.classList.add("compact-prompt");
-    } else {
-      compactMessages.push(next);
-    }
-
-    next.classList.remove("compact-exiting");
-    next.classList.add("compact-visible");
-    if (stream.classList.contains("compact") && !replayingHistory) {
-      next.classList.add("compact-entering");
-      const timer = setTimeout(() => {
-        next.classList.remove("compact-entering");
-        compactEnterTimers.delete(timer);
-      }, 180);
-      compactEnterTimers.add(timer);
-    }
-
-    while (compactMessages.length > 7) {
-      const previous = compactMessages.shift();
-      if (previous) hideCompactMessage(previous);
-    }
+  /** @param {HTMLElement} el */
+  function animateCompactEnter(el) {
+    if (!stream.classList.contains("compact") || replayingHistory) return;
+    el.classList.add("compact-entering");
+    const timer = setTimeout(() => {
+      el.classList.remove("compact-entering");
+      compactEnterTimers.delete(timer);
+    }, 180);
+    compactEnterTimers.add(timer);
   }
+
+  earlierBtn.addEventListener("click", () => {
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    stream.scrollBy({
+      top: -Math.max(stream.clientHeight * 0.75, 120),
+      behavior: reduced ? "auto" : "smooth",
+    });
+  });
+  stream.addEventListener("scroll", updateScrollHint, { passive: true });
+  const streamResize = new ResizeObserver(() => {
+    if (stream.classList.contains("compact")) sizeCompactSpacer();
+    updateScrollHint();
+  });
+  streamResize.observe(stream);
 
   /** @param {boolean} active */
   function setThoughtsStatus(active) {
@@ -586,7 +671,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
         arrow.textContent = open ? "▴" : "▾";
       });
       wrap.append(toggle, list);
-      stream.appendChild(wrap);
+      appendStreamItem(wrap);
       thoughts = { wrap, status, list, lastByKind: {}, startTs: ts, latestTs: ts };
     }
     thoughts.latestTs = ts;
@@ -598,7 +683,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       thoughts.list.appendChild(item);
     }
     setThoughtsStatus(true);
-    snapIfAtBottom(wasAtBottom);
+    settleStreamAfterAppend(wasAtBottom);
   }
 
   /** @param {string} kind @param {string} text @param {number} ts @param {string} [label] */
@@ -618,23 +703,16 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     bubble.className = "chat-bubble";
     bubble.textContent = kind === "user" ? text : roundNums(text);
     el.appendChild(bubble);
-    stream.appendChild(el);
-    if (label !== "skill_output") showCompactMessage(el, kind === "user");
+    appendStreamItem(el);
+    if (label !== "skill_output") animateCompactEnter(el);
     lastTs = ts;
-    snapIfAtBottom(wasAtBottom);
+    if (kind === "user") {
+      pinCompactPrompt(el);
+      if (!stream.classList.contains("compact")) stream.scrollTop = stream.scrollHeight;
+    } else {
+      settleStreamAfterAppend(wasAtBottom);
+    }
   }
-
-  /** @type {Map<string, {
-   *  wrap: HTMLElement,
-   *  head: HTMLButtonElement,
-   *  summary: HTMLElement,
-   *  status: HTMLElement,
-   *  chevron: HTMLElement,
-   *  parameters: HTMLElement,
-   *  failure: HTMLElement,
-   *  hasDetail: boolean
-   * }>} */
-  const skillRuns = new Map();
 
   /** @param {string} key @param {string} name @param {string} status @param {number} ts @param {string} [reason]
    *  @param {any} [args] @param {boolean} [preview] */
@@ -686,16 +764,16 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       failure.className = "chat-skill-failure";
       detail.append(parameters, failure);
       wrap.append(head, detail);
-      stream.appendChild(wrap);
       const createdRun = { wrap, head, summary, status: statusEl, chevron, parameters, failure, hasDetail: false };
       run = createdRun;
       head.addEventListener("click", () => {
         if (!createdRun.hasDetail) return;
         setSkillRunOpen(createdRun, !createdRun.wrap.classList.contains("open"));
+        sizeCompactSpacer();
       });
       skillRuns.set(key, createdRun);
-      if (preview) wrap.classList.add("compact-visible");
-      else showCompactMessage(wrap, false);
+      appendStreamItem(wrap);
+      if (!preview) animateCompactEnter(wrap);
     }
     run.wrap.classList.remove("running", "completed", "failed", "interrupted");
     run.wrap.classList.add(cls);
@@ -718,7 +796,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
 
     lastTs = ts;
     if (cls !== "running") skillRuns.delete(key);
-    snapIfAtBottom(wasAtBottom);
+    settleStreamAfterAppend(wasAtBottom);
     return run.wrap;
   }
 
@@ -772,8 +850,6 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     input.value = "";
     input.style.height = "auto";
     syncComposerAction();
-    // Always jump to our own message, even if we'd scrolled up reading earlier.
-    stream.scrollTop = stream.scrollHeight;
     await startIfIdle();
     rosClient.publish(CHAT_IN_TOPIC, {
       data: JSON.stringify({ text, sender: "user", timestamp: Date.now() / 1000, origin: selfOrigin }),
@@ -823,13 +899,10 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
     }
     // The snapshot already includes anything the live stream just showed, so
     // reset and replay it wholesale rather than trying to merge.
-    stream.replaceChildren();
+    stream.replaceChildren(compactSpacer);
+    compactPrompt = null;
     for (const timer of compactEnterTimers) clearTimeout(timer);
     compactEnterTimers.clear();
-    for (const timer of compactExitTimers) clearTimeout(timer);
-    compactExitTimers.clear();
-    compactPrompt = null;
-    compactMessages.length = 0;
     thoughts = null;
     skillRuns.clear();
     lastTs = 0;
@@ -842,7 +915,11 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       stream.classList.remove("replaying");
     }
     historyLoaded = true;
-    stream.scrollTop = stream.scrollHeight;
+    if (stream.classList.contains("compact")) pinLatestCompactTurn();
+    else {
+      stream.scrollTop = stream.scrollHeight;
+      updateScrollHint();
+    }
   }
 
   /** Render one stored history entry, mirroring the live chat_out routing.
@@ -942,7 +1019,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
       clearInterval(placeholderInterval);
       if (placeholderSwapTimer) clearTimeout(placeholderSwapTimer);
       for (const timer of compactEnterTimers) clearTimeout(timer);
-      for (const timer of compactExitTimers) clearTimeout(timer);
+      streamResize.disconnect();
       unsubAgents();
       unsubConn();
       unsubIn();
