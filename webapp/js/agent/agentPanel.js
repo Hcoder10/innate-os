@@ -26,12 +26,11 @@ import {
 } from "../constants.js";
 
 const CHAT_EXAMPLES = [
-  "What can you see right now?",
-  "What do you remember about this room?",
-  "What can you help me with?",
+  "What can you see?",
+  "What do you remember here?",
+  "Move forward 1ft and wave",
   "Wave hello",
-  "Move to the other side of the room",
-  "Pick up the object in front of you",
+  "Move across the room",
 ];
 
 /**
