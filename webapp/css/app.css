@@ -7475,10 +7475,9 @@ select.skill-input {
     border: 1px solid transparent;
     border-radius: 18px;
     object-position: left top;
-    transition: border-color 320ms ease;
   }
 
-  .agent-cockpit .video-stage.feed-live video {
+  .agent-cockpit .video-stage.video-ready video {
     border-color: color-mix(in srgb, var(--text) 34%, var(--bg));
   }
 

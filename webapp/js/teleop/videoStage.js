@@ -46,7 +46,8 @@ export function createVideoStage(parent, session) {
   // freeze-frame (nicer than blanking back to a loading screen).
   let latest = session.state;
   let buffering = false;
-  let everPlayed = false;
+  let initialLoadComplete = false;
+  let currentVideoReady = false;
   let frameCbId = 0;
   /** @type {number | null} */ let bufferTimer = null;
 
@@ -67,6 +68,7 @@ export function createVideoStage(parent, session) {
   // the session's own watchdog handles real failures by erroring/rebuilding).
   const revealReady = () => {
     buffering = false;
+    initialLoadComplete = true;
     stopFrameWatch();
     render();
   };
@@ -83,7 +85,8 @@ export function createVideoStage(parent, session) {
         // mean playback is genuinely advancing.
         if (++seen >= 3) {
           buffering = false;
-          everPlayed = true;
+          initialLoadComplete = true;
+          currentVideoReady = true;
           stopFrameWatch();
           render();
           return;
@@ -99,12 +102,12 @@ export function createVideoStage(parent, session) {
   const render = () => {
     const state = latest;
     // Cold-start "loading" only — never over a rebuild's freeze-frame.
-    const loading = buffering && !everPlayed;
+    const loading = buffering && !initialLoadComplete;
     const showStatus = (state.status !== "streaming" && !state.videoStream) || loading;
     status.hidden = !showStatus;
     wrap.classList.toggle("buffering", loading);
+    wrap.classList.toggle("video-ready", currentVideoReady);
     wrap.classList.toggle("degraded", state.status === "connecting" && !!state.videoStream);
-    wrap.classList.toggle("feed-live", Boolean(state.videoStream) && !loading);
     if (state.status === "error") {
       statusText.textContent = "video link failed";
       retry.hidden = false;
@@ -122,7 +125,8 @@ export function createVideoStage(parent, session) {
   // which keeps the freeze-frame): reset the guard and cover whatever's on
   // screen with "loading video stream" until the rebuilt stream actually flows.
   retry.addEventListener("click", () => {
-    everPlayed = false;
+    initialLoadComplete = false;
+    currentVideoReady = false;
     buffering = true;
     stopFrameWatch();
     bufferTimer = setTimeout(revealReady, 5_000);
@@ -135,6 +139,7 @@ export function createVideoStage(parent, session) {
     // Keep the previous frame during rebuilds: only swap srcObject when a
     // new stream actually arrives, never clear it mid-handshake.
     if (state.videoStream && video.srcObject !== state.videoStream) {
+      currentVideoReady = false;
       video.srcObject = state.videoStream;
       // autoplay alone can leave a swapped-in stream paused on its first
       // frame (Chromium); muted play() is always allowed, so be explicit.
@@ -144,6 +149,7 @@ export function createVideoStage(parent, session) {
     if (!state.videoStream && state.status === "idle") {
       video.srcObject = null;
       buffering = false;
+      currentVideoReady = false;
       stopFrameWatch();
     }
 
