@@ -75,7 +75,6 @@ export function createChallengePanel(root, session) {
   let revealed = false;
 
   const body = document.createElement("div");
-  body.className = "challenge-body";
   panel.append(head, body);
   dock.append(panel, launcher);
   root.appendChild(dock);

@@ -25,7 +25,6 @@ export function createTelemetry(parent, rosClient) {
   const items = [name, battery, link, agent];
   /** @type {number | null} */
   let measureFrame = null;
-  wrap.classList.add("with-battery");
 
   /**
    * @param {TelemetryKey} key
@@ -51,10 +50,9 @@ export function createTelemetry(parent, rosClient) {
     const track = document.createElement("span");
     track.className = "telemetry-value-track";
     const primary = document.createElement("span");
-    primary.className = "telemetry-value-copy";
     primary.textContent = initial;
     const duplicate = document.createElement("span");
-    duplicate.className = "telemetry-value-copy telemetry-value-duplicate";
+    duplicate.className = "telemetry-value-duplicate";
     duplicate.textContent = initial;
     duplicate.setAttribute("aria-hidden", "true");
     track.append(primary, duplicate);

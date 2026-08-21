@@ -715,24 +715,25 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
 
   /** @param {string} name */
   function startSkillStreak(name) {
-    skillStreak = {
+    const streak = {
       name,
       wraps: [],
       group: null,
       list: null,
     };
+    skillStreak = streak;
+    return streak;
   }
 
   /** @param {string} name @param {HTMLElement} wrap @returns {boolean} */
   function attachSkillToStreak(name, wrap) {
     const key = skillNameKey(name);
-    if (!skillStreak || skillStreak.name !== key) startSkillStreak(key);
-    if (!skillStreak) return false;
-    skillStreak.wraps.push(wrap);
-    if (skillStreak.wraps.length < SKILL_GROUP_MIN) return false;
-    if (!skillStreak.group) promoteSkillStreak(skillStreak);
-    else skillStreak.list?.append(wrap);
-    if (skillStreak.group) refreshSkillGroupEl(skillStreak.group);
+    const streak = !skillStreak || skillStreak.name !== key ? startSkillStreak(key) : skillStreak;
+    streak.wraps.push(wrap);
+    if (streak.wraps.length < SKILL_GROUP_MIN) return false;
+    if (!streak.group) promoteSkillStreak(streak);
+    else streak.list?.append(wrap);
+    if (streak.group) refreshSkillGroupEl(streak.group);
     return true;
   }
 

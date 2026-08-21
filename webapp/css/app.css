@@ -1891,7 +1891,7 @@ select.skill-input {
 .telemetry-item-battery,
 .telemetry-item-link,
 .telemetry-item-agent {
-  grid-column: span 3;
+  grid-column: span 2;
 }
 
 .telemetry-item-battery {
@@ -1915,19 +1915,12 @@ select.skill-input {
   grid-row: 1;
 }
 
-.telemetry.with-battery .telemetry-item-battery,
-.telemetry.with-battery .telemetry-item-link,
-.telemetry.with-battery .telemetry-item-agent {
-  grid-column: span 2;
-}
-
 .telemetry-item-agent,
-.telemetry.with-battery .telemetry-item-link {
+.telemetry-item-link {
   border-left: 1px solid rgb(255 255 255 / 10%);
 }
 
-.telemetry-item-battery,
-.telemetry:not(.with-battery) .telemetry-item-link {
+.telemetry-item-battery {
   padding-left: 0;
 }
 
@@ -6505,21 +6498,6 @@ select.skill-input {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cam-tile,
-  .cam-tile-label,
-  .sim-scene-panel,
-  .sim-scene-toggle,
-  .sim-scene-toggle-icon,
-  .sim-scene-button,
-  .sim-placement-switch::before,
-  .sim-placement-switch button {
-    transition: none;
-  }
-
-  .telemetry-value-track {
-    animation: none;
-  }
-
   .telemetry-value-duplicate {
     display: none;
   }
@@ -7625,28 +7603,6 @@ select.skill-input {
 
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .agent-mic-button,
-  .agent-mic-button::before,
-  .agent-mic-button::after,
-  .agent-mic-outer-waves,
-  .agent-mic-inner-waves,
-  .agent-mic-hover-glow,
-  .agent-mic-icon,
-  .agent-mic-waveform,
-  .agent-mic-waveform-bar,
-  .agent-mic-label,
-  .agent-mic-message {
-    transition: none;
-  }
-
-  .agent-mic-control:not(.listening) .agent-mic-outer-wave,
-  .agent-mic-control.listening .agent-mic-inner-wave {
-    animation: none;
-  }
-
-}
-
 .agent-title {
   display: inline-flex;
   flex: none;
@@ -7678,12 +7634,6 @@ select.skill-input {
   50% {
     opacity: 1;
     transform: scale(1.12);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .agent-panel.active .agent-title-icon {
-    animation: none;
   }
 }
 
@@ -7790,12 +7740,6 @@ select.skill-input {
   to {
     opacity: 1;
     transform: none;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .agent-brain {
-    animation: none;
   }
 }
 
@@ -8019,16 +7963,6 @@ select.skill-input {
   font-size: 11px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .agent-directive-picker.open .agent-directive-list {
-    animation: none;
-  }
-
-  .agent-directive-chevron {
-    transition: none;
-  }
-}
-
 .agent-toggle {
   position: relative;
   display: inline-flex;
@@ -8120,12 +8054,7 @@ select.skill-input {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-toggle {
-    transition: none;
-  }
-
   .agent-toggle:not(.stop):not(:disabled)::after {
-    animation: none;
     opacity: 0.7;
   }
 }
@@ -8151,8 +8080,8 @@ select.skill-input {
   width: 16px;
   height: 16px;
   background: currentColor;
-  mask: url("/js/agent/icons/reset.svg") center / contain no-repeat;
-  -webkit-mask: url("/js/agent/icons/reset.svg") center / contain no-repeat;
+  mask: url("/js/agent/icons/trash.svg") center / contain no-repeat;
+  -webkit-mask: url("/js/agent/icons/trash.svg") center / contain no-repeat;
 }
 
 .agent-reset:hover:not(:disabled) {
@@ -8339,9 +8268,6 @@ select.skill-input {
   margin-block: 6px;
 }
 
-/* Latest thought, shown while the Thoughts block is collapsed (its default). */
-
-
 .agent-stream-wrap {
   position: relative;
   display: flex;
@@ -8484,16 +8410,6 @@ select.skill-input {
   from {
     opacity: 0;
     transform: translateY(4px);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .agent-stream.compact > .compact-entering {
-    animation: none;
-  }
-
-  .agent-stream-earlier {
-    transition: none;
   }
 }
 
@@ -8755,18 +8671,6 @@ select.skill-input {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-compose,
-  .agent-compose-placeholder,
-  .agent-compose-send {
-    transition: none;
-  }
-
-  .agent-cockpit.agent-sim
-    .agent-compose:has(.agent-mic-control.listening)
-    .agent-mic-waveform {
-    animation: none;
-  }
-
   .agent-compose-send:active:not(:disabled) {
     transform: none;
   }
@@ -8997,12 +8901,6 @@ select.skill-input {
     width: 2px;
     background: rgb(255 255 255 / 68%);
     content: "";
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .agent-width-meter-track > span {
-    transition: none;
   }
 }
 
