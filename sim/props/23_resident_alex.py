@@ -25,9 +25,6 @@ PROP = Prop(
     center_offset=(0.0, 0.0, 0.84),
     viewer={
         "glb": "/models/resident_alex.glb",
-        "rotateToZUp": False,
-        "fitSizeM": 1.68,
-        "fitDim": "height",
-        "origin": "base",
+        "preNormalized": True,
     },
 )

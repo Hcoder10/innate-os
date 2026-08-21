@@ -29,6 +29,8 @@ const MODEL_GRACE_MS = 300;
 /** How the browser should place a prop's glb into its MuJoCo body frame. */
 export interface PropViewerDef {
   glb?: string;
+  /** The model is already in metres, Z-up, and authored around its body origin. */
+  preNormalized?: boolean;
   /** Standard glTF Y-up -> scene Z-up. False for a model already authored Z-up. */
   rotateToZUp?: boolean;
   /** Rescale so fitDim spans this many metres. */

@@ -550,7 +550,7 @@ def test_household_residents_use_distinct_visual_sources():
     assert len({resident.viewer["glb"] for resident in residents}) == 3
     assert all(resident.collision == "hull" for resident in residents)
     assert all(resident.mesh_scale == 1.0 for resident in residents)
-    assert all(resident.viewer["rotateToZUp"] is False for resident in residents)
+    assert all(resident.viewer["preNormalized"] is True for resident in residents)
     assert all("hulls" not in resident.viewer for resident in residents)
     assert all(resident.viewer["glb"] != "/models/human.glb" for resident in residents)
 

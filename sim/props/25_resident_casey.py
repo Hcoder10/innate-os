@@ -23,9 +23,6 @@ PROP = Prop(
     center_offset=(0.0, 0.0, 0.85),
     viewer={
         "glb": "/models/resident_casey.glb",
-        "rotateToZUp": False,
-        "fitSizeM": 1.70,
-        "fitDim": "height",
-        "origin": "base",
+        "preNormalized": True,
     },
 )
