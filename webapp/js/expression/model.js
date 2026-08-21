@@ -66,8 +66,11 @@ export const NEUTRAL = {
 // approach/turn/attend always read against the same target.
 export const PERSON = { x: 1.0, y: 0, height: 1.65 };
 
-// The basis. Deltas are what the +1 / −1 extreme adds to NEUTRAL; anything an
-// axis doesn't mention stays untouched, so axes compose additively.
+// The built-in basis — a starting point, not a commitment. The studio edits a
+// live copy (defaultBasis/sanitizeBasis below): endpoints are re-captured from
+// sculpted poses, axes added or dropped, and the result persists and exports
+// with the pose library. Deltas are what the +1 / −1 extreme adds to NEUTRAL;
+// anything an axis doesn't mention stays untouched, so axes compose additively.
 /** @type {Axis[]} */
 export const AXES = [
   {
@@ -190,9 +193,40 @@ export const PRESETS = [
   },
 ];
 
-/** Zero weight for every axis. @returns {Weights} */
-export function zeroWeights() {
-  return Object.fromEntries(AXES.map((a) => [a.key, 0]));
+/** Zero weight for every axis. @param {Axis[]} [axes] @returns {Weights} */
+export function zeroWeights(axes = AXES) {
+  return Object.fromEntries(axes.map((a) => [a.key, 0]));
+}
+
+/** Deep copy of the built-in basis — the starting point for editing. @returns {Axis[]} */
+export function defaultBasis() {
+  return AXES.map((a) => ({ ...a, neg: { ...a.neg }, pos: { ...a.pos } }));
+}
+
+/**
+ * Validate a stored/imported basis back into Axis[]. Keys must be unique and
+ * non-empty; missing labels/docs fall back to the built-in axis of the same
+ * key (older exports carried only key+deltas). Throws on anything else.
+ * @param {any} raw @returns {Axis[]}
+ */
+export function sanitizeBasis(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) throw new Error("not an axis basis");
+  const seen = new Set();
+  return raw.map((a) => {
+    const key = String(a?.key ?? "").trim();
+    if (!key || seen.has(key)) throw new Error("axis keys must be unique and non-empty");
+    seen.add(key);
+    const builtin = AXES.find((d) => d.key === key);
+    return {
+      key,
+      label: String(a.label || builtin?.label || key),
+      negLabel: String(a.negLabel || builtin?.negLabel || "−"),
+      posLabel: String(a.posLabel || builtin?.posLabel || "+"),
+      doc: String(a.doc || builtin?.doc || "custom axis"),
+      neg: sanitizeOffsets(a.neg),
+      pos: sanitizeOffsets(a.pos),
+    };
+  });
 }
 
 /** @param {number} v @param {number} lo @param {number} hi */
@@ -209,11 +243,11 @@ export function clampPose(pose) {
  * Fold the expression layers into one actuator pose:
  * NEUTRAL + Σ axis contribution (weight toward the pos/neg extreme) + manual
  * per-actuator offsets, clamped to limits.
- * @param {Weights} weights @param {PoseDelta} [offsets] @returns {Pose}
+ * @param {Weights} weights @param {PoseDelta} [offsets] @param {Axis[]} [axes] @returns {Pose}
  */
-export function synthesize(weights, offsets = {}) {
+export function synthesize(weights, offsets = {}, axes = AXES) {
   const q = /** @type {Pose} */ ({ ...NEUTRAL });
-  for (const axis of AXES) {
+  for (const axis of axes) {
     const w = clamp(weights[axis.key] ?? 0, -1, 1);
     if (w === 0) continue;
     const delta = w > 0 ? axis.pos : axis.neg;
@@ -228,56 +262,85 @@ export function synthesize(weights, offsets = {}) {
 }
 
 /** @typedef {{ id: string, name: string, weights: Weights, offsets: PoseDelta,
- *              notes: string, thumb: string | null,
+ *              notes: string, thumb: string | null, actuators?: PoseDelta | null,
  *              judge: { target: string, p: number, stamp: number } | null }} SavedPose */
 
 /**
- * The library's export payload — weights AND the synthesized actuator vector
- * per pose, so downstream steps (PCA over collected poses, the runtime
- * controller) can consume either layer without importing this module.
- * @param {SavedPose[]} poses
+ * The library's export payload — the live basis, plus weights AND the exact
+ * actuator vector per pose, so downstream steps (PCA over collected poses,
+ * the runtime controller) can consume either layer without importing this
+ * module — and so a pose survives later edits to the basis it was authored on.
+ * @param {SavedPose[]} poses @param {Axis[]} [axes]
  */
-export function exportPayload(poses) {
+export function exportPayload(poses, axes = AXES) {
   return {
     format: "innate-expression-poses",
     version: 1,
     robot: "mars",
     neutral: NEUTRAL,
-    axes: AXES.map(({ key, neg, pos }) => ({ key, neg, pos })),
+    axes,
     poses: poses.map((p) => ({
       name: p.name,
       notes: p.notes,
       weights: p.weights,
       offsets: p.offsets,
-      actuators: synthesize(p.weights, p.offsets),
+      actuators: actuatorNumbers(p.actuators) ?? synthesize(sanitizeWeights(p.weights, axes), p.offsets, axes),
       judge: p.judge,
     })),
   };
 }
 
+/** Finite actuator values from a raw object (zeros kept — 0 is a real value
+ * here, unlike in a delta), or null when nothing usable. @param {any} raw @returns {PoseDelta | null} */
+export function actuatorNumbers(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  /** @type {PoseDelta} */
+  const out = {};
+  for (const a of ACTUATORS) {
+    const v = Number(raw[a.key]);
+    if (Number.isFinite(v)) out[a.key] = v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 /**
- * Parse an exported payload back into library entries (thumbnails are not
- * exported; they re-render on load). Throws on anything that isn't ours.
- * @param {string} text @returns {{ name: string, weights: Weights, offsets: PoseDelta, notes: string }[]}
+ * Parse an exported payload back into library entries plus the basis the file
+ * was authored on (null when absent/invalid — older exports carried only
+ * key+deltas, which sanitizeBasis relabels from the built-ins). Thumbnails
+ * are not exported; they re-render on load. Throws on anything not ours.
+ * @param {string} text
+ * @returns {{ basis: Axis[] | null,
+ *             poses: { name: string, weights: Weights, offsets: PoseDelta, notes: string, actuators: PoseDelta | null }[] }}
  */
 export function parseImport(text) {
   const data = JSON.parse(text);
   if (data?.format !== "innate-expression-poses" || !Array.isArray(data.poses)) {
     throw new Error("not an expression-poses export");
   }
-  return data.poses.map((/** @type {any} */ p) => ({
-    name: String(p.name || "pose"),
-    weights: sanitizeWeights(p.weights),
-    offsets: sanitizeOffsets(p.offsets),
-    notes: String(p.notes || ""),
-  }));
+  /** @type {Axis[] | null} */
+  let basis = null;
+  try {
+    basis = sanitizeBasis(data.axes);
+  } catch {
+    basis = null;
+  }
+  return {
+    basis,
+    poses: data.poses.map((/** @type {any} */ p) => ({
+      name: String(p.name || "pose"),
+      weights: sanitizeWeights(p.weights, basis ?? AXES),
+      offsets: sanitizeOffsets(p.offsets),
+      notes: String(p.notes || ""),
+      actuators: actuatorNumbers(p.actuators),
+    })),
+  };
 }
 
-/** Keep only known axis keys, as finite numbers in [-1, 1]. @param {any} raw @returns {Weights} */
-export function sanitizeWeights(raw) {
-  const w = zeroWeights();
+/** Keep only known axis keys, as finite numbers in [-1, 1]. @param {any} raw @param {Axis[]} [axes] @returns {Weights} */
+export function sanitizeWeights(raw, axes = AXES) {
+  const w = zeroWeights(axes);
   if (raw && typeof raw === "object") {
-    for (const axis of AXES) {
+    for (const axis of axes) {
       const v = Number(raw[axis.key]);
       if (Number.isFinite(v)) w[axis.key] = clamp(v, -1, 1);
     }

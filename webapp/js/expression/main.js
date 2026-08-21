@@ -16,9 +16,13 @@
 import {
   ACTUATORS,
   AXES,
+  NEUTRAL,
   PRESETS,
+  actuatorNumbers,
+  defaultBasis,
   exportPayload,
   parseImport,
+  sanitizeBasis,
   sanitizeOffsets,
   sanitizeWeights,
   synthesize,
@@ -35,6 +39,7 @@ const ARM_ACTION_TYPE = "brain_messages/action/ExecuteArmCommand";
 const STREAM_TOPIC = "/armsdk/stream_joints";
 const ARM_STATE_TOPIC = "/mars/arm/state";
 const LIBRARY_KEY = "innate.expression.library";
+const BASIS_KEY = "innate.expression.basis";
 const MAX_POSES = 60;
 
 /** @typedef {import("./model.js").Pose} Pose */
@@ -130,6 +135,20 @@ const CSS = `
 .exs-off-val { width: 56px; text-align: right; font-family: var(--mono, ui-monospace, monospace);
   font-size: 12px; color: var(--accent); }
 
+/* --- basis editor -------------------------------------------------------- */
+.exs-bx { border-top: 1px solid var(--hairline); padding: 7px 0 3px; }
+.exs-bx:first-child { border-top: none; }
+.exs-bx-head { display: flex; gap: 6px; align-items: center; }
+.exs-bx-head .spacer { flex: 1; }
+.exs-bx-head input { font-size: 12px; padding: 3px 6px; }
+.exs-bx-end { display: flex; gap: 6px; align-items: center; margin: 5px 0; }
+.exs-bx-end > b { width: 18px; font-size: 11px; color: var(--muted); font-weight: 500;
+  font-family: var(--mono, ui-monospace, monospace); }
+.exs-bx-end input { flex: 1; min-width: 0; font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11.5px; padding: 3px 7px; }
+.exs-bx-end input.bad { border-color: var(--danger); }
+.exs-bx-end button { white-space: nowrap; }
+
 /* --- judge -------------------------------------------------------------- */
 .exs-views { display: flex; gap: 8px; margin: 8px 0; }
 .exs-views figure { margin: 0; flex: 1; min-width: 0; }
@@ -218,6 +237,17 @@ const PAGE_HTML = `
         <div class="exs-row"><button class="exs-mini" data-el="clearOffsets">clear offsets</button></div>
         <div class="exs-hint">offsets add on top of the axes and export with the pose — use them to fix what the basis can't say, then fold recurring fixes back into the basis</div>
       </details>
+      <details>
+        <summary>Basis editor · redefine the axes</summary>
+        <div data-el="basisRows"></div>
+        <div class="exs-row">
+          <input type="text" data-el="newAxisName" placeholder="new axis name" size="12">
+          <button class="exs-mini" data-el="addAxis" title="Add an empty axis — then sculpt each extreme and capture it">+ add axis</button>
+          <span class="spacer"></span>
+          <button class="exs-mini exs-warn" data-el="resetBasis" title="Throw away every edit and restore the built-in basis">reset all</button>
+        </div>
+        <div class="exs-hint">the puppet workflow: sculpt an extreme with the axes + fine-tune, then <b>capture</b> it as that end of an axis (a delta from neutral — the slider then holds your pose at ±1). Edits persist in this browser and export with your poses; saved poses keep their exact look across basis changes.</div>
+      </details>
     </div>
   </div>
 
@@ -289,10 +319,21 @@ export function mount(stage) {
   let viz = null;
 
   // ---- pose state ---------------------------------------------------------
-  let weights = zeroWeights();
+  // The live basis: the built-ins, overridden by whatever this browser has
+  // sculpted in the basis editor.
+  /** @type {import("./model.js").Axis[]} */
+  let basis;
+  try {
+    basis = sanitizeBasis(JSON.parse(localStorage.getItem(BASIS_KEY) ?? "null"));
+  } catch {
+    basis = defaultBasis();
+  }
+  const persistBasis = () => localStorage.setItem(BASIS_KEY, JSON.stringify(basis));
+
+  let weights = zeroWeights(basis);
   /** @type {import("./model.js").PoseDelta} */
   let offsets = {};
-  const currentPose = () => synthesize(weights, offsets);
+  const currentPose = () => synthesize(weights, offsets, basis);
 
   /** @type {HTMLInputElement[]} */
   const axisSliders = [];
@@ -316,9 +357,9 @@ export function mount(stage) {
   }
 
   function refreshSliders() {
-    AXES.forEach((axis, i) => {
-      axisSliders[i].value = String(weights[axis.key]);
-      axisVals[i].textContent = weights[axis.key].toFixed(2);
+    basis.forEach((axis, i) => {
+      axisSliders[i].value = String(weights[axis.key] ?? 0);
+      axisVals[i].textContent = (weights[axis.key] ?? 0).toFixed(2);
     });
     ACTUATORS.forEach((a, i) => {
       offsetSliders[i].value = String(offsets[a.key] ?? 0);
@@ -332,52 +373,192 @@ export function mount(stage) {
       const preset = PRESETS[i];
       const active =
         Object.keys(offsets).length === 0 &&
-        AXES.every((axis) => Math.abs((preset.weights[axis.key] ?? 0) - weights[axis.key]) < 0.005);
+        basis.every((axis) => Math.abs((preset.weights[axis.key] ?? 0) - (weights[axis.key] ?? 0)) < 0.005);
       chip.classList.toggle("active", active);
     });
   }
 
   // ---- axes UI ------------------------------------------------------------
-  AXES.forEach((axis, i) => {
-    const row = document.createElement("div");
-    row.className = "exs-axis";
-    row.title = axis.doc;
-    row.innerHTML = `
-      <div class="exs-axis-top"><span class="exs-axis-name">${axis.label}</span>
-        <span class="exs-axis-val">0.00</span></div>
-      <div class="exs-axis-track"><span class="exs-axis-end">${axis.negLabel}</span>
-        <input type="range" min="-1" max="1" step="0.01" value="0">
-        <span class="exs-axis-end hi">${axis.posLabel}</span></div>`;
-    const slider = /** @type {HTMLInputElement} */ (row.querySelector("input"));
-    const val = /** @type {HTMLElement} */ (row.querySelector(".exs-axis-val"));
-    slider.addEventListener("input", () => {
-      weights[axis.key] = +slider.value;
-      val.textContent = (+slider.value).toFixed(2);
-      applyPose();
-    });
-    slider.addEventListener("dblclick", () => {
-      weights[axis.key] = 0;
-      slider.value = "0";
-      val.textContent = "0.00";
-      applyPose();
-    });
-    axisSliders.push(slider);
-    axisVals.push(val);
-    el("axes").appendChild(row);
-  });
+  // Rebuilt whenever the basis editor changes the axis roster or its labels.
+  function renderAxes() {
+    axisSliders.length = 0;
+    axisVals.length = 0;
+    el("axes").innerHTML = "";
+    for (const axis of basis) {
+      const row = document.createElement("div");
+      row.className = "exs-axis";
+      row.title = axis.doc;
+      row.innerHTML = `
+        <div class="exs-axis-top"><span class="exs-axis-name">${escapeHtml(axis.label)}</span>
+          <span class="exs-axis-val">0.00</span></div>
+        <div class="exs-axis-track"><span class="exs-axis-end">${escapeHtml(axis.negLabel)}</span>
+          <input type="range" min="-1" max="1" step="0.01" value="0">
+          <span class="exs-axis-end hi">${escapeHtml(axis.posLabel)}</span></div>`;
+      const slider = /** @type {HTMLInputElement} */ (row.querySelector("input"));
+      const val = /** @type {HTMLElement} */ (row.querySelector(".exs-axis-val"));
+      slider.addEventListener("input", () => {
+        weights[axis.key] = +slider.value;
+        val.textContent = (+slider.value).toFixed(2);
+        applyPose();
+      });
+      slider.addEventListener("dblclick", () => {
+        weights[axis.key] = 0;
+        slider.value = "0";
+        val.textContent = "0.00";
+        applyPose();
+      });
+      axisSliders.push(slider);
+      axisVals.push(val);
+      el("axes").appendChild(row);
+    }
+    refreshSliders();
+  }
 
   PRESETS.forEach((preset) => {
     const chip = document.createElement("button");
     chip.textContent = preset.label;
     chip.title = preset.doc;
     chip.addEventListener("click", () => {
-      weights = sanitizeWeights(preset.weights);
+      weights = sanitizeWeights(preset.weights, basis);
       offsets = {};
       refreshSliders();
       applyPose();
       input("poseName").value = preset.label;
     });
     el("presets").appendChild(chip);
+  });
+
+  // ---- basis editor -------------------------------------------------------
+  /** The current pose as a delta from neutral — what a captured extreme *is*.
+   * Values rounded to what the actuator meaningfully resolves. */
+  function deltaFromNeutral() {
+    const pose = currentPose();
+    /** @type {import("./model.js").PoseDelta} */
+    const delta = {};
+    for (const a of ACTUATORS) {
+      const d = pose[a.key] - NEUTRAL[a.key];
+      if (Math.abs(d) > (a.unit === "°" ? 0.5 : 0.005)) {
+        delta[a.key] = a.unit === "°" ? Math.round(d) : +d.toFixed(3);
+      }
+    }
+    return delta;
+  }
+
+  /** Re-render everything the basis feeds and persist it. */
+  function basisChanged() {
+    weights = sanitizeWeights(weights, basis);
+    persistBasis();
+    renderAxes();
+    renderBasisEditor();
+    applyPose();
+  }
+
+  function renderBasisEditor() {
+    el("basisRows").innerHTML = "";
+    basis.forEach((axis, index) => {
+      const row = document.createElement("div");
+      row.className = "exs-bx";
+      row.innerHTML = `
+        <div class="exs-bx-head">
+          <input type="text" value="${escapeHtml(axis.label)}" size="9" data-f="label" title="axis name">
+          <input type="text" value="${escapeHtml(axis.negLabel)}" size="8" data-f="negLabel" title="label of the −1 end">
+          <span class="exs-sub">⟷</span>
+          <input type="text" value="${escapeHtml(axis.posLabel)}" size="8" data-f="posLabel" title="label of the +1 end">
+          <span class="spacer"></span>
+          ${AXES.some((d) => d.key === axis.key) ? '<button class="exs-mini" data-f="restore" title="Restore this axis\'s built-in definition">↺</button>' : ""}
+          <button class="exs-mini exs-warn" data-f="del" title="Remove this axis from the basis">✕</button>
+        </div>
+        <div class="exs-bx-end"><b>−1</b>
+          <input type="text" spellcheck="false" data-end="neg" title='the −1 extreme as a delta from neutral, e.g. {"j2":-0.5,"head":-30}'>
+          <button class="exs-mini" data-cap="neg" title="Capture the CURRENT pose as this axis's −1 extreme; the slider then holds it at −1">⤓ capture</button>
+          <button class="exs-mini" data-view="neg" title="Preview this extreme (sets the slider to −1)">view</button>
+        </div>
+        <div class="exs-bx-end"><b>+1</b>
+          <input type="text" spellcheck="false" data-end="pos" title='the +1 extreme as a delta from neutral, e.g. {"j1":-0.7,"head":14}'>
+          <button class="exs-mini" data-cap="pos" title="Capture the CURRENT pose as this axis's +1 extreme; the slider then holds it at +1">⤓ capture</button>
+          <button class="exs-mini" data-view="pos" title="Preview this extreme (sets the slider to +1)">view</button>
+        </div>`;
+
+      for (const end of /** @type {const} */ (["neg", "pos"])) {
+        const field = /** @type {HTMLInputElement} */ (row.querySelector(`input[data-end="${end}"]`));
+        field.value = JSON.stringify(axis[end]);
+        field.addEventListener("change", () => {
+          try {
+            const delta = sanitizeOffsets(JSON.parse(field.value || "{}"));
+            field.classList.remove("bad");
+            axis[end] = delta;
+            field.value = JSON.stringify(delta);
+            persistBasis();
+            applyPose();
+          } catch {
+            field.classList.add("bad"); // left visible until a valid parse; not applied
+          }
+        });
+        /** @type {HTMLButtonElement} */ (row.querySelector(`[data-cap="${end}"]`)).addEventListener("click", () => {
+          axis[end] = deltaFromNeutral();
+          weights = zeroWeights(basis);
+          weights[axis.key] = end === "pos" ? 1 : -1;
+          offsets = {};
+          basisChanged();
+          log(`captured the pose as "${axis.label}" ${end === "pos" ? "+1" : "−1"} — the slider now owns it`, "ok");
+        });
+        /** @type {HTMLButtonElement} */ (row.querySelector(`[data-view="${end}"]`)).addEventListener("click", () => {
+          weights[axis.key] = end === "pos" ? 1 : -1;
+          refreshSliders();
+          applyPose();
+        });
+      }
+      for (const f of ["label", "negLabel", "posLabel"]) {
+        const field = /** @type {HTMLInputElement} */ (row.querySelector(`input[data-f="${f}"]`));
+        field.addEventListener("change", () => {
+          axis[/** @type {"label"|"negLabel"|"posLabel"} */ (f)] = field.value.trim() || axis.key;
+          persistBasis();
+          renderAxes();
+        });
+      }
+      row.querySelector('[data-f="restore"]')?.addEventListener("click", () => {
+        const builtin = defaultBasis().find((d) => d.key === axis.key);
+        if (!builtin) return;
+        basis[index] = builtin;
+        basisChanged();
+        log(`restored built-in "${builtin.label}"`);
+      });
+      /** @type {HTMLButtonElement} */ (row.querySelector('[data-f="del"]')).addEventListener("click", () => {
+        if (!window.confirm(`Remove the "${axis.label}" axis? Saved poses keep their look (they carry actuator vectors), but its slider disappears.`)) return;
+        basis.splice(index, 1);
+        basisChanged();
+        log(`removed axis "${axis.label}" — reset all restores the built-ins`);
+      });
+      el("basisRows").appendChild(row);
+    });
+  }
+
+  el("addAxis").addEventListener("click", () => {
+    const name = input("newAxisName").value.trim();
+    if (!name) {
+      input("newAxisName").focus();
+      return;
+    }
+    let key = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "axis";
+    while (basis.some((a) => a.key === key)) key += "2";
+    basis.push({
+      key,
+      label: name,
+      negLabel: "−",
+      posLabel: "+",
+      doc: "custom axis — sculpt each extreme with the sliders, then capture it",
+      neg: {},
+      pos: {},
+    });
+    input("newAxisName").value = "";
+    basisChanged();
+    log(`added axis "${name}" — capture its extremes to give it meaning`);
+  });
+  el("resetBasis").addEventListener("click", () => {
+    if (!window.confirm("Reset ALL axes to the built-in basis? Every edited or added axis is discarded.")) return;
+    basis = defaultBasis();
+    basisChanged();
+    log("basis reset to built-ins");
   });
 
   ACTUATORS.forEach((a, i) => {
@@ -402,7 +583,7 @@ export function mount(stage) {
   });
 
   el("resetAxes").addEventListener("click", () => {
-    weights = zeroWeights();
+    weights = zeroWeights(basis);
     offsets = {};
     refreshSliders();
     applyPose();
@@ -712,6 +893,32 @@ export function mount(stage) {
   }
   let library = loadLibrary();
 
+  /**
+   * Resolve a stored/imported pose against the LIVE basis. Weights are pruned
+   * to known axes; when the entry carries its exact actuator vector, the
+   * residual (from basis edits since it was authored) folds into offsets so
+   * the pose looks identical — the semantic weights survive where they still
+   * apply. Two passes: the second absorbs clamping interactions.
+   * @param {any} entryWeights @param {any} entryOffsets @param {import("./model.js").PoseDelta | null} actuators
+   */
+  function resolvePose(entryWeights, entryOffsets, actuators) {
+    const w = sanitizeWeights(entryWeights, basis);
+    let off = sanitizeOffsets(entryOffsets);
+    if (actuators) {
+      for (let pass = 0; pass < 2; pass++) {
+        const synth = synthesize(w, off, basis);
+        for (const a of ACTUATORS) {
+          const v = actuators[a.key];
+          if (typeof v === "number" && Math.abs(v - synth[a.key]) > 1e-4) {
+            off[a.key] = (off[a.key] ?? 0) + v - synth[a.key];
+          }
+        }
+      }
+      off = sanitizeOffsets(off);
+    }
+    return { weights: w, offsets: off };
+  }
+
   /** Thumbnail for an arbitrary pose: pose in, snapshot, current pose back
    * (the view eases home afterwards). @param {Pose} pose */
   function thumbFor(pose) {
@@ -733,8 +940,7 @@ export function mount(stage) {
           ${pose.judge ? `<div class="exs-lib-judge">${escapeHtml(pose.judge.target)} ${pose.judge.p.toFixed(2)}</div>` : ""}</span>
         <button class="exs-mini exs-warn" title="Delete this pose">✕</button>`;
       item.addEventListener("click", () => {
-        weights = sanitizeWeights(pose.weights);
-        offsets = sanitizeOffsets(pose.offsets);
+        ({ weights, offsets } = resolvePose(pose.weights, pose.offsets, actuatorNumbers(pose.actuators)));
         refreshSliders();
         applyPose();
         input("poseName").value = pose.name;
@@ -759,6 +965,7 @@ export function mount(stage) {
       offsets: { ...offsets },
       notes: "",
       thumb: thumbFor(currentPose()),
+      actuators: currentPose(),
       judge: lastVerdict,
     });
     library = library.slice(0, MAX_POSES);
@@ -768,7 +975,7 @@ export function mount(stage) {
   });
 
   el("exportBtn").addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify(exportPayload(library), null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(exportPayload(library, basis), null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = "mars-expression-poses.json";
@@ -782,15 +989,24 @@ export function mount(stage) {
     input("importFile").value = "";
     if (!file) return;
     try {
-      const entries = parseImport(await file.text());
+      const { basis: fileBasis, poses: entries } = parseImport(await file.text());
+      if (fileBasis && JSON.stringify(fileBasis) !== JSON.stringify(basis)) {
+        if (window.confirm("This file carries its own axis basis. Adopt it (replaces your current axes)? The poses import correctly either way.")) {
+          basis = fileBasis;
+          basisChanged();
+          log("adopted the file's basis", "ok");
+        }
+      }
       for (const entry of entries) {
+        const resolved = resolvePose(entry.weights, entry.offsets, entry.actuators);
         library.unshift({
           id: crypto.randomUUID(),
           name: entry.name,
-          weights: entry.weights,
-          offsets: entry.offsets,
+          weights: resolved.weights,
+          offsets: resolved.offsets,
           notes: entry.notes,
-          thumb: thumbFor(synthesize(entry.weights, entry.offsets)),
+          thumb: thumbFor(synthesize(resolved.weights, resolved.offsets, basis)),
+          actuators: entry.actuators,
           judge: null,
         });
       }
@@ -808,7 +1024,8 @@ export function mount(stage) {
     return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
   }
 
-  refreshSliders();
+  renderAxes();
+  renderBasisEditor();
   applyPose();
   renderLibrary();
   log("ready — shape a pose on the axes, then Evaluate to hear what blind judges read");
