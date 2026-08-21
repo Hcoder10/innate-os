@@ -145,8 +145,8 @@ def generate_launch_description():
 
     # ── Container ─────────────────────────────────────────────────────────────
 
-    # Opt-in newer GStreamer: a robot with a parallel build staged at /opt/gst (see
-    # docs/WEBRTC_FEC_GST_UPGRADE.md) runs the camera container against it — 1.20's
+    # Opt-in newer GStreamer: a robot with a parallel build staged at /opt/gst
+    # (scripts/update/build_gst_opt.sh) runs the camera container against it — 1.20's
     # webrtcbin negotiates ULPFEC but never sends it; >=1.22 does. GStreamer's ABI
     # guarantee lets the 1.20-built binaries run unmodified; NVIDIA's hardware plugins
     # stay on the system path (verified loading under the 1.24 core). Robots without

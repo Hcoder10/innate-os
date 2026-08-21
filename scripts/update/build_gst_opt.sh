@@ -1,11 +1,11 @@
 #!/bin/bash
 # Build the innate-gstreamer-opt Debian package: a self-contained GStreamer at
-# /opt/gst that unlocks webrtcbin's ULPFEC (broken on the system 1.20 — see
-# docs/WEBRTC_FEC_GST_UPGRADE.md). Run natively on a Jetson (arm64); the deb
-# then goes to the innate-packages repo root, whose publish.sh signs and
-# indexes every *.deb it finds. Robots pick it up through the normal update
-# flow via apt-dependencies.hardware.txt, and camera_composable.launch.py
-# activates /opt/gst automatically when present.
+# /opt/gst that unlocks webrtcbin's ULPFEC (the system 1.20 negotiates it but
+# never emits a RED packet). Run natively on a Jetson (arm64); the deb then goes
+# to the innate-packages repo root, whose publish.sh signs and indexes every
+# *.deb it finds. Robots pick it up through the normal update flow via
+# apt-dependencies.hardware.txt, and camera_composable.launch.py activates
+# /opt/gst automatically when present.
 #
 #   ./scripts/update/build_gst_opt.sh            # -> innate-gstreamer-opt_<v>-1_arm64.deb
 #   GST_VERSION=1.24.13 ./scripts/update/build_gst_opt.sh
