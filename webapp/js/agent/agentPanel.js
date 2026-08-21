@@ -60,7 +60,7 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   const panel = document.createElement("section");
   panel.className = "overlay agent-panel";
   const controlPanel = document.createElement("section");
-  controlPanel.className = "agent-control-panel collapsed";
+  controlPanel.className = "agent-control-panel";
   const thoughtsPanel = document.createElement("section");
   thoughtsPanel.className = "agent-thoughts-panel";
 
@@ -68,8 +68,8 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
   const head = document.createElement("button");
   head.type = "button";
   head.className = "agent-head";
-  head.setAttribute("aria-label", "Expand agent controls");
-  head.setAttribute("aria-expanded", "false");
+  head.setAttribute("aria-label", "Collapse agent controls");
+  head.setAttribute("aria-expanded", "true");
   const titleEl = document.createElement("span");
   titleEl.className = "agent-title";
   titleEl.innerHTML =
