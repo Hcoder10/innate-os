@@ -20,6 +20,14 @@ RESIDENTS = [
             "From Chipotle, I'd like a chicken burrito bowl with brown rice, black beans, mild salsa, and no cheese."
         ),
         accepted_readbacks=("Chipotle chicken bowl with brown rice, black beans, mild salsa, and without cheese.",),
+        required_facts=(
+            ("Chipotle",),
+            ("chicken burrito bowl", "chicken bowl", "burrito bowl with chicken"),
+            ("brown rice",),
+            ("black beans",),
+            ("mild salsa",),
+        ),
+        excluded_items=("cheese",),
         radius_m=RESIDENT_DIALOGUE_RADIUS_M,
     ),
     Resident(
@@ -30,6 +38,14 @@ RESIDENTS = [
             "From Sweetgreen, I'd like the Harvest Bowl with roasted chicken, "
             "no goat cheese, and the balsamic vinaigrette on the side."
         ),
+        required_facts=(
+            ("Sweetgreen",),
+            ("Harvest Bowl",),
+            ("roasted chicken",),
+            ("balsamic vinaigrette",),
+            ("on the side", "dressing on the side", "vinaigrette on the side"),
+        ),
+        excluded_items=("goat cheese",),
         radius_m=RESIDENT_DIALOGUE_RADIUS_M,
     ),
     Resident(
@@ -37,6 +53,13 @@ RESIDENTS = [
         name="Casey",
         prop="resident_casey",
         order="From Shake Shack, I'd like a ShackBurger with no pickles, cheese fries, and a vanilla shake.",
+        required_facts=(
+            ("Shake Shack",),
+            ("ShackBurger", "Shack Burger"),
+            ("cheese fries",),
+            ("vanilla shake",),
+        ),
+        excluded_items=("pickles",),
         radius_m=RESIDENT_DIALOGUE_RADIUS_M,
     ),
 ]

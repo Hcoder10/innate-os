@@ -277,6 +277,31 @@ def test_contradictory_readback_does_not_confirm(tmp_path):
     assert not block["active"]["goals"][0]["done"]
 
 
+@pytest.mark.parametrize(
+    "contradiction",
+    [
+        "From Chipotle I have a chicken burrito bowl with brown rice, black beans, mild salsa, "
+        "and no cheese, but put cheese on it.",
+        "From Chipotle I have a chicken burrito bowl with brown rice, black beans, mild salsa, and not no cheese.",
+        "From Chipotle I have a chicken burrito bowl with brown rice, black beans, mild salsa, "
+        "and do not remove the cheese.",
+    ],
+)
+def test_semantic_readback_rejects_reversed_exclusions(tmp_path, contradiction):
+    engine, sim, centers, residents = _engine(tmp_path, ("alex",))
+    alex = residents["alex"]
+    position = centers[alex.prop]
+    _speak(engine, sim, centers, position, "What is your order?")
+    _reply(engine)
+
+    block = _speak(engine, sim, centers, position, contradiction)
+    _token, payload = _reply(engine)
+
+    assert "Not quite" in payload["text"]
+    assert block["active"]["state"] == "running"
+    assert not block["active"]["goals"][0]["done"]
+
+
 def test_connective_words_do_not_reject_a_correct_readback(tmp_path):
     engine, sim, centers, residents = _engine(tmp_path, ("alex",))
     alex = residents["alex"]
@@ -296,6 +321,8 @@ def test_connective_words_do_not_reject_a_correct_readback(tmp_path):
     [
         None,  # replaced with the resident's exact sentence below
         "Chipotle chicken bowl with brown rice, black beans, mild salsa, and without cheese.",
+        "From Chipotle I have a chicken burrito bowl with brown rice, black beans, mild salsa, and no cheese.",
+        "The Chipotle order is a burrito bowl with chicken, brown rice, black beans, mild salsa; hold the cheese.",
     ],
 )
 def test_complete_exact_or_paraphrased_readback_confirms(tmp_path, readback):
@@ -311,6 +338,38 @@ def test_complete_exact_or_paraphrased_readback_confirms(tmp_path, readback):
     assert "That's correct" in payload["text"]
     assert block["active"]["state"] == "passed"
     assert block["active"]["goals"][0]["done"]
+
+
+@pytest.mark.parametrize(
+    ("resident_id", "readback"),
+    [
+        (
+            "alex",
+            "From Chipotle I have a chicken burrito bowl with brown rice, black beans, mild salsa, and no cheese.",
+        ),
+        (
+            "blake",
+            "The Sweetgreen Harvest Bowl with roasted chicken, without goat cheese, and balsamic vinaigrette "
+            "on the side.",
+        ),
+        (
+            "casey",
+            "From Shake Shack: a Shack Burger without pickles, cheese fries, and a vanilla shake.",
+        ),
+    ],
+)
+def test_each_resident_accepts_a_complete_natural_paraphrase(tmp_path, resident_id, readback):
+    engine, sim, centers, residents = _engine(tmp_path, (resident_id,))
+    resident = residents[resident_id]
+    position = centers[resident.prop]
+    _speak(engine, sim, centers, position, "What is your order?")
+    _reply(engine)
+
+    block = _speak(engine, sim, centers, position, readback)
+    _token, payload = _reply(engine)
+
+    assert "That's correct" in payload["text"]
+    assert block["active"]["state"] == "passed"
 
 
 def test_three_residents_can_complete_out_of_declaration_order(tmp_path):

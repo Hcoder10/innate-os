@@ -8,6 +8,7 @@ from mars_sim_driver.challenges import ChallengeRuntime, RuntimeResult, WorldSta
 
 _NON_WORD = re.compile(r"[^a-z0-9]+")
 _READBACK_PREFIXES = ("actually ", "okay ", "so you want ", "you want ", "your order is ", "you said ")
+_NEGATION_PREFIX = re.compile(r"(?:^|\s)(?:not|never|no|without|skip|hold|omit|remove)(?:\s+the)?\s*$")
 
 # A nearby resident should only answer speech directed toward them. The head
 # camera's horizontal field of view is about 84 degrees; this 50-degree half
@@ -28,6 +29,11 @@ class Resident:
     # Whole-utterance matching is deliberate: independent substring checks can
     # accept an order followed by a contradiction.
     accepted_readbacks: tuple[str, ...] = ()
+    # Each inner tuple lists interchangeable phrases for one required fact.
+    required_facts: tuple[tuple[str, ...], ...] = ()
+    # Items that must be explicitly excluded and must not occur positively
+    # elsewhere in the utterance.
+    excluded_items: tuple[str, ...] = ()
     radius_m: float = 1.5
 
 
@@ -53,7 +59,42 @@ class HouseholdOrdersRuntime(ChallengeRuntime):
         while prefix := next((prefix for prefix in _READBACK_PREFIXES if normalized.startswith(prefix)), None):
             normalized = normalized[len(prefix) :]
         accepted = (resident.order, *resident.accepted_readbacks)
-        return normalized in {_normalize_speech(readback) for readback in accepted}
+        if normalized in {_normalize_speech(readback) for readback in accepted}:
+            return True
+
+        # Accept normal changes in sentence framing ("I'd like" vs "I have")
+        # by matching order facts, while treating exclusions specially. Merely
+        # finding "no cheese" is unsafe: "no cheese, but add cheese" and
+        # "not no cheese" must both fail.
+        remainder = f" {normalized} "
+        for item in resident.excluded_items:
+            phrase = re.escape(_normalize_speech(item)).replace(r"\ ", r"\s+")
+            exclusion = re.compile(
+                rf"\b(?:no|without(?:\s+any)?|skip|hold|omit|remove)(?:\s+the)?\s+{phrase}\b|"
+                rf"\b{phrase}[\s-]+free\b"
+            )
+            matches = list(exclusion.finditer(remainder))
+            if not matches:
+                return False
+            for match in matches:
+                if _NEGATION_PREFIX.search(remainder[: match.start()]):
+                    return False
+            remainder = exclusion.sub(" ", remainder)
+            if re.search(rf"\b{phrase}\b", remainder):
+                return False
+
+        for alternatives in resident.required_facts:
+            if not any(HouseholdOrdersRuntime._has_positive_phrase(normalized, phrase) for phrase in alternatives):
+                return False
+        return bool(resident.required_facts)
+
+    @staticmethod
+    def _has_positive_phrase(text: str, phrase: str) -> bool:
+        normalized_phrase = _normalize_speech(phrase)
+        phrase_pattern = re.escape(normalized_phrase).replace(r"\ ", r"\s+")
+        pattern = re.compile(rf"\b{phrase_pattern}\b")
+        matches = list(pattern.finditer(text))
+        return bool(matches) and all(not _NEGATION_PREFIX.search(text[: match.start()]) for match in matches)
 
     @staticmethod
     def _is_in_front(robot: tuple[float, float, float], pos: tuple[float, float]) -> bool:
