@@ -36,6 +36,7 @@ const ROUTES = [
   { path: "/agent", key: "agent", load: () => import("./agent/main.js") },
   { path: "/brain", key: "agent", load: () => import("./agent/main.js") },
   { path: "/nav", key: "nav", load: () => import("./nav/main.js") },
+  { path: "/policy", key: "policy", load: () => import("./policy/main.js") },
   { path: "/logging", key: "logging", load: () => import("./logging/main.js") },
   { path: "/datasets", key: "datasets", load: () => import("./datasets/main.js") },
   { path: "/collect", key: "collect", load: () => import("./collect/main.js") },
