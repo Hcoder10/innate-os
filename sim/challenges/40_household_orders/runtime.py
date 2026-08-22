@@ -84,17 +84,24 @@ class HouseholdOrdersRuntime(ChallengeRuntime):
                 return False
 
         for alternatives in resident.required_facts:
-            if not any(HouseholdOrdersRuntime._has_positive_phrase(normalized, phrase) for phrase in alternatives):
+            polarities = [HouseholdOrdersRuntime._phrase_polarities(normalized, phrase) for phrase in alternatives]
+            if not any(positive for positive, _negative in polarities):
+                return False
+            # Alternate spellings describe the same fact. A positive mention of
+            # one spelling must not hide a later contradiction using another
+            # spelling (for example, "ShackBurger ... but no Shack Burger").
+            if any(negative for _positive, negative in polarities):
                 return False
         return bool(resident.required_facts)
 
     @staticmethod
-    def _has_positive_phrase(text: str, phrase: str) -> bool:
+    def _phrase_polarities(text: str, phrase: str) -> tuple[bool, bool]:
         normalized_phrase = _normalize_speech(phrase)
         phrase_pattern = re.escape(normalized_phrase).replace(r"\ ", r"\s+")
         pattern = re.compile(rf"\b{phrase_pattern}\b")
         matches = list(pattern.finditer(text))
-        return bool(matches) and all(not _NEGATION_PREFIX.search(text[: match.start()]) for match in matches)
+        negated = [_NEGATION_PREFIX.search(text[: match.start()]) is not None for match in matches]
+        return any(not value for value in negated), any(negated)
 
     @staticmethod
     def _is_in_front(robot: tuple[float, float, float], pos: tuple[float, float]) -> bool:

@@ -302,6 +302,25 @@ def test_semantic_readback_rejects_reversed_exclusions(tmp_path, contradiction):
     assert not block["active"]["goals"][0]["done"]
 
 
+def test_semantic_readback_rejects_negated_alternate_required_phrase(tmp_path):
+    engine, sim, centers, residents = _engine(tmp_path, ("casey",))
+    casey = residents["casey"]
+    position = centers[casey.prop]
+    _speak(engine, sim, centers, position, "What is your order?")
+    _reply(engine)
+
+    contradiction = (
+        "From Shake Shack, a ShackBurger with no pickles, cheese fries, and a vanilla shake, "
+        "but no Shack Burger."
+    )
+    block = _speak(engine, sim, centers, position, contradiction)
+    _token, payload = _reply(engine)
+
+    assert "Not quite" in payload["text"]
+    assert block["active"]["state"] == "running"
+    assert not block["active"]["goals"][0]["done"]
+
+
 def test_connective_words_do_not_reject_a_correct_readback(tmp_path):
     engine, sim, centers, residents = _engine(tmp_path, ("alex",))
     alex = residents["alex"]
