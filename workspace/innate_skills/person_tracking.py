@@ -1,85 +1,32 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-import json
 import math
 import time
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
-from std_msgs.msg import String
 
-from brain_client.perception.gaze import FaceDetector
+from brain_client.perception.gaze import (
+    CAMERA_VFOV,
+    FACE_CENTER_X_TOLERANCE,
+    FACE_CENTER_Y_TOLERANCE,
+    FACE_DETECTION_MIN_CONFIDENCE,
+    FACE_LOCK_SECONDS,
+    FACE_SEARCH_START_TILT,
+    FACE_SEARCH_TILT_STEP,
+    MAX_TILT,
+    MIN_TILT,
+    TILT_KP,
+    FaceBox,
+    FaceDebugPublisher,
+    FaceDetector,
+)
 from innate import Head, HeadState, MainImage, Mobility, Skill, resource
 
-if TYPE_CHECKING:
-    from rclpy.node import Node
-
-FACE_LOCK_FRAMES = 2
-FACE_CENTER_X_TOLERANCE = 0.15
-FACE_CENTER_Y_TOLERANCE = 0.18
-FACE_DETECTION_MIN_CONFIDENCE = 0.3
-CAMERA_VERTICAL_FOV = 50.0
-TILT_GAIN = 0.3
-MIN_HEAD_TILT = -25
-MAX_HEAD_TILT = 15
-FACE_SEARCH_TILT_STEP = 3
 TURN_SPEED = 0.35
 TURN_DURATION = 0.25
 TRACK_PERIOD = 0.15
-FACE_DEBUG_TOPIC = "/brain/face_debug"
-
-
-@dataclass(frozen=True)
-class FaceBox:
-    center_x: float
-    center_y: float
-    width: float
-    height: float
-
-
-class FaceDebugPublisher:
-    def __init__(self, node: "Node"):
-        self._publisher = node.create_publisher(String, FACE_DEBUG_TOPIC, 10)
-
-    def publish(
-        self,
-        *,
-        faces: list[FaceBox],
-        selected: FaceBox | None,
-        x_error: float | None,
-        y_error: float | None,
-        lock_frames: int,
-        head_tilt: int,
-        action: str,
-        state: str,
-    ) -> None:
-        selected_index = next((index for index, face in enumerate(faces) if face is selected), None)
-        payload = {
-            "stamp": time.time(),
-            "state": state,
-            "faces": [
-                {
-                    "center_x": face.center_x,
-                    "center_y": face.center_y,
-                    "width": face.width,
-                    "height": face.height,
-                }
-                for face in faces
-            ],
-            "selected": selected_index,
-            "x_error": x_error,
-            "y_error": y_error,
-            "lock_frames": lock_frames,
-            "lock_needed": FACE_LOCK_FRAMES,
-            "head_tilt": head_tilt,
-            "action": action,
-            "x_tolerance": FACE_CENTER_X_TOLERANCE,
-            "y_tolerance": FACE_CENTER_Y_TOLERANCE,
-            "min_confidence": FACE_DETECTION_MIN_CONFIDENCE,
-        }
-        self._publisher.publish(String(data=json.dumps(payload, separators=(",", ":"))))
+FACE_LOCK_FRAMES = math.ceil(FACE_LOCK_SECONDS / TRACK_PERIOD)
 
 
 class _PersonTrackingSkill(Skill):
@@ -106,24 +53,36 @@ class _PersonTrackingSkill(Skill):
         frame = cv2.imdecode(np.frombuffer(image.jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
         if frame is None:
             return []
-        return [FaceBox(**face) for face in self._face_detector.detect(frame)]
+        return self._face_detector.detect(frame)
+
+    def _in_tolerance(self, face: FaceBox) -> bool:
+        return (
+            abs(face.center_x - 0.5) <= FACE_CENTER_X_TOLERANCE and abs(0.5 - face.center_y) <= FACE_CENTER_Y_TOLERANCE
+        )
 
     def _select_face(self, faces: list[FaceBox], side: str = "unknown") -> FaceBox | None:
         if not faces:
             return None
+        candidates = [face for face in faces if self._in_tolerance(face)] or faces
         target_x = {"left": 0.2, "right": 0.8, "center": 0.5}.get(side)
         if target_x is not None:
-            return min(faces, key=lambda face: abs(face.center_x - target_x))
-        return max(faces, key=lambda face: face.width * face.height)
+            return min(candidates, key=lambda face: abs(face.center_x - target_x))
+        return min(candidates, key=lambda face: face.center_y)
 
-    def _center_face(self, side: str = "unknown", timeout: float = 6.0) -> tuple[int, FaceBox] | None:
-        target_tilt = self._head_angle()
+    def _center_face(
+        self, side: str = "unknown", timeout: float = 10.0, *, look_up: bool = False
+    ) -> tuple[int, FaceBox] | None:
+        current_tilt = self._head_angle()
+        target_tilt = max(current_tilt, FACE_SEARCH_START_TILT) if look_up else current_tilt
+        if look_up:
+            self.head.set_position(target_tilt)
         self._face_debug.publish(
             faces=[],
             selected=None,
             x_error=None,
             y_error=None,
             lock_frames=0,
+            lock_needed=FACE_LOCK_FRAMES,
             head_tilt=target_tilt,
             action="waiting_for_camera",
             state="starting",
@@ -136,6 +95,7 @@ class _PersonTrackingSkill(Skill):
                 x_error=None,
                 y_error=None,
                 lock_frames=0,
+                lock_needed=FACE_LOCK_FRAMES,
                 head_tilt=target_tilt,
                 action="no_camera_image",
                 state="failed",
@@ -164,7 +124,7 @@ class _PersonTrackingSkill(Skill):
                     y_error = None
                     locked_frames = 0
                     previous_tilt = target_tilt
-                    target_tilt = min(MAX_HEAD_TILT, target_tilt + FACE_SEARCH_TILT_STEP)
+                    target_tilt = min(MAX_TILT, target_tilt + FACE_SEARCH_TILT_STEP)
                     self.head.set_position(target_tilt)
                     action = "search_up" if target_tilt > previous_tilt else "upper_limit"
                     self._face_debug.publish(
@@ -173,6 +133,7 @@ class _PersonTrackingSkill(Skill):
                         x_error=None,
                         y_error=None,
                         lock_frames=0,
+                        lock_needed=FACE_LOCK_FRAMES,
                         head_tilt=target_tilt,
                         action=action,
                         state="searching",
@@ -189,8 +150,8 @@ class _PersonTrackingSkill(Skill):
                 y_error = 0.5 - face.center_y
                 target_tilt = round(
                     max(
-                        MIN_HEAD_TILT,
-                        min(MAX_HEAD_TILT, target_tilt + y_error * CAMERA_VERTICAL_FOV * TILT_GAIN),
+                        MIN_TILT,
+                        min(MAX_TILT, target_tilt + y_error * CAMERA_VFOV * TILT_KP),
                     )
                 )
                 self.head.set_position(target_tilt)
@@ -214,6 +175,7 @@ class _PersonTrackingSkill(Skill):
                     x_error=x_error,
                     y_error=y_error,
                     lock_frames=locked_frames,
+                    lock_needed=FACE_LOCK_FRAMES,
                     head_tilt=target_tilt,
                     action=action,
                     state=state,
@@ -243,6 +205,7 @@ class _PersonTrackingSkill(Skill):
             x_error=x_error,
             y_error=y_error,
             lock_frames=locked_frames,
+            lock_needed=FACE_LOCK_FRAMES,
             head_tilt=target_tilt,
             action=reason.replace(" ", "_"),
             state="failed",
@@ -254,8 +217,9 @@ class _PersonTrackingSkill(Skill):
             return None
         if tracked is None:
             return self._select_face(faces, side)
+        candidates = [face for face in faces if self._in_tolerance(face)] or faces
         return min(
-            faces,
+            candidates,
             key=lambda face: (
                 abs(face.center_x - tracked.center_x)
                 + abs(face.center_y - tracked.center_y)

@@ -8,7 +8,7 @@ Features:
 - Wheel-based panning (robot turns to face people)
 
 Hardware: MARS robot
-- Head tilt: -25° to +15° (single axis)
+- Head tilt: -25° to +40° (single axis)
 - Pan: Uses differential drive wheels to rotate body
 """
 
@@ -17,12 +17,13 @@ import math
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import asdict, dataclass
 
 import cv2
 import inspireface as isf
 import numpy as np
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
 
 from brain_client.robot.head import Head
@@ -30,9 +31,32 @@ from brain_client.robot.mobility import Mobility
 
 FACE_DEBUG_TOPIC = "/brain/face_debug"
 FACE_DETECTION_MIN_CONFIDENCE = 0.3
-FACE_CENTER_X_TOLERANCE = 0.15
-FACE_CENTER_Y_TOLERANCE = 0.18
-FACE_LOCK_FRAMES = 2
+FACE_CENTER_X_TOLERANCE = 0.18
+FACE_CENTER_Y_TOLERANCE = 0.4  # skill lock box; not a stop for ambient tilt
+FACE_CENTER_Y_DEADZONE = 0.08  # stop hunting once the face is near mid-frame
+FACE_LOCK_SECONDS = 2.0
+FACE_TRACK_HZ = 5.0
+FACE_LOCK_FRAMES = max(1, round(FACE_LOCK_SECONDS * FACE_TRACK_HZ))
+FACE_LOST_SECONDS = 3.0
+FACE_SEARCH_START_TILT = 25
+FACE_SEARCH_TILT_STEP = 3
+TILT_KP = 0.55
+MIN_TILT = -25
+MAX_TILT = 40  # joint_7 look-up; +25 still left standing faces above the frame
+CAMERA_HFOV = 100.0
+CAMERA_VFOV = 80.0
+
+
+def clamp_tilt(degrees: float) -> float:
+    return max(MIN_TILT, min(MAX_TILT, degrees))
+
+
+@dataclass(frozen=True)
+class FaceBox:
+    center_x: float
+    center_y: float
+    width: float
+    height: float
 
 
 class FaceDetector:
@@ -47,33 +71,62 @@ class FaceDetector:
         )
         self._session.set_detection_confidence_threshold(min_confidence)
 
-    def detect(self, frame) -> list[dict]:
-        """Detect faces, return list of {center_x, center_y, width, height}."""
+    def detect(self, frame) -> list[FaceBox]:
         h, w = frame.shape[:2]
         faces = []
         for face in self._session.face_detection(frame):
             x1, y1, x2, y2 = face.location
             faces.append(
-                {
-                    "center_x": (x1 + x2) / 2 / w,
-                    "center_y": (y1 + y2) / 2 / h,
-                    "width": (x2 - x1) / w,
-                    "height": (y2 - y1) / h,
-                }
+                FaceBox(
+                    center_x=(x1 + x2) / 2 / w,
+                    center_y=(y1 + y2) / 2 / h,
+                    width=(x2 - x1) / w,
+                    height=(y2 - y1) / h,
+                )
             )
         return faces
 
 
+class FaceDebugPublisher:
+    """Publishes the tracking-state payload the webapp face overlay renders."""
+
+    def __init__(self, node):
+        self._publisher = node.create_publisher(String, FACE_DEBUG_TOPIC, 10)
+
+    def publish(
+        self,
+        *,
+        faces: list[FaceBox],
+        selected: FaceBox | None,
+        x_error: float | None,
+        y_error: float | None,
+        lock_frames: int,
+        lock_needed: int,
+        head_tilt: int,
+        action: str,
+        state: str,
+    ) -> None:
+        selected_index = next((index for index, face in enumerate(faces) if face is selected), None)
+        payload = {
+            "stamp": time.time(),
+            "state": state,
+            "faces": [asdict(face) for face in faces],
+            "selected": selected_index,
+            "x_error": x_error,
+            "y_error": y_error,
+            "lock_frames": lock_frames,
+            "lock_needed": lock_needed,
+            "head_tilt": head_tilt,
+            "action": action,
+            "x_tolerance": FACE_CENTER_X_TOLERANCE,
+            "y_tolerance": FACE_CENTER_Y_TOLERANCE,
+            "min_confidence": FACE_DETECTION_MIN_CONFIDENCE,
+        }
+        self._publisher.publish(String(data=json.dumps(payload, separators=(",", ":"))))
+
+
 class GazeController:
     """Controls head tilt and wheel pan to track faces."""
-
-    # Hardware limits
-    MIN_TILT = -25  # degrees (looking down)
-    MAX_TILT = 15  # degrees (looking up)
-
-    # Camera parameters
-    CAMERA_HFOV = 100.0  # horizontal FOV degrees
-    CAMERA_VFOV = 50.0  # vertical FOV degrees
 
     # Pan parameters (from original)
     PAN_GAIN = 0.4  # rad/s per unit offset
@@ -88,9 +141,8 @@ class GazeController:
         self._head_command = head_command_fn
         self._wheel_rotate = wheel_rotate_fn
 
-        self._current_tilt = 0.0
         self._target_tilt = 0.0
-        self._last_commanded_tilt = 0
+        self._last_commanded_tilt: int | None = None
 
         self._running = False
         self._thread: threading.Thread | None = None
@@ -101,6 +153,8 @@ class GazeController:
     def start(self):
         if self._running:
             return
+        with self._lock:
+            self._last_commanded_tilt = None  # re-command the held target after a pause
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -111,24 +165,25 @@ class GazeController:
             self._thread.join(timeout=1.0)
             self._thread = None
 
-    def track_face(self, face: dict, frame_shape: tuple[int, int]):
+    def track_face(self, face: FaceBox):
         """Track a detected face by pointing at its center."""
         # Pan error (positive = face is on right = turn right)
-        pan_error = (face["center_x"] - 0.5) * self.CAMERA_HFOV
+        pan_error = (face.center_x - 0.5) * CAMERA_HFOV
 
-        # Tilt: proportional control
-        error_normalized = 0.5 - face["center_y"]
-        tilt_error_degrees = error_normalized * self.CAMERA_VFOV
-        Kp = 0.3
-        tilt_correction = tilt_error_degrees * Kp
-
-        with self._lock:
-            new_tilt = self._current_tilt + tilt_correction
-            self._target_tilt = max(self.MIN_TILT, min(self.MAX_TILT, new_tilt))
+        error_normalized = 0.5 - face.center_y
+        if abs(error_normalized) > FACE_CENTER_Y_DEADZONE:
+            with self._lock:
+                self._target_tilt = clamp_tilt(self._target_tilt + error_normalized * CAMERA_VFOV * TILT_KP)
 
         # Execute pan if significant
         if abs(pan_error) > self.PAN_THRESHOLD:
             self._execute_pan(pan_error)
+
+    def search_up(self):
+        """One step toward the tilt where standing faces enter the frame."""
+        with self._lock:
+            if self._target_tilt < FACE_SEARCH_START_TILT:
+                self._target_tilt = min(FACE_SEARCH_START_TILT, self._target_tilt + FACE_SEARCH_TILT_STEP)
 
     def _execute_pan(self, pan_degrees: float):
         """Execute pan via wheel rotation (rate limited)."""
@@ -160,15 +215,13 @@ class GazeController:
             loop_start = time.time()
 
             with self._lock:
-                tilt_int = int(round(self._target_tilt))
-                tilt_int = max(self.MIN_TILT, min(self.MAX_TILT, tilt_int))
+                tilt_int = int(round(clamp_tilt(self._target_tilt)))
+                last_commanded = self._last_commanded_tilt
 
-            if tilt_int != self._last_commanded_tilt:
+            if last_commanded is None or tilt_int != last_commanded:
                 self._head_command(tilt_int)
-                self._last_commanded_tilt = tilt_int
-
-            with self._lock:
-                self._current_tilt = self._target_tilt
+                with self._lock:
+                    self._last_commanded_tilt = tilt_int
 
             elapsed = time.time() - loop_start
             if elapsed < dt:
@@ -178,7 +231,7 @@ class GazeController:
 class ROSPersonTracker:
     """ROS2 person tracker - simple interface for agents."""
 
-    def __init__(self, node, camera_topic: str = "/mars/main_camera/left/image_raw"):
+    def __init__(self, node, camera_topic: str = "/mars/main_camera/left/image_raw/compressed"):
         self._node = node
         self._frame = None
         self._frame_lock = threading.Lock()
@@ -193,39 +246,35 @@ class ROSPersonTracker:
             wheel_rotate_fn=self._mobility.rotate_in_place,
         )
         self._detector: FaceDetector | None = None
-        self._debug_pub = node.create_publisher(String, FACE_DEBUG_TOPIC, 10)
+        self._debug = FaceDebugPublisher(node)
         self._debug_lock_frames = 0
+        self._last_face_time = time.time()
 
         self._running = False
         self._thread: threading.Thread | None = None
-
-        # Face tracking state
-        self._last_face_time = 0.0
-        self._face_timeout = 5.0
 
         qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
-        self._sub = node.create_subscription(Image, camera_topic, self._on_image, qos)
+        self._sub = node.create_subscription(CompressedImage, camera_topic, self._on_image, qos)
 
     def _on_image(self, msg):
-        """Store latest camera frame."""
-        try:
-            frame = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, -1)
-            if msg.encoding == "rgb8":
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            with self._frame_lock:
-                self._frame = frame
-        except Exception:
-            pass
+        if not msg.data:
+            return
+        frame = cv2.imdecode(np.frombuffer(msg.data, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            return
+        with self._frame_lock:
+            self._frame = frame
 
     def start(self):
         """Start person tracking."""
         if self._running:
             return
         self._running = True
+        self._last_face_time = time.time()
         self._gaze.start()
         self._thread = threading.Thread(target=self._track_loop, daemon=True)
         self._thread.start()
@@ -252,46 +301,37 @@ class ROSPersonTracker:
     def is_running(self) -> bool:
         return self._running
 
-    def _publish_debug(self, faces: list[dict[str, float]], selected: dict[str, float] | None) -> None:
-        selected_index = next((index for index, face in enumerate(faces) if face is selected), None)
-        x_error = None if selected is None else selected["center_x"] - 0.5
-        y_error = None if selected is None else 0.5 - selected["center_y"]
+    def _publish_debug(self, faces: list[FaceBox], selected: FaceBox | None) -> None:
+        x_error = None if selected is None else selected.center_x - 0.5
+        y_error = None if selected is None else 0.5 - selected.center_y
         if x_error is None or y_error is None:
             self._debug_lock_frames = 0
-            action = "no_face_detected"
-            state = "searching"
+            action, state = "no_face_detected", "searching"
         elif abs(x_error) > FACE_CENTER_X_TOLERANCE:
             self._debug_lock_frames = 0
-            action = "turn_needed"
-            state = "tracking"
-        elif abs(y_error) > FACE_CENTER_Y_TOLERANCE:
+            action, state = "turn_needed", "tracking"
+        elif abs(y_error) > FACE_CENTER_Y_DEADZONE:
             self._debug_lock_frames = 0
-            action = "tilt_needed"
-            state = "tracking"
+            action, state = "tilt_needed", "tracking"
         else:
             self._debug_lock_frames = min(FACE_LOCK_FRAMES, self._debug_lock_frames + 1)
             action = "centered"
             state = "locked" if self._debug_lock_frames >= FACE_LOCK_FRAMES else "tracking"
-        payload = {
-            "stamp": time.time(),
-            "state": state,
-            "faces": faces,
-            "selected": selected_index,
-            "x_error": x_error,
-            "y_error": y_error,
-            "lock_frames": self._debug_lock_frames,
-            "lock_needed": FACE_LOCK_FRAMES,
-            "head_tilt": self._gaze.target_tilt,
-            "action": action,
-            "x_tolerance": FACE_CENTER_X_TOLERANCE,
-            "y_tolerance": FACE_CENTER_Y_TOLERANCE,
-            "min_confidence": FACE_DETECTION_MIN_CONFIDENCE,
-        }
-        self._debug_pub.publish(String(data=json.dumps(payload, separators=(",", ":"))))
+        self._debug.publish(
+            faces=faces,
+            selected=selected,
+            x_error=x_error,
+            y_error=y_error,
+            lock_frames=self._debug_lock_frames,
+            lock_needed=FACE_LOCK_FRAMES,
+            head_tilt=self._gaze.target_tilt,
+            action=action,
+            state=state,
+        )
 
     def _track_loop(self):
         """Perception loop at ~5Hz."""
-        dt = 1.0 / 5.0
+        dt = 1.0 / FACE_TRACK_HZ
 
         while self._running:
             loop_start = time.time()
@@ -304,22 +344,14 @@ class ROSPersonTracker:
                 frame = self._frame
 
             if frame is not None:
-                shape = (frame.shape[0], frame.shape[1])
                 faces = self._detector.detect(frame)
-
-                if faces:
-                    # Track largest face
-                    best = max(faces, key=lambda f: f["width"] * f["height"])
-                    self._gaze.track_face(best, shape)
+                best = min(faces, key=lambda face: face.center_y) if faces else None
+                if best is not None:
+                    self._gaze.track_face(best)
                     self._last_face_time = time.time()
-                else:
-                    best = None
+                elif time.time() - self._last_face_time > FACE_LOST_SECONDS:
+                    self._gaze.search_up()
                 self._publish_debug(faces, best)
-                if not faces and time.time() - self._last_face_time > self._face_timeout:
-                    # Return to neutral after timeout
-                    with self._gaze._lock:
-                        self._gaze._target_tilt = 0.0
-                    self._last_face_time = time.time()
 
             elapsed = time.time() - loop_start
             if elapsed < dt:

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Innate Inc
 // arm_services.cpp — Servo initialization, health monitoring, service callbacks, head control
+#include <algorithm>
+
 #include "mars_arm/arm_node.hpp"
 
 using json = nlohmann::json;
@@ -510,26 +512,19 @@ void MarsArmNode::publishHeadPosition(int encoder_value) {
 }
 
 void MarsArmNode::headPositionCallback(const std_msgs::msg::Int32::SharedPtr msg) {
-    try {
-        double logical_position = static_cast<double>(msg->data);
+    const auto& head_config = joint_configs_[6];  // Index 6 = joint 7
 
-        const auto& head_config = joint_configs_[6];  // Index 6 = joint 7
+    // Callers command the integer limits (±25, +40) while the config limits are
+    // fractionally inside them; clamp instead of rejecting or the head silently
+    // never reaches "fully up".
+    double logical_position = std::clamp(static_cast<double>(msg->data), head_config.head_min_angle_deg,
+                                         head_config.head_max_angle_deg);
 
-        if (logical_position < head_config.head_min_angle_deg || logical_position > head_config.head_max_angle_deg) {
-            RCLCPP_ERROR(this->get_logger(), "Head position %f out of range [%f, %f]", logical_position,
-                         head_config.head_min_angle_deg, head_config.head_max_angle_deg);
-            return;
-        }
+    int head_goal_encoder = logicalAngleToEncoder(logical_position);
 
-        int head_goal_encoder = logicalAngleToEncoder(logical_position);
-
-        std::lock_guard<std::mutex> lock(head_command_mutex_);
-        latest_head_command_ = head_goal_encoder;
-        has_head_command_ = true;
-
-    } catch (const std::exception& e) {
-        RCLCPP_ERROR(this->get_logger(), "Error in head position callback: %s", e.what());
-    }
+    std::lock_guard<std::mutex> lock(head_command_mutex_);
+    latest_head_command_ = head_goal_encoder;
+    has_head_command_ = true;
 }
 
 void MarsArmNode::headAiPositionCallback(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,

@@ -833,32 +833,40 @@ class MicroInput(InputDevice):
         self._last_transcript = text
         self._send_vad_status()
 
+        intercepted = self._handle_caller_speech(text)
+        self.send_data({"text": text, "display_only": True} if intercepted else text, data_type="chat_in")
+
+    def _handle_caller_speech(self, text: str) -> bool:
         if WAKE_NAME_PATTERN.search(text):
+            if APPROACH_PATTERN.search(text):
+                direction = self._direction_in(text) or self._caller_direction or "front"
+                self._send_caller_command("approach", direction)
+                return True
             self._awaiting_direction_until = time.monotonic() + CALLER_DIRECTION_TIMEOUT
             self._say("Yes, where are you?")
-            return
+            return True
 
         direction = self._direction_in(text)
         if time.monotonic() < self._awaiting_direction_until:
             if direction is None:
                 self._say("Please say left, right, in front, or behind.")
                 self._awaiting_direction_until = time.monotonic() + CALLER_DIRECTION_TIMEOUT
-                return
+                return True
             self._caller_direction = direction
             self._awaiting_direction_until = 0.0
             self._send_caller_command("find", direction)
-            return
+            return True
 
         if APPROACH_PATTERN.search(text):
             direction = direction or self._caller_direction
             if direction is None:
                 self._awaiting_direction_until = time.monotonic() + CALLER_DIRECTION_TIMEOUT
                 self._say("Which direction are you?")
-                return
+                return True
             self._send_caller_command("approach", direction)
-            return
+            return True
 
-        self.send_data(text, data_type="chat_in")
+        return False
 
     @staticmethod
     def _direction_in(text: str) -> str | None:
@@ -874,7 +882,7 @@ class MicroInput(InputDevice):
             f"audio_side={bearing.side}, audio_confidence={bearing.confidence:.2f}. "
             "Call caller_interaction with these values now."
         )
-        self.send_data(command, data_type="chat_in")
+        self.send_data(command, data_type="custom")
 
 
 # ========== Audio Streaming Helpers ==========

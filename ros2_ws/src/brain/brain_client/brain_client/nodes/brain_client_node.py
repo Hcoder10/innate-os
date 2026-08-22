@@ -367,6 +367,9 @@ class BrainClientNode(Node):
             self.get_logger().warn("[BrainClient] Brain is not active. Skipping chat_in message.")
             return
         self.chat.history.append(data)
+        if data.get("display_only"):
+            self.get_logger().info(f"Displayed user message: {data['text']}")
+            return
         self.brain.on_user_message(data["text"])
         self.get_logger().info(f"User message: {data['text']}")
 

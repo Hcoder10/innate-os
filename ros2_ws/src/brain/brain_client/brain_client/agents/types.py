@@ -181,12 +181,8 @@ class Agent(ABC):
         return names
 
     def uses_gaze(self) -> bool:
-        """
-        Whether this agent uses person-tracking gaze.
-        When True, the robot will look at detected people during conversation
-        and pause gazing during skill execution.
+        """Look at detected people while the brain is active.
 
-        Subclasses can override to enable gazing.
-        Default: False.
+        Override to False when the head must stay on a task (chess, calibration).
         """
-        return False
+        return True

@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Innate Inc
 from typing import Literal, cast
 
-from innate import Head, Skill, SkillReturn
+from innate import Head, HeadState, Skill, SkillReturn
 
 # Each pose is (angle_degrees, duration_seconds). Duration is the time to
 # interpolate from the previous pose to this one.
@@ -122,6 +122,7 @@ class HeadEmotion(Skill):
     """Express an emotion through head tilt movements."""
 
     head: Head
+    head_position: HeadState | None
 
     def guidelines(self) -> str:
         return (
@@ -139,20 +140,24 @@ class HeadEmotion(Skill):
         entry = EMOTIONS[emotion]
         self.feedback(f"Expressing: {emotion}")
 
+        # Offsets ride on the current tilt so the nod happens where Mars is looking;
+        # the arm clamps out-of-range commands.
+        state = self.head_position
+        base_angle = 0 if state is None else round(state.pitch_degrees)
         dt = 1.0 / INTERPOLATION_RATE_HZ
         try:
             for r in range(repeat):
-                current_angle = 0.0
-                for target_angle, duration in entry["sequence"]:
+                current_offset = 0.0
+                for target_offset, duration in entry["sequence"]:
                     steps = max(1, int(round(duration * INTERPOLATION_RATE_HZ)))
                     for i in range(1, steps + 1):
-                        interp = current_angle + (target_angle - current_angle) * i / steps
-                        self.head.set_position(int(round(interp)))
+                        offset = current_offset + (target_offset - current_offset) * i / steps
+                        self.head.set_position(round(base_angle + offset))
                         self.sleep(dt)
-                    current_angle = float(target_angle)
+                    current_offset = float(target_offset)
                 if r < repeat - 1:
                     self.sleep(0.2)
         finally:
-            self.head.set_position(0)
+            self.head.set_position(base_angle)
 
         return f"Expressed '{emotion}' ({entry['description']})"

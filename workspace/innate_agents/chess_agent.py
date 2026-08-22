@@ -41,6 +41,9 @@ class ChessAgent(Agent):
         """Enable microphone input."""
         return [MicroInput]
 
+    def uses_gaze(self) -> bool:
+        return False
+
     def get_prompt(self) -> str:
         """Return the chess piece manipulation prompt."""
         return """You are a chess-playing robot. You play White. The human opponent plays Black.

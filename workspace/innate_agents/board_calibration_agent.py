@@ -28,6 +28,9 @@ class BoardCalibrationAgent(Agent):
         """Enable microphone input."""
         return [MicroInput]
 
+    def uses_gaze(self) -> bool:
+        return False
+
     def get_prompt(self) -> str:
         """Return the calibration workflow prompt."""
         return """Chessboard calibration assistant. Be brief and direct - no unnecessary words.

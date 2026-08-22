@@ -4,8 +4,8 @@
 
 import { FACE_DEBUG_TOPIC } from "../constants.js";
 
-const DEFAULT_X_TOLERANCE = 0.15;
-const DEFAULT_Y_TOLERANCE = 0.18;
+const DEFAULT_X_TOLERANCE = 0.18;
+const DEFAULT_Y_TOLERANCE = 0.4;
 
 /**
  * @typedef {Object} DebugFace
@@ -91,12 +91,47 @@ export function createFaceOverlay(root, ros) {
     if (!(video instanceof HTMLVideoElement) || !video.videoWidth || !video.videoHeight) {
       return { x: 0, y: 0, width, height };
     }
-    const scale = Math.min(width / video.videoWidth, height / video.videoHeight);
+
+    const stageBounds = stage.getBoundingClientRect();
+    const videoBounds = video.getBoundingClientRect();
+    const style = getComputedStyle(video);
+    const borderLeft = Number.parseFloat(style.borderLeftWidth) || 0;
+    const borderTop = Number.parseFloat(style.borderTopWidth) || 0;
+    const borderRight = Number.parseFloat(style.borderRightWidth) || 0;
+    const borderBottom = Number.parseFloat(style.borderBottomWidth) || 0;
+    const boxWidth = Math.max(0, videoBounds.width - borderLeft - borderRight);
+    const boxHeight = Math.max(0, videoBounds.height - borderTop - borderBottom);
+    const containScale = Math.min(boxWidth / video.videoWidth, boxHeight / video.videoHeight);
+    const scale =
+      style.objectFit === "cover"
+        ? Math.max(boxWidth / video.videoWidth, boxHeight / video.videoHeight)
+        : style.objectFit === "none"
+          ? 1
+          : style.objectFit === "scale-down"
+            ? Math.min(1, containScale)
+            : containScale;
     const imageWidth = video.videoWidth * scale;
     const imageHeight = video.videoHeight * scale;
+    const [positionX = "50%", positionY = "50%"] = style.objectPosition.split(/\s+/);
+    /** @param {string} value @param {number} freeSpace */
+    const positionOffset = (value, freeSpace) => {
+      if (value.endsWith("%")) return (Number.parseFloat(value) / 100) * freeSpace;
+      if (value === "left" || value === "top") return 0;
+      if (value === "right" || value === "bottom") return freeSpace;
+      if (value === "center") return freeSpace / 2;
+      return Number.parseFloat(value) || 0;
+    };
     return {
-      x: (width - imageWidth) / 2,
-      y: (height - imageHeight) / 2,
+      x:
+        videoBounds.left -
+        stageBounds.left +
+        borderLeft +
+        positionOffset(positionX, boxWidth - imageWidth),
+      y:
+        videoBounds.top -
+        stageBounds.top +
+        borderTop +
+        positionOffset(positionY, boxHeight - imageHeight),
       width: imageWidth,
       height: imageHeight,
     };

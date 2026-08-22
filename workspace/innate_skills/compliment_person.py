@@ -34,7 +34,7 @@ class ComplimentPerson(_PersonTrackingSkill):
         if not compliment:
             self.fail("A spoken compliment is required")
 
-        locked = self._center_face()
+        locked = self._center_face(look_up=True)
         if locked is None:
             self.say("I cannot find a face to point toward.")
             self.fail("Could not center a face before complimenting")
@@ -62,7 +62,7 @@ class ComplimentPerson(_PersonTrackingSkill):
     def _happy_nod(self, gaze_angle: int) -> None:
         try:
             for offset, duration in HAPPY_NOD:
-                self.head.set_position(max(-25, min(15, gaze_angle + offset)))
+                self.head.set_position(gaze_angle + offset)
                 self.sleep(duration)
         except SkillCancelled:
             pass

@@ -2,10 +2,10 @@
 # Copyright (c) 2026 Innate Inc
 """Gaze-tracker lifecycle wrapper.
 
-Starts/stops the (lazily imported) ``ROSPersonTracker`` based on brain-active state
-and whether the current directive opts into gaze, and pauses/resumes it around
-skill execution. The heavy tracker import is deferred so directives that don't use
-gaze never pay for it.
+Starts/stops the (lazily imported) ``ROSPersonTracker`` from brain-active state
+and whether the current directive wants gaze, and pauses/resumes it around every
+skill so the running skill owns the head. The heavy tracker import is deferred so
+directives that opt out never pay for it.
 """
 
 from __future__ import annotations

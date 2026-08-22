@@ -129,7 +129,9 @@
     joint_7:
       servo_id: 7
       motor_type: "XC330-M288"
-      position_limits: [-0.4363, 0.4363]
+      # direction_reversed: logical look-up is -min, look-down is -max.
+      # -25° down / +40° up — standing faces sit above a floor-level camera.
+      position_limits: [-0.6981, 0.4363]
       pwm_limit: 885
       current_limit: 500
       control_mode: 3

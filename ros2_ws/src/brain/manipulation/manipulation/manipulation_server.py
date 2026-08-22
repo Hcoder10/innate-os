@@ -545,6 +545,9 @@ class ManipulationServer(Node):
                     return "FAILURE", "No 'action' dataset found in H5 file"
 
                 actions = h5file["action"][:]  # Shape: (n_steps, action_dim)
+                # Head angles live in the optional /head_command dataset; /action's
+                # trailing columns are progress/termination, never head.
+                head_commands = h5file["head_command"][:] if "head_command" in h5file else None
                 self.get_logger().info(f"Loaded {actions.shape[0]} action steps from {replay_path}")
 
             if actions.shape[0] == 0:
@@ -602,11 +605,9 @@ class ManipulationServer(Node):
                 # Extract cmd_vel commands (elements 6-7 = linear.x, angular.z).
                 self._publish_base(float(action[6]), float(action[7]), self.replay_base_speed_scale)
 
-                # Extract head command (element 8 = head angle in degrees), present only
-                # for head-enabled replay skills; arm/base-only skills have width 8.
-                if len(action) > 8:
+                if head_commands is not None and step_idx < len(head_commands):
                     head_msg = Int32()
-                    head_msg.data = int(round(float(action[8])))
+                    head_msg.data = int(round(float(head_commands[step_idx])))
                     self.head_set_position_pub.publish(head_msg)
 
                 # Send feedback
