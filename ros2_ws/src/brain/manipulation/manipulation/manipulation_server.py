@@ -1145,8 +1145,11 @@ class ManipulationServer(Node):
                 f"Arm goto service called with position: {[float(p) for p in position]} (time: {time_duration}s)"
             )
 
-            # Wait for the service call to complete (service blocks for time_duration internally)
-            timeout_sec = time_duration + 0.2  # Small buffer for network/processing overhead
+            # The goto completes when the arm ARRIVES: nominal duration plus
+            # settle and scheduling drift (measured 0.2-0.25s past nominal on
+            # an idle sim). Wait past the arm server's own internal bound
+            # instead of racing it.
+            timeout_sec = time_duration + 6.0
             start_wait = time.time()
             while not future.done():
                 if time.time() - start_wait > timeout_sec:
