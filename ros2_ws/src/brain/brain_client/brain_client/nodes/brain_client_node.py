@@ -393,7 +393,7 @@ class BrainClientNode(Node):
             self.chat.speak(text)
 
     def _on_environment_speech(self, payload: dict) -> None:
-        """Speak a simulated character, then acknowledge audible completion."""
+        """Speak a simulated character, acknowledging as playback starts."""
         try:
             request_id = payload["id"]
             text = payload["text"]
@@ -415,7 +415,10 @@ class BrainClientNode(Node):
         queued = self._tts_handler.speak_text_async(
             text,
             voice_config={"mode": "id", "id": voice_id},
-            on_done=acknowledge,
+            # Ack as the clip starts: the transcript then appears while the
+            # character speaks, like the robot's own subtitles.
+            on_start=lambda: acknowledge(True),
+            protected=True,  # another character's line: agent flushes must not cancel it
         )
         if not queued:
             acknowledge(False)

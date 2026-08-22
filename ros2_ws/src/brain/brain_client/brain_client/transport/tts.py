@@ -15,11 +15,32 @@ import threading
 import time
 import wave
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from brain_client.common.logging import UniversalLogger
 from innate_proxy import ProxyClient
 from innate_proxy.adapters.cartesia import ProxyCartesiaClient
+
+
+@dataclass(frozen=True)
+class _Utterance:
+    """One queued clip, with the metadata the flush policy needs."""
+
+    text: str
+    voice_config: dict[str, Any] | None
+    on_done: Callable[[bool], None] | None
+    reply_id: str | None  # sentences of one streamed reply share an id
+    protected: bool  # never flushed (environment speech: not our backlog)
+    on_start: Callable[[], None] | None = None  # fires as playback begins
+
+
+def _survives_flush(item: _Utterance, playing_reply_id: str | None) -> bool:
+    """A reply that started speaking holds the floor: its remaining sentences
+    survive a newer reply's flush. Everything else queued is stale backlog."""
+    if item.protected:
+        return True
+    return item.reply_id is not None and item.reply_id == playing_reply_id
 
 
 class TTSHandler:
@@ -72,6 +93,9 @@ class TTSHandler:
         # Async speech is played in order by one worker so back-to-back calls
         # aren't dropped; bounded so a runaway say() loop can't build a backlog.
         self._speech_queue: queue.Queue = queue.Queue(maxsize=16)
+        # Last-popped reply id; ids are unique per reply, so a stale value
+        # can never wrongly protect a newer reply's sentences.
+        self._playing_reply_id: str | None = None
         threading.Thread(target=self._speech_loop, daemon=True).start()
 
     def _init_client(self):
@@ -332,6 +356,9 @@ class TTSHandler:
         voice_config: dict[str, Any] | None = None,
         replace_pending: bool = False,
         on_done: Callable[[bool], None] | None = None,
+        reply_id: str | None = None,
+        protected: bool = False,
+        on_start: Callable[[], None] | None = None,
     ) -> bool:
         """
         Queue text to be spoken. Utterances play in order, one at a time;
@@ -340,27 +367,36 @@ class TTSHandler:
         Args:
             text: Text to speak
             voice_config: Optional voice configuration override
-            replace_pending: Drop any not-yet-played utterances first. Used for
-                conversational replies, where a newer reply supersedes queued
-                older ones (playing a backlog is what makes the robot talk
-                over the conversation). The currently playing clip finishes.
+            replace_pending: Drop stale not-yet-played utterances first (a
+                queued backlog is what makes the robot talk over the
+                conversation). The reply being spoken keeps the floor: its
+                remaining sentences survive, see _survives_flush.
             on_done: Optional callback invoked once, after playback (and one
                 retry on failure) has finished.
+            reply_id: Groups the sentences of one streamed reply.
+            protected: Exempt from replace_pending flushes.
+            on_start: Optional callback invoked as playback begins.
         """
         if not self.is_available():
             self.logger.debug("🔇 TTS not available, skipping async speech")
             return False
         try:
             if replace_pending:
+                kept = []
                 while True:
                     try:
-                        stale, _voice, stale_done = self._speech_queue.get_nowait()
-                        self.logger.info(f"🔇 Dropping superseded speech: '{stale[:60]}'")
-                        if stale_done is not None:
-                            stale_done(False)
+                        stale = self._speech_queue.get_nowait()
                     except queue.Empty:
                         break
-            self._speech_queue.put_nowait((text, voice_config, on_done))
+                    if stale is None or _survives_flush(stale, self._playing_reply_id):
+                        kept.append(stale)  # keep close()'s stop sentinel too
+                        continue
+                    self.logger.info(f"🔇 Dropping superseded speech: '{stale.text[:60]}'")
+                    if stale.on_done is not None:
+                        stale.on_done(False)
+                for item in kept:
+                    self._speech_queue.put_nowait(item)
+            self._speech_queue.put_nowait(_Utterance(text, voice_config, on_done, reply_id, protected, on_start))
             return True
         except queue.Full:
             self.logger.warning(f"🔇 Speech queue full, dropping: '{text[:60]}'")
@@ -372,15 +408,20 @@ class TTSHandler:
             item = self._speech_queue.get()
             if item is None:
                 break
-            text, voice_config, on_done = item
-            success = self.speak_text(text, voice_config)
+            self._playing_reply_id = item.reply_id
+            if item.on_start is not None:
+                try:
+                    item.on_start()
+                except Exception as e:
+                    self.logger.error(f"TTS start callback failed: {e}")
+            success = self.speak_text(item.text, item.voice_config)
             if not success:
                 self.logger.info("🔄 Retrying TTS after 1 second...")
                 time.sleep(1)
-                success = self.speak_text(text, voice_config)
-            if on_done is not None:
+                success = self.speak_text(item.text, item.voice_config)
+            if item.on_done is not None:
                 try:
-                    on_done(success)
+                    item.on_done(success)
                 except Exception as e:
                     self.logger.error(f"TTS completion callback failed: {e}")
 
