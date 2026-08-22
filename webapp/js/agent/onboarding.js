@@ -171,10 +171,11 @@ function pointOut(degrees, reveal, text, emotion) {
  *     cancel: () => void,
  *   },
  *   onHandoff?: () => Promise<void> | void,
+ *   onResetWorld?: () => void,
  * }} options
  */
 export function createAgentOnboarding(root, rosClient, options) {
-  const { runner, onHandoff } = options;
+  const { runner, onHandoff, onResetWorld } = options;
   /** @type {OnboardingStepId} */
   let stepId = loadStepId();
   /** @type {Set<(step: OnboardingStepId) => void>} */
@@ -283,6 +284,12 @@ export function createAgentOnboarding(root, rosClient, options) {
     if (waitsForHold(nextId)) {
       armSkipOffer();
       return;
+    }
+    if (nextId === "welcome") {
+      // The robot becomes visible here, so this is where it has to be standing
+      // at spawn — and it is late enough that the stage channel is connected,
+      // which it is not when the page first builds.
+      onResetWorld?.();
     }
     const step = STEPS[nextId];
     if (step.completeOn !== "action" || !step.actions) return;

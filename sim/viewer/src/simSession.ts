@@ -340,6 +340,16 @@ export class SimSession {
     for (const cb of this.#challengeListeners) cb(this.#challenge);
   }
 
+  /**
+   * Put the world back to its starting state: robot at the spawn pose, arm
+   * home, props parked. Goes over the stage channel rather than the sim's
+   * /virtual_mars/reset topic — that topic carries std_msgs/Empty, which the
+   * bridge cannot serialize, and the malformed message kills the sim node.
+   */
+  resetWorld(): void {
+    this.#controller?.send({ op: "reset" });
+  }
+
   /** Start a challenge by id (resets the world and drops its props). */
   startChallenge(id: string): void {
     this.#controller?.send({ op: "start_challenge", id });

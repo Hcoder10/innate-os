@@ -53,6 +53,9 @@ export function mount(stage) {
  */
 function buildAgentView(root) {
   const agentState = sharedAgentState();
+  // Built before the onboarding engine, which needs to reach the stage channel
+  // to put the robot back at spawn.
+  const session = createSession();
   const scriptedActions = config.simControls ? createScriptedActionRunner(ros) : null;
   const onboarding = config.simControls && scriptedActions
     ? createAgentOnboarding(root, ros, {
@@ -66,9 +69,12 @@ function buildAgentView(root) {
             || "";
           if (preferred) await agentState.setDirective(preferred);
         },
+        onResetWorld: () => {
+          const sim = /** @type {any} */ (session);
+          if (typeof sim.resetWorld === "function") sim.resetWorld();
+        },
       })
     : null;
-  const session = createSession();
 
   const videoStage = createStage ? createStage(root, session) : createVideoStage(root, session);
   const setOnboardingStep =
