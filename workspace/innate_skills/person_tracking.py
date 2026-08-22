@@ -1,18 +1,25 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
+import json
 import math
 import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
+from std_msgs.msg import String
 
 from brain_client.perception.gaze import FaceDetector
 from innate import Head, HeadState, MainImage, Mobility, Skill, resource
 
+if TYPE_CHECKING:
+    from rclpy.node import Node
+
 FACE_LOCK_FRAMES = 2
-FACE_CENTER_X_TOLERANCE = 0.08
-FACE_CENTER_Y_TOLERANCE = 0.10
+FACE_CENTER_X_TOLERANCE = 0.15
+FACE_CENTER_Y_TOLERANCE = 0.18
+FACE_DETECTION_MIN_CONFIDENCE = 0.3
 CAMERA_VERTICAL_FOV = 50.0
 TILT_GAIN = 0.3
 MIN_HEAD_TILT = -25
@@ -21,6 +28,7 @@ FACE_SEARCH_TILT_STEP = 3
 TURN_SPEED = 0.35
 TURN_DURATION = 0.25
 TRACK_PERIOD = 0.15
+FACE_DEBUG_TOPIC = "/brain/face_debug"
 
 
 @dataclass(frozen=True)
@@ -31,6 +39,49 @@ class FaceBox:
     height: float
 
 
+class FaceDebugPublisher:
+    def __init__(self, node: "Node"):
+        self._publisher = node.create_publisher(String, FACE_DEBUG_TOPIC, 10)
+
+    def publish(
+        self,
+        *,
+        faces: list[FaceBox],
+        selected: FaceBox | None,
+        x_error: float | None,
+        y_error: float | None,
+        lock_frames: int,
+        head_tilt: int,
+        action: str,
+        state: str,
+    ) -> None:
+        selected_index = next((index for index, face in enumerate(faces) if face is selected), None)
+        payload = {
+            "stamp": time.time(),
+            "state": state,
+            "faces": [
+                {
+                    "center_x": face.center_x,
+                    "center_y": face.center_y,
+                    "width": face.width,
+                    "height": face.height,
+                }
+                for face in faces
+            ],
+            "selected": selected_index,
+            "x_error": x_error,
+            "y_error": y_error,
+            "lock_frames": lock_frames,
+            "lock_needed": FACE_LOCK_FRAMES,
+            "head_tilt": head_tilt,
+            "action": action,
+            "x_tolerance": FACE_CENTER_X_TOLERANCE,
+            "y_tolerance": FACE_CENTER_Y_TOLERANCE,
+            "min_confidence": FACE_DETECTION_MIN_CONFIDENCE,
+        }
+        self._publisher.publish(String(data=json.dumps(payload, separators=(",", ":"))))
+
+
 class _PersonTrackingSkill(Skill):
     head: Head
     head_position: HeadState | None
@@ -39,7 +90,14 @@ class _PersonTrackingSkill(Skill):
 
     @resource
     def _face_detector(self) -> FaceDetector:
-        return FaceDetector(min_confidence=0.3)
+        return FaceDetector(min_confidence=FACE_DETECTION_MIN_CONFIDENCE)
+
+    @resource
+    def _face_debug(self) -> FaceDebugPublisher:
+        node = self.node
+        if node is None:
+            raise RuntimeError("Face diagnostics require a wired skill node")
+        return FaceDebugPublisher(node)
 
     def _visible_faces(self) -> list[FaceBox]:
         image = self.image
@@ -59,15 +117,38 @@ class _PersonTrackingSkill(Skill):
         return max(faces, key=lambda face: face.width * face.height)
 
     def _center_face(self, side: str = "unknown", timeout: float = 6.0) -> tuple[int, FaceBox] | None:
+        target_tilt = self._head_angle()
+        self._face_debug.publish(
+            faces=[],
+            selected=None,
+            x_error=None,
+            y_error=None,
+            lock_frames=0,
+            head_tilt=target_tilt,
+            action="waiting_for_camera",
+            state="starting",
+        )
         if self.wait_for(lambda: self.image, timeout=5.0) is None:
             self.logger.warning("[PersonTracking] No camera image received within 5.0s")
+            self._face_debug.publish(
+                faces=[],
+                selected=None,
+                x_error=None,
+                y_error=None,
+                lock_frames=0,
+                head_tilt=target_tilt,
+                action="no_camera_image",
+                state="failed",
+            )
             return None
 
         deadline = time.monotonic() + timeout
-        target_tilt = self._head_angle()
         locked_frames = 0
         best_lock_frames = 0
         detected_frames = 0
+        faces: list[FaceBox] = []
+        x_error: float | None = None
+        y_error: float | None = None
         tracked: FaceBox | None = None
         self.logger.info(
             f"[PersonTracking] Centering started: side={side}, timeout={timeout:.1f}s, "
@@ -79,11 +160,23 @@ class _PersonTrackingSkill(Skill):
                 face = self._tracked_face(faces, tracked, side)
                 if face is None:
                     tracked = None
+                    x_error = None
+                    y_error = None
                     locked_frames = 0
                     previous_tilt = target_tilt
                     target_tilt = min(MAX_HEAD_TILT, target_tilt + FACE_SEARCH_TILT_STEP)
                     self.head.set_position(target_tilt)
                     action = "search_up" if target_tilt > previous_tilt else "upper_limit"
+                    self._face_debug.publish(
+                        faces=faces,
+                        selected=None,
+                        x_error=None,
+                        y_error=None,
+                        lock_frames=0,
+                        head_tilt=target_tilt,
+                        action=action,
+                        state="searching",
+                    )
                     self.logger.info(
                         f"[PersonTracking] faces=0 selected=none lock=0 head={target_tilt} action={action}"
                     )
@@ -114,6 +207,17 @@ class _PersonTrackingSkill(Skill):
                     locked_frames += 1
                     best_lock_frames = max(best_lock_frames, locked_frames)
                     action = f"lock={locked_frames}/{FACE_LOCK_FRAMES}"
+                state = "locked" if locked_frames >= FACE_LOCK_FRAMES else "tracking"
+                self._face_debug.publish(
+                    faces=faces,
+                    selected=face,
+                    x_error=x_error,
+                    y_error=y_error,
+                    lock_frames=locked_frames,
+                    head_tilt=target_tilt,
+                    action=action,
+                    state=state,
+                )
                 self.logger.info(
                     f"[PersonTracking] faces={len(faces)} center=({face.center_x:.3f},{face.center_y:.3f}) "
                     f"size=({face.width:.3f},{face.height:.3f}) error=({x_error:+.3f},{y_error:+.3f}) "
@@ -132,6 +236,16 @@ class _PersonTrackingSkill(Skill):
         self.logger.warning(
             f"[PersonTracking] Centering timed out: {reason}; "
             f"detected_frames={detected_frames}, best_lock={best_lock_frames}/{FACE_LOCK_FRAMES}"
+        )
+        self._face_debug.publish(
+            faces=faces,
+            selected=tracked,
+            x_error=x_error,
+            y_error=y_error,
+            lock_frames=locked_frames,
+            head_tilt=target_tilt,
+            action=reason.replace(" ", "_"),
+            state="failed",
         )
         return None
 

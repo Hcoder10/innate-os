@@ -155,6 +155,9 @@ export const MEMORY_SEARCH_TOPIC = "/brain/memory_search";
 // as the agent runs primitives. Separate from chat_out — the chat surfaces it so
 // operators can see which skills the agent is executing.
 export const SKILL_STATUS_UPDATE_TOPIC = "/brain/skill_status_update";
+// Volatile std_msgs/String JSON emitted while a face-tracking skill is
+// centering: normalized boxes, selected face, tolerance errors, and lock state.
+export const FACE_DEBUG_TOPIC = "/brain/face_debug";
 
 // Per-step ACT inference timing breakdown (std_msgs/String carrying JSON), published
 // by the manipulation server while a learned behavior runs. Drives the Profiling page.
