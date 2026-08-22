@@ -310,8 +310,7 @@ def test_semantic_readback_rejects_negated_alternate_required_phrase(tmp_path):
     _reply(engine)
 
     contradiction = (
-        "From Shake Shack, a ShackBurger with no pickles, cheese fries, and a vanilla shake, "
-        "but no Shack Burger."
+        "From Shake Shack, a ShackBurger with no pickles, cheese fries, and a vanilla shake, but no Shack Burger."
     )
     block = _speak(engine, sim, centers, position, contradiction)
     _token, payload = _reply(engine)
