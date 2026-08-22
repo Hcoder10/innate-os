@@ -1495,6 +1495,28 @@ select.skill-input {
   display: none;
 }
 
+/* The sim's feed frame is opaque and paints after the map host (which is the
+   cockpit's first child, so the overlays win on DOM order), which left a
+   promoted map hidden behind it. Give the map the frame's own box and lift it
+   over the frame; the overlays sit at z-index >= 5 and still paint on top. */
+.agent-cockpit.agent-sim .cam-map-host.big {
+  z-index: 1;
+}
+
+@media (min-width: 1401px) {
+  .agent-cockpit.agent-sim .cam-map-host.big {
+    top: var(--agent-dock-gutter);
+    right: auto;
+    bottom: auto;
+    left: var(--agent-dock-gutter);
+    width: var(--agent-frame-width);
+    height: auto;
+    aspect-ratio: 4 / 3;
+    overflow: hidden;
+    border-radius: 18px;
+  }
+}
+
 /* Panel sits just below the toggle; denser glass since it's over the feed. */
 .profiling {
   position: absolute;
