@@ -20,6 +20,7 @@ const UI_SETTLE_MS = 260;
  * @typedef {{
  *   type: "speak",
  *   text: string,
+ *   queue?: boolean,
  * } | {
  *   type: "skill",
  *   name: string,
@@ -113,6 +114,14 @@ export function createScriptedActionRunner(rosClient) {
     for (const action of actions) {
       if (id !== generation) return;
       if (action.type === "speak") {
+        // Utterances queue on the robot and play in order, so a queued line is
+        // synthesizing while the previous one is still being heard. Waiting on
+        // every line instead would put the whole synthesis delay in the gap
+        // between them.
+        if (action.queue) {
+          rosClient.publish(TTS_TOPIC, { data: action.text });
+          continue;
+        }
         const speechStarted = waitForSpeechStart(id);
         rosClient.publish(TTS_TOPIC, { data: action.text });
         await speechStarted;

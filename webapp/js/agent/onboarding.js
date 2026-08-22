@@ -29,8 +29,15 @@ const SKIP_OFFER_MS = 25000;
 // lets a step resume standalone from storage.
 const POINT_DEGREES = 25;
 
-export const WELCOME_DIALOGUE =
-  "Welcome to the simulator! I'll be here to show you some of the main things we can do together!";
+// Spoken as two utterances, not one: synthesis time scales with the text, so a
+// short opener is heard far sooner, and the longer line is generated while it
+// plays. Same reason the agent's own replies stream a sentence at a time.
+const WELCOME_LINES = [
+  "Welcome to the simulator!",
+  "I'll be here to show you some of the main things we can do together!",
+];
+
+export const WELCOME_DIALOGUE = WELCOME_LINES.join(" ");
 
 /**
  * Completion event kinds reserved for later lessons:
@@ -69,7 +76,10 @@ const STEPS = {
     recap: "greeted them and waved",
     actions: () => [
       { type: "skill", name: "move_straight", inputs: { distance: 0.2, speed: 0.12 } },
-      { type: "speak", text: WELCOME_DIALOGUE },
+      { type: "speak", text: WELCOME_LINES[0] },
+      // Queued the moment the opener starts playing, so its synthesis overlaps
+      // the opener instead of landing in the pause after it.
+      { type: "speak", text: WELCOME_LINES[1], queue: true },
       { type: "skill", name: "head_emotion", inputs: { emotion: "excited", repeat: 5 }, afterSpeechStart: true },
       { type: "skill", name: "wave", inputs: {} },
     ],
