@@ -62,7 +62,7 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
   // synchronously so the tiles have something to reparent, and the widget drops into it once the import
   // lands. It is persistent and reparents between a strip tile (small) and the stage (big) — never rebuilt.
   /** @type {HTMLElement | null} */ let mapHost = null;
-  /** @type {{ destroy: () => void, setZoom: (m: number) => void } | null} */ let mapWidget = null;
+  /** @type {{ destroy: () => void, setZoom: (m: number) => void, refresh: () => void } | null} */ let mapWidget = null;
   /** @type {"small" | "big"} which saved zoom is live: thumbnail vs full stage */ let mapMode = "small";
   let mapZoom = { ...MAP_ZOOM_DEFAULT };
 
@@ -194,6 +194,9 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
       if (big && parent.firstChild !== mapHost) parent.insertBefore(mapHost, parent.firstChild);
     }
     mapWidget?.setZoom(mapZoom[mapMode]);
+    // The host has just moved between the stage and its tile; redraw against
+    // the box it landed in rather than waiting on a ResizeObserver tick.
+    mapWidget?.refresh();
   }
 
   // Rebuild the strip's tiles — every view EXCEPT the primary (which is the big stage).

@@ -190,7 +190,7 @@ function rasterizeGrid(msg, canvas, ctx, paint) {
  *   small); enables scroll-to-zoom. Omit to fit the whole grid (the standalone page). onZoomChange
  *   fires after each wheel-zoom. layers turns on optional overlays (Nav page): live lidar scan,
  *   global/local costmaps, odometry trail — each adds its subscription only while enabled.
- * @returns {{ destroy: () => void, setZoom: (meters: number) => void, setLayer: (name: LayerName, on: boolean) => void, setMappingMode: (on: boolean) => void, clearTrail: () => void, mapChanged: () => void, highlightMemory: (id: number | null) => void, focusMemory: (id: number) => void, robotNowS: () => number }}
+ * @returns {{ destroy: () => void, refresh: () => void, setZoom: (meters: number) => void, setLayer: (name: LayerName, on: boolean) => void, setMappingMode: (on: boolean) => void, clearTrail: () => void, mapChanged: () => void, highlightMemory: (id: number | null) => void, focusMemory: (id: number) => void, robotNowS: () => number }}
  */
 export function createMap(root, opts = {}) {
   let zoomMeters = opts.zoom;
@@ -1824,6 +1824,14 @@ export function createMap(root, opts = {}) {
   const unsubMemories = ros.subscribe(MEMORY_POSITIONS_TOPIC, onMemories, 0, "std_msgs/msg/String");
 
   return {
+    /** Re-measure and redraw. The host reparents between the thumbnail and the
+     *  full stage, and setZoom below is a no-op when the saved zoom happens to
+     *  match, which leaves the redraw entirely up to the ResizeObserver firing
+     *  at the right moment. Call this after a move so the canvas is always
+     *  resized against the box it actually landed in. */
+    refresh() {
+      fit();
+    },
     /** Swap to a saved zoom (e.g. when this widget reparents between thumbnail and full stage). */
     setZoom(meters) {
       if (typeof meters === "number" && meters > 0 && meters !== zoomMeters) {
