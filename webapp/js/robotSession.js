@@ -16,7 +16,7 @@ import { ros } from "./rosClient.js";
 import { getConfig } from "./config.js";
 
 /**
- * @returns {Promise<{ createSession: () => WebRtcSession, createStage: ((root: HTMLElement, session: WebRtcSession) => { audioEl: HTMLAudioElement | null, destroy: () => void }) | null }>}
+ * @returns {Promise<{ createSession: () => WebRtcSession, createStage: ((root: HTMLElement, session: WebRtcSession, opts?: { chipsOn?: string[] }) => { audioEl: HTMLAudioElement | null, destroy: () => void }) | null }>}
  * createStage is null for real robots (pages use createVideoStage); in sim it
  * mounts the live Three.js canvas (full resolution, drag-to-orbit).
  */
@@ -31,7 +31,7 @@ export async function robotSessionFactory() {
       const mod = await import("/sim-viewer/sim-session.js");
       return {
         createSession: () => /** @type {any} */ (mod.createSimSession()),
-        createStage: (root, session) => mod.createSimStage(root, /** @type {any} */ (session)),
+        createStage: (root, session, opts) => mod.createSimStage(root, /** @type {any} */ (session), opts),
       };
     } catch (err) {
       console.error("[robotSession] sim viewer bundle unavailable, falling back to WebRTC:", err);

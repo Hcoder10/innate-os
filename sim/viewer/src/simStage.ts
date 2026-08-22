@@ -20,7 +20,15 @@ const MIN_FRAME_MS = 1000 / 62;
 
 const VIEW_FOR: Record<string, CameraView> = { main: "main", arm: "arm", orbit: "orbit" };
 
-export function createSimStage(parent: HTMLElement, session: SimSession): { audioEl: null; destroy: () => void } {
+export function createSimStage(
+  parent: HTMLElement,
+  session: SimSession,
+  opts: { chipsOn?: string[] } = {},
+): { audioEl: null; destroy: () => void } {
+  // Overlays a page wants lit from the start -- the policy page opens with
+  // waypoints on, because a page about the policy that hides its output is
+  // asking every visitor to find a chip first.
+  const chipsOn = new Set(opts.chipsOn ?? []);
   const wrap = document.createElement("div");
   wrap.className = "video-stage"; // reuse the webapp's stage styling/CSS ladder
   wrap.style.position = "relative";
@@ -72,9 +80,15 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
     propControls.appendChild(b);
     return b;
   };
-  const addChip = (label: string, onToggle: (on: boolean) => void) => {
+  const addChip = (label: string, onToggle: (on: boolean) => void, initial = false) => {
     const b = newChip(label);
-    let on = false;
+    let on = initial;
+    // A chip that starts lit must also START its overlay: the alternative is a
+    // page that says "waypoints" while drawing none.
+    if (on) {
+      setChipOn(b, true);
+      onToggle(true);
+    }
     b.onclick = () => {
       on = !on;
       setChipOn(b, on);
@@ -163,7 +177,7 @@ export function createSimStage(parent: HTMLElement, session: SimSession): { audi
   divider.style.cssText = "width:1px;align-self:stretch;margin:2px 2px;background:rgba(255,255,255,.18);";
   propControls.appendChild(divider);
   addChip("lidar", (on) => session.setLidarVisible(on));
-  addChip("waypoints", (on) => session.setNavPathVisible(on));
+  addChip("waypoints", (on) => session.setNavPathVisible(on), chipsOn.has("waypoints"));
   addChip("collisions", (on) => session.setCollisionHullsVisible(on));
   addButton("reset position", () => session.resetRobot());
   debugStack.appendChild(propControls);
