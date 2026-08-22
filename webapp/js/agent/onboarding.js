@@ -291,6 +291,11 @@ export function createAgentOnboarding(root, rosClient, options) {
       return;
     }
     if (waitsForHold(nextId)) {
+      // A fresh tour starts from spawn. This is what makes the rail's Reset
+      // onboarding work from any page: the button clears storage and navigates
+      // here, and the newly mounted engine enters await_hello and asks for the
+      // world reset itself — the engine that heard the click is already gone.
+      if (nextId === "await_hello") onResetWorld?.();
       armSkipOffer();
       return;
     }
@@ -318,10 +323,6 @@ export function createAgentOnboarding(root, rosClient, options) {
 
   async function reset() {
     runner.cancel();
-    // The page has been up a while by the time anyone presses this, so the
-    // stage channel is connected and the reset lands immediately rather than
-    // waiting for the robot to reappear.
-    onResetWorld?.();
     entryToken++;
     revealed.clear();
     skip.hidden = true;
