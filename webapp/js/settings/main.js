@@ -452,7 +452,7 @@ function buildSettingsPage() {
     textEl(
       "p",
       "settings-note",
-      "Changes save to config/settings.yaml; restart the robot to apply.",
+      "Changes save to config/settings.yaml. Saving applies what it can immediately and says so; the rest take effect on the next restart.",
     ),
     search,
     accordion,

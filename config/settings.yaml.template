@@ -43,7 +43,10 @@
 #     inflation_layer:              # costmap obstacle inflation (every costmap)
 #       inflation_radius: 0.3       # metres of inflation around obstacles
 #       cost_scaling_factor: 10.0   # higher = cost decays faster with distance
-#     # TTS voice for BOTH speech paths (brain chat-TTS + realtime voice loop)
+#     # TTS voice for BOTH speech paths (brain chat-TTS + realtime voice loop).
+#     # The Settings page applies it live; over SSH the same is
+#     #   ros2 param set /brain_client_node cartesia_voice_id <id>
+#     # and setting it here only changes what the robot boots into.
 #     cartesia_voice_id: "9fdaae0b-f885-4813-b589-3c07cf9d5fea"
 
 # ── Teleop: joystick ──────────────────────────────────────────────────

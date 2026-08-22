@@ -329,9 +329,11 @@ class WorldServer:
                 joints = self.sim.encoder_positions()
                 targets = self.sim.joint_targets()
                 sim_time = float(self.sim.data.time)
+                world_epoch = self.sim.world_epoch
             return {
                 "ok": True,
                 "time": sim_time,
+                "world_epoch": world_epoch,
                 "pose": [x, y, yaw],
                 "vel": [vx, vy, wz],
                 "joints": joints,

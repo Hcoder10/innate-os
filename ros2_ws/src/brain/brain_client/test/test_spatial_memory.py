@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import shutil
 import threading
 import time
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import cv2
@@ -26,7 +29,7 @@ from brain_client.memory.coverage import Coverage, wedge_mask
 from brain_client.memory.quality import MIN_SHARPNESS, frame_sharpness, frame_worth_keeping
 from brain_client.memory.recorder import MemoryRecorder
 from brain_client.memory.selection import MAX_MEMORIES, plan_admission
-from brain_client.memory.store import Memory, MemoryStore
+from brain_client.memory.store import MAPPING_SESSION, Memory, MemoryStore, StaleStageError
 from brain_client.state.map import Map
 
 
@@ -348,7 +351,7 @@ def test_forget_removes_the_memory_and_its_image(data_dir):
     added = store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
     assert added is not None
     # The truncated digest from /brain/memory_positions — what a client sends.
-    assert store.forget(added.id, store.fingerprint[:12]) == added
+    assert store.forget(added.id, store.snapshot().fingerprint[:12]) == added
     path = store.image_path(added.id)
     assert path is not None and not path.exists()
     assert store.snapshot().memories == ()
@@ -412,6 +415,305 @@ def test_without_a_map_nothing_is_recorded(data_dir):
     assert store.snapshot().memories == ()
 
 
+def test_promote_hands_the_stage_to_the_saved_map(data_dir):
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    store.add(4.0, 2.0, 0.5, 1001.0, b"jpg-two")
+    (data_dir / "maps" / "new.pgm").write_bytes(b"new-map-content")
+    assert store.promote_mapping_session("new.yaml") == 2
+
+    store.switch_map("new.yaml")
+    snapshot = store.snapshot()
+    assert [m.id for m in snapshot.memories] == [1, 2] and snapshot.fingerprint
+    path = store.image_path(1)
+    assert path is not None and path.read_bytes() == b"jpg-one"
+    # The stage outlives the promotion (a re-save must re-promote the whole
+    # tour); the next session's entry wipes it.
+    assert (data_dir / "spatial_memory" / MAPPING_SESSION / "1.jpg").exists()
+
+
+def test_a_resave_promotes_the_whole_tour_again(data_dir):
+    # A failed mode switch leaves the robot mapping and the webapp retries the
+    # save. The second promotion must carry the whole tour — not replace the
+    # first batch with just the frames staged since.
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-v1")
+    assert store.promote_mapping_session("tour.yaml") == 1
+
+    store.add(3.0, 2.0, 0.5, 1001.0, b"jpg-two")
+    (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-v2")  # SLAM kept refining
+    assert store.promote_mapping_session("tour.yaml") == 2
+
+    store.switch_map("tour.yaml")
+    snapshot = store.snapshot()
+    assert [m.id for m in snapshot.memories] == [1, 2] and snapshot.fingerprint
+    path = store.image_path(1)
+    assert path is not None and path.read_bytes() == b"jpg-one"
+
+
+def test_promote_replaces_the_names_previous_memories(data_dir):
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(9.0, 9.0, 0.0, 900.0, b"jpg-old")
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-new")
+    assert store.promote_mapping_session("A.yaml") == 1
+
+    store.switch_map("A.yaml")
+    (memory,) = store.snapshot().memories
+    assert memory.id == 1 and memory.x == 1.0
+    path = store.image_path(1)
+    assert path is not None and path.read_bytes() == b"jpg-new"
+
+
+def test_promote_with_nothing_staged_is_a_noop(data_dir):
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    assert store.promote_mapping_session("A.yaml") == 0
+    assert len(store.snapshot().memories) == 1
+
+
+def test_promote_without_a_readable_map_keeps_the_stage(data_dir):
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    assert store.promote_mapping_session("ghost.yaml") is None
+    snapshot = store.snapshot()
+    assert snapshot.map_name == MAPPING_SESSION and len(snapshot.memories) == 1
+
+
+def test_promote_reaches_a_stage_the_store_left(data_dir):
+    # Mid mode-switch the tick can land the store back on the previous map
+    # ("switching" republishes it) before the save announcement arrives; the
+    # stage is promoted from disk and picked up on the eventual switch.
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    store.switch_map("A.yaml")
+    (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-map-content")
+    assert store.promote_mapping_session("tour.yaml") == 1
+    assert store.snapshot().map_name == "A.yaml"  # the detour is undisturbed
+
+    store.switch_map("tour.yaml")
+    snapshot = store.snapshot()
+    assert len(snapshot.memories) == 1 and snapshot.fingerprint
+    path = store.image_path(1)
+    assert path is not None and path.read_bytes() == b"jpg-one"
+
+
+def test_the_session_survives_its_every_tick_call(data_dir):
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    fingerprint = store.snapshot().fingerprint
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    store.use_mapping_session()  # the recorder's every-tick call must not wipe
+    snapshot = store.snapshot()
+    assert len(snapshot.memories) == 1 and snapshot.fingerprint == fingerprint
+
+
+def test_each_session_is_its_own_coordinate_frame(data_dir):
+    # Clients (the search cache, forget's staleness check, the webapp) tell
+    # frames apart by map+fingerprint, and every session is named ".mapping" —
+    # only a fresh per-session fingerprint keeps one tour's ids from resolving
+    # against another's pictures.
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    first = store.snapshot().fingerprint
+    store.switch_map("A.yaml")
+    store.use_mapping_session()
+    assert first and store.snapshot().fingerprint and store.snapshot().fingerprint != first
+
+
+def test_session_entry_sweeps_crashed_promotion_scratch(data_dir):
+    store = MemoryStore(data_dir)
+    (data_dir / "spatial_memory" / ".mapping.promote").mkdir(parents=True)
+    (data_dir / "spatial_memory" / ".mapping.displaced").mkdir()
+    store.use_mapping_session()
+    assert not (data_dir / "spatial_memory" / ".mapping.promote").exists()
+    assert not (data_dir / "spatial_memory" / ".mapping.displaced").exists()
+
+
+def test_restart_lands_a_promotion_cut_down_mid_swap(data_dir):
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-tour")
+    (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-map-content")
+    assert store.promote_mapping_session("tour.yaml") == 1
+
+    # Rewind to the crash window between promote's two os.replace calls: the
+    # stamped copy back in scratch, the old memories displaced, the map's
+    # directory gone.
+    root = data_dir / "spatial_memory"
+    (root / "tour").rename(root / ".mapping.promote")
+    (root / ".mapping.displaced").mkdir()
+
+    reloaded = MemoryStore(data_dir)
+    reloaded.switch_map("tour.yaml")
+    (memory,) = reloaded.snapshot().memories
+    assert memory.id == 1
+    path = reloaded.image_path(1)
+    assert path is not None and path.read_bytes() == b"jpg-tour"
+    assert not (root / ".mapping.promote").exists()
+    assert not (root / ".mapping.displaced").exists()
+
+
+def test_a_failed_swap_puts_the_displaced_memories_back(data_dir, monkeypatch):
+    # The landing os.replace fails while the process lives on: the map must
+    # get its displaced memories back, and the stage must still hold the tour
+    # so a re-save can retry the whole promotion.
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(9.0, 9.0, 0.0, 900.0, b"jpg-old")
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-new")
+
+    real_replace = os.replace
+
+    def failing_landing(src, dst):
+        if Path(src).name == ".mapping.promote" and Path(dst).name == "A":
+            raise OSError("disk went away")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", failing_landing)
+    with pytest.raises(OSError):
+        store.promote_mapping_session("A.yaml")
+    monkeypatch.undo()
+
+    store.switch_map("A.yaml")
+    (memory,) = store.snapshot().memories
+    assert memory.x == 9.0  # the displaced memories are back
+    assert store.promote_mapping_session("A.yaml") == 1  # the retry lands the tour
+    store.switch_map("A.yaml")
+    (memory,) = store.snapshot().memories
+    assert memory.x == 1.0
+
+
+def test_session_entry_lands_a_stranded_promotion(data_dir):
+    # A failed swap whose in-line restore also failed leaves the stamped tour
+    # in scratch and the map's directory gone; the next session's entry must
+    # land it, not sweep it.
+    store = MemoryStore(data_dir)
+    store.use_mapping_session(1234.5)
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-tour")
+    (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-map-content")
+    assert store.promote_mapping_session("tour.yaml") == 1
+
+    root = data_dir / "spatial_memory"
+    (root / "tour").rename(root / ".mapping.promote")
+    (root / ".mapping.displaced").mkdir()
+
+    store.use_mapping_session(5678.0)  # the next tour begins
+    assert not (root / ".mapping.promote").exists()
+    assert not (root / ".mapping.displaced").exists()
+    store.switch_map("tour.yaml")
+    (memory,) = store.snapshot().memories
+    assert memory.id == 1
+    path = store.image_path(1)
+    assert path is not None and path.read_bytes() == b"jpg-tour"
+
+
+def test_restart_leaves_an_unstamped_promotion_copy_alone(data_dir):
+    # A crash before the stamp landed leaves the copy still naming ".mapping";
+    # landing it anywhere would mint a bogus map dir. Session entry sweeps it.
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-tour")
+    root = data_dir / "spatial_memory"
+    shutil.copytree(root / MAPPING_SESSION, root / ".mapping.promote")
+
+    MemoryStore(data_dir)
+    assert (root / ".mapping.promote").is_dir()
+    assert (root / MAPPING_SESSION / "1.jpg").exists()
+
+
+def test_entering_a_session_wipes_the_previous_ones_leftovers(data_dir):
+    store = MemoryStore(data_dir)
+    store.use_mapping_session()
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    store.switch_map("A.yaml")  # mapping abandoned without a save
+    store.use_mapping_session()
+    assert store.snapshot().memories == ()
+    assert list((data_dir / "spatial_memory" / MAPPING_SESSION).glob("*.jpg")) == []
+
+
+def test_a_restarted_store_adopts_the_same_sessions_stage(data_dir):
+    # A brain-only restart mid-tour: slam_toolbox never died, the frame is
+    # still live, so the half-tour must survive the respawn.
+    store = MemoryStore(data_dir)
+    store.use_mapping_session(1234.5)
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    fingerprint = store.snapshot().fingerprint
+
+    reborn = MemoryStore(data_dir)
+    reborn.use_mapping_session(1234.5)
+    snapshot = reborn.snapshot()
+    assert [m.id for m in snapshot.memories] == [1] and snapshot.fingerprint == fingerprint
+    path = reborn.image_path(1)
+    assert path is not None and path.read_bytes() == b"jpg-one"
+    added = reborn.add(4.0, 2.0, 0.5, 1001.0, b"jpg-two")
+    assert added is not None and added.id == 2  # ids continue, not restart
+
+
+def test_another_sessions_stage_is_wiped_on_entry(data_dir):
+    store = MemoryStore(data_dir)
+    store.use_mapping_session(1234.5)
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+
+    reborn = MemoryStore(data_dir)
+    reborn.use_mapping_session(9999.0)
+    assert reborn.snapshot().memories == ()
+    assert list((data_dir / "spatial_memory" / MAPPING_SESSION).glob("*.jpg")) == []
+
+
+def test_a_sessionless_entry_keeps_the_legacy_wipe(data_dir):
+    store = MemoryStore(data_dir)
+    store.use_mapping_session(1234.5)
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+
+    reborn = MemoryStore(data_dir)
+    reborn.use_mapping_session()
+    assert reborn.snapshot().memories == ()
+
+
+def test_a_new_session_stamp_supersedes_the_stage_in_place(data_dir):
+    # mode_manager restarted slam under a live brain: the store is already on
+    # the stage, but the new stamp names a new frame — the tick must wipe.
+    store = MemoryStore(data_dir)
+    store.use_mapping_session(1234.5)
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    store.use_mapping_session(1234.5)  # the every-tick call must not wipe
+    assert len(store.snapshot().memories) == 1
+    store.use_mapping_session(5678.0)
+    assert store.snapshot().memories == ()
+
+
+def test_promotion_refuses_a_stage_another_session_built(data_dir):
+    # A crashed earlier session's stage replayed against a later save must
+    # never land in that foreign map's directory.
+    store = MemoryStore(data_dir)
+    store.use_mapping_session(1234.5)
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-map-content")
+    with pytest.raises(StaleStageError):
+        store.promote_mapping_session("tour.yaml", mapping_started=9999.0)
+    store.switch_map("tour.yaml")
+    assert store.snapshot().memories == ()
+
+
+def test_promotion_lands_its_own_sessions_stage(data_dir):
+    store = MemoryStore(data_dir)
+    store.use_mapping_session(1234.5)
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-one")
+    (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-map-content")
+    assert store.promote_mapping_session("tour.yaml", mapping_started=1234.5) == 1
+    store.switch_map("tour.yaml")
+    assert len(store.snapshot().memories) == 1
+
+
 def test_a_transiently_unreadable_map_file_never_wipes(data_dir):
     store = MemoryStore(data_dir)
     store.switch_map("A.yaml")
@@ -464,6 +766,8 @@ def make_recorder(
         current_nav_mode_topic="/nav/current_mode",
         current_map_topic="/nav/current_map",
         amcl_pose_topic="/amcl_pose",
+        map_saved_topic="/nav/map_saved",
+        mapping_session_topic="/nav/mapping_session",
     )
     pose = pose if pose is not None else SimpleNamespace(xyt=(1.0, 2.0, 0.5))
     cache = cache if cache is not None else SimpleNamespace(state="warm")
@@ -554,10 +858,10 @@ def test_a_silent_amcl_stops_recording(data_dir, clock):
     assert len(store.snapshot().memories) == 1  # only the pre-death viewpoint
 
 
-def test_only_navigation_mode_records(data_dir, clock):
+def test_mapfree_never_records(data_dir, clock):
     recorder, store = make_recorder(data_dir)
     see_confident_world(recorder, clock)
-    recorder._on_nav_mode(SimpleNamespace(data="mapping"))
+    recorder._on_nav_mode(SimpleNamespace(data="mapfree"))
     for _ in range(5):
         recorder.tick()
         clock.now += 2.0
@@ -757,6 +1061,255 @@ def test_bad_frames_never_overwrite_a_view(data_dir, clock):
     assert stored_image(store, 1) == frame(1)
     observe(recorder, clock, frame(2))  # the first keepable frame lands it
     assert stored_image(store, 1) == frame(2)
+
+
+# ================= recording while mapping =================
+
+
+def see_mapping_world(recorder, started: float = 1000.0):
+    """Feed the recorder everything a mapping-mode record needs: SLAM's live
+    grid stands in for AMCL confidence, mode_manager's latched session stamp
+    names the frame."""
+    recorder._on_nav_mode(SimpleNamespace(data="mapping"))
+    recorder._on_mapping_session(SimpleNamespace(data=json.dumps({"started": started})))
+    recorder._on_map(grid_msg(open_room(40)))
+    recorder._on_head(SimpleNamespace(data=json.dumps({"current_position": -10.0})))
+    recorder._on_image(SimpleNamespace(data=GOOD_JPEG))
+
+
+def mapping_observe(recorder, clock, jpeg: bytes, advance: float = 1.0):
+    """One mapping tick seeing this frame; re-feeds the grid like the live
+    slam_toolbox does (map_update_interval 0.5 s)."""
+    clock.now += advance
+    recorder._on_map(grid_msg(open_room(40)))
+    recorder._on_image(SimpleNamespace(data=jpeg))
+    recorder.tick()
+
+
+def announce_save(recorder, clock, name: str, age: float = 0.0, mapping_started: float | None = 1000.0):
+    """mode_manager's /nav/map_saved payload, stamped ``age`` seconds ago;
+    ``mapping_started`` defaults to see_mapping_world's session, None mimics a
+    legacy announcement."""
+    payload = {"map": name, "stamp": clock.now - age}
+    if mapping_started is not None:
+        payload["mapping_started"] = mapping_started
+    recorder._on_map_saved(SimpleNamespace(data=json.dumps(payload)))
+
+
+def test_mapping_records_into_the_session_stage(data_dir, clock):
+    recorder, store = make_recorder(data_dir)
+    see_mapping_world(recorder)
+    recorder.tick()  # starts the hold
+    assert store.snapshot().memories == ()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    snapshot = store.snapshot()
+    assert snapshot.map_name == MAPPING_SESSION and len(snapshot.memories) == 1
+
+
+def test_a_silent_slam_stops_recording(data_dir, clock):
+    # slam_toolbox republishes /map twice a second while alive. When it dies
+    # mid-tour, TF keeps composing odom motion in the map frame — those
+    # unvouched poses must not become memories.
+    recorder, store = make_recorder(data_dir)
+    see_mapping_world(recorder)
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    assert len(store.snapshot().memories) == 1
+    clock.now += 6.0  # the grid has gone stale
+    recorder._on_image(SimpleNamespace(data=frame(2)))
+    recorder.tick()
+    assert len(store.snapshot().memories) == 1
+
+
+def test_a_saved_map_adopts_the_mapping_memories(data_dir, clock):
+    recorder, store = make_recorder(data_dir)
+    see_mapping_world(recorder)
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    assert len(store.snapshot().memories) == 1
+
+    # The webapp's save sequence: save_map, then navigation on the new map.
+    (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-map-content")
+    announce_save(recorder, clock, "tour.yaml")
+    recorder._on_nav_mode(SimpleNamespace(data="navigation"))
+    recorder._on_current_map(SimpleNamespace(data="tour.yaml"))
+    recorder.tick()
+    snapshot = store.snapshot()
+    assert snapshot.map_name == "tour.yaml" and len(snapshot.memories) == 1
+    assert stored_image(store, snapshot.memories[0].id) == GOOD_JPEG
+
+
+def test_a_promotion_landing_after_the_mode_switch_still_adopts(data_dir, clock):
+    # /nav/map_saved and /nav/current_mode arrive on independent topics: the
+    # tick may switch the store onto the just-saved map (finding it empty)
+    # before the save announcement is handled. The tour must survive the race.
+    recorder, store = make_recorder(data_dir)
+    see_mapping_world(recorder)
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    assert len(store.snapshot().memories) == 1
+
+    (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-map-content")
+    recorder._on_nav_mode(SimpleNamespace(data="navigation"))
+    recorder._on_current_map(SimpleNamespace(data="tour.yaml"))
+    recorder.tick()  # the switch wins the race: empty store on the new map
+    assert store.snapshot().memories == ()
+    announce_save(recorder, clock, "tour.yaml")  # save lands late
+    snapshot = store.snapshot()
+    assert snapshot.map_name == "tour.yaml" and len(snapshot.memories) == 1
+    assert stored_image(store, snapshot.memories[0].id) == GOOD_JPEG
+
+
+def test_a_failing_promotion_never_escapes_the_callback(data_dir, clock):
+    # brain_client_node's spin loop re-raises what escapes a callback: a full
+    # disk mid-promotion must log, not kill the node.
+    recorder, store = make_recorder(data_dir)
+
+    def full_disk(_name, _started):
+        raise OSError("disk full")
+
+    store.promote_mapping_session = full_disk
+    announce_save(recorder, clock, "tour.yaml")
+
+
+def test_an_unreadable_save_announcement_never_escapes_the_callback(data_dir, clock):
+    recorder, store = make_recorder(data_dir)
+    see_mapping_world(recorder)
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    recorder._on_map_saved(SimpleNamespace(data="tour.yaml"))  # pre-stamp wire format
+    assert not (data_dir / "spatial_memory" / "tour").exists()  # nothing was promoted
+
+
+def test_a_stale_save_replay_never_promotes(data_dir, clock):
+    # /nav/map_saved is latched so a recorder respawning across the save still
+    # hears it — but the same latch replays *old* saves to every restart, and
+    # adopting the current stage into a map saved from an earlier SLAM session
+    # would stamp this tour's coordinates onto a foreign frame.
+    recorder, store = make_recorder(data_dir)
+    see_mapping_world(recorder)
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    assert len(store.snapshot().memories) == 1
+
+    (data_dir / "maps" / "old.pgm").write_bytes(b"old-map-content")
+    announce_save(recorder, clock, "old.yaml", age=300.0)
+    assert (data_dir / "spatial_memory" / MAPPING_SESSION / "1.jpg").exists()  # the stage is untouched
+    store.switch_map("old.yaml")
+    assert store.snapshot().memories == ()
+
+
+def test_an_abandoned_session_is_wiped_when_the_next_begins(data_dir, clock):
+    recorder, store = make_recorder(data_dir)
+    see_mapping_world(recorder)
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    assert len(store.snapshot().memories) == 1
+
+    recorder._on_nav_mode(SimpleNamespace(data="navigation"))  # left without saving
+    recorder._on_current_map(SimpleNamespace(data="A.yaml"))
+    recorder.tick()
+    see_mapping_world(recorder, started=2000.0)  # re-entry restarts slam: a new session stamp
+    recorder.tick()
+    snapshot = store.snapshot()
+    assert snapshot.map_name == MAPPING_SESSION and snapshot.memories == ()
+    assert list((data_dir / "spatial_memory" / MAPPING_SESSION).glob("*.jpg")) == []
+
+
+def test_mapping_positions_mirror_carries_the_session_identity(data_dir, clock):
+    published: list = []
+    recorder, store = make_recorder(data_dir, published)
+    see_mapping_world(recorder)
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    payload = json.loads(published[-1].data)
+    assert payload["map"] == MAPPING_SESSION and len(payload["fingerprint"]) == 12
+    assert len(payload["positions"]) == 1
+
+
+def test_a_mode_change_restarts_the_confidence_hold(data_dir, clock):
+    # A hold accrued in navigation is evidence about the OLD frame; carrying it
+    # across the switch would let the first mapping tick record instantly.
+    recorder, store = make_recorder(data_dir)
+    see_confident_world(recorder, clock)
+    recorder.tick()
+    clock.now += 5.0  # the navigation hold is long since satisfied
+    see_mapping_world(recorder)
+    recorder.tick()  # first mapping tick: the hold restarts
+    assert store.snapshot().memories == ()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    assert len(store.snapshot().memories) == 1
+
+
+def test_a_latched_old_map_grid_never_vouches_for_slam(data_dir, clock):
+    # /map is TRANSIENT_LOCAL: entering mapping can replay the previous map's
+    # grid, which must not stand in for a slam_toolbox that hasn't spoken yet.
+    recorder, store = make_recorder(data_dir)
+    recorder._on_nav_mode(SimpleNamespace(data="navigation"))
+    recorder._on_map(grid_msg(open_room(40)))  # the old map, latched
+    recorder._on_nav_mode(SimpleNamespace(data="mapping"))
+    recorder._on_mapping_session(SimpleNamespace(data=json.dumps({"started": 1000.0})))
+    recorder._on_head(SimpleNamespace(data=json.dumps({"current_position": -10.0})))
+    recorder._on_image(SimpleNamespace(data=GOOD_JPEG))
+    recorder.tick()
+    clock.now += 3.1
+    recorder._on_image(SimpleNamespace(data=GOOD_JPEG))
+    recorder.tick()  # would record by now if the stale grid still counted
+    assert store.snapshot().memories == ()
+
+    recorder._on_map(grid_msg(open_room(40)))  # slam's first grid: the hold starts here
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    assert len(store.snapshot().memories) == 1
+
+
+def test_a_respawned_recorder_adopts_its_sessions_stage(data_dir, clock):
+    # A brain-only restart mid-tour: the mode arrives before the latched
+    # session replay, and the recorder must not touch the stage until it
+    # knows whose it is — then the same stamp adopts the half-tour.
+    recorder, store = make_recorder(data_dir)
+    see_mapping_world(recorder)
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    assert len(store.snapshot().memories) == 1
+
+    reborn, reborn_store = make_recorder(data_dir)
+    reborn._on_nav_mode(SimpleNamespace(data="mapping"))
+    reborn.tick()  # session unknown: no wipe, no record
+    assert (data_dir / "spatial_memory" / MAPPING_SESSION / "1.jpg").exists()
+    assert reborn_store.snapshot().map_name is None
+    reborn._on_mapping_session(SimpleNamespace(data=json.dumps({"started": 1000.0})))
+    reborn.tick()
+    snapshot = reborn_store.snapshot()
+    assert snapshot.map_name == MAPPING_SESSION and len(snapshot.memories) == 1
+
+
+def test_mapping_without_a_session_identity_never_records(data_dir, clock):
+    recorder, store = make_recorder(data_dir)
+    recorder._on_nav_mode(SimpleNamespace(data="mapping"))
+    recorder._on_map(grid_msg(open_room(40)))
+    recorder._on_head(SimpleNamespace(data=json.dumps({"current_position": -10.0})))
+    recorder._on_image(SimpleNamespace(data=GOOD_JPEG))
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    snapshot = store.snapshot()
+    assert snapshot.map_name is None and snapshot.memories == ()
+
+
+def test_a_save_from_another_session_never_gets_the_stage(data_dir, clock):
+    # A stage left by a crashed earlier session must not ride a later
+    # session's save into that foreign map.
+    recorder, store = make_recorder(data_dir)
+    see_mapping_world(recorder)
+    recorder.tick()
+    mapping_observe(recorder, clock, GOOD_JPEG, advance=3.1)
+    assert len(store.snapshot().memories) == 1
+
+    (data_dir / "maps" / "tour.pgm").write_bytes(b"tour-map-content")
+    announce_save(recorder, clock, "tour.yaml", mapping_started=9999.0)
+    assert (data_dir / "spatial_memory" / MAPPING_SESSION / "1.jpg").exists()  # the stage is kept
+    store.switch_map("tour.yaml")
+    assert store.snapshot().memories == ()
 
 
 # ================= memory search =================
@@ -1333,3 +1886,121 @@ def test_a_same_name_remap_disqualifies_the_cache(data_dir):
     remap_in_place(data_dir, store)
     search.search("the kitchen")
     assert "cachedContent" not in fake.generates[-1]  # old-map frames must not vouch for reused ids
+
+
+def test_a_fault_outliving_the_promotion_keeps_both_sets_recoverable(data_dir, monkeypatch):
+    # The landing fails, the in-line restore fails, and the fault persists into
+    # recovery. Neither scratch dir may be deleted while the map is absent --
+    # they hold the map's only memories -- and once the fault clears, recovery
+    # must put the map back.
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(9.0, 9.0, 0.0, 900.0, b"jpg-old")
+    store.use_mapping_session(session_started=111.0)
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-new")
+
+    root = data_dir / "spatial_memory"
+    real_replace = os.replace
+
+    def landing_always_fails(src, dst):
+        if Path(dst).name == "A":
+            raise OSError("disk went away")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", landing_always_fails)
+    with pytest.raises(OSError):
+        store.promote_mapping_session("A.yaml", mapping_started=111.0)
+
+    assert not (root / "A").is_dir()  # the window: map gone, both sets in scratch
+
+    # A new mapping session runs while the fault persists: its sweep must spare
+    # what the map is still owed.
+    store.use_mapping_session(session_started=222.0)
+    assert (root / ".mapping.displaced").is_dir(), "deleted the map's only surviving memories"
+
+    monkeypatch.undo()  # the disk comes back
+    recovered = MemoryStore(data_dir)
+    recovered.switch_map("A.yaml")
+    assert recovered.snapshot().memories, "recovery never gave the map its memories back"
+
+
+def test_session_entry_lands_a_stranded_displaced_set_home(data_dir):
+    # A failed promotion for A left A's only memories stranded in
+    # .mapping.displaced with A's directory gone. The next recovery point
+    # gives A its set back -- left in the slot, the stranded set would fail
+    # every later displace into it with ENOTEMPTY.
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(9.0, 9.0, 0.0, 900.0, b"jpg-a")
+
+    root = data_dir / "spatial_memory"
+    (root / "A").rename(root / ".mapping.displaced")  # the state a failed swap leaves
+
+    store.use_mapping_session(session_started=222.0)
+    assert not (root / ".mapping.displaced").exists(), "the stranded set stayed to poison later saves"
+    store.add(3.0, 4.0, 0.0, 2000.0, b"jpg-tour-b")
+    assert store.promote_mapping_session("B.yaml", mapping_started=222.0) == 1
+
+    recovered = MemoryStore(data_dir)
+    recovered.switch_map("A.yaml")
+    assert [m.x for m in recovered.snapshot().memories] == [9.0]
+    recovered.switch_map("B.yaml")
+    assert [m.x for m in recovered.snapshot().memories] == [3.0]
+
+
+def test_a_stranded_set_never_blocks_a_save_over_an_existing_map(data_dir):
+    # Mid-session strand: a failed save-as-A left A's set in the displaced
+    # slot with A's directory gone, and the user re-saves the tour as B --
+    # whose directory exists. Promotion must land A's set home and use the
+    # cleared slot, not fail the displace with ENOTEMPTY on every save.
+    store = MemoryStore(data_dir)
+    store.switch_map("A.yaml")
+    store.add(9.0, 9.0, 0.0, 900.0, b"jpg-a")
+    store.switch_map("B.yaml")
+    store.add(8.0, 8.0, 0.0, 901.0, b"jpg-b")
+    store.use_mapping_session(session_started=222.0)
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-tour")
+
+    root = data_dir / "spatial_memory"
+    (root / "A").rename(root / ".mapping.displaced")  # the state a failed A-save leaves
+
+    assert store.promote_mapping_session("B.yaml", mapping_started=222.0) == 1
+    store.switch_map("B.yaml")
+    assert [m.x for m in store.snapshot().memories] == [1.0]
+    store.switch_map("A.yaml")
+    assert [m.x for m in store.snapshot().memories] == [9.0]
+
+
+def test_a_failed_promotion_never_restores_another_maps_set(data_dir, monkeypatch):
+    # B's memories are stranded in .mapping.displaced and a persistent fault
+    # keeps them from landing home. A promotion for A then fails to land, and
+    # the restore must not hand B's set to A -- a foreign coordinate frame in
+    # A, and B stripped of its only copy.
+    store = MemoryStore(data_dir)
+    store.switch_map("B.yaml")
+    store.add(9.0, 9.0, 0.0, 900.0, b"jpg-b")
+
+    root = data_dir / "spatial_memory"
+    (root / "B").rename(root / ".mapping.displaced")  # B stranded by an earlier failure
+
+    real_replace = os.replace
+
+    def replace_with_fault(src, dst):
+        # B's landing home and the tour's landing both fail; a restore into A
+        # would be free to run, which is exactly what must not happen with
+        # B's set sitting there.
+        if Path(dst).name in ("A", "B"):
+            raise OSError("disk went away")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", replace_with_fault)
+    store.use_mapping_session(session_started=222.0)
+    store.add(1.0, 2.0, 0.5, 1000.0, b"jpg-tour-a")
+    with pytest.raises(OSError):
+        store.promote_mapping_session("A.yaml", mapping_started=222.0)
+    monkeypatch.undo()
+
+    assert not (root / "A").is_dir(), "A was given another map's memories"
+    stranded = json.loads((root / ".mapping.displaced" / "index.json").read_text())
+    assert stranded["map"] == "B.yaml", "B's set was moved out from under it"
+    assert [m["x"] for m in stranded["memories"]] == [9.0]

@@ -86,6 +86,16 @@ seed_prebuilt_install() {
         return 1
     fi
 
+    # Seed only into a workspace with nothing to build on. The image's install/
+    # is made at a different prefix and without --symlink-install, so dropping it
+    # over a local build tree turns the next edit into a full rebuild: measured
+    # >20 min against 20 s. Keyed on build/ rather than install/ matching, since
+    # reverting an edit would make install/ stale again and re-arm the clobber.
+    if [[ -n "$(ls -A build 2>/dev/null)" ]]; then
+        echo "Local ROS build tree present; building incrementally rather than seeding."
+        return 1
+    fi
+
     if [[ ! -f install/setup.zsh ]] ||
         [[ "$(cat install/.innate-prebuilt-source.sha256 2>/dev/null)" != "$prebuilt_hash" ]] ||
         [[ "$(cat install/.innate-prebuilt-install.sha256 2>/dev/null)" != "$prebuilt_install_hash" ]]; then
@@ -121,15 +131,13 @@ install_is_stale() {
     return 1
 }
 
+# Reserved for an install that cannot be built ON. A CHECKOUT change is no
+# longer in that set: volumes are per-checkout now, container paths are identical
+# either way, and colcon_build_with_retry already cleans on the stale-symlink
+# failure when one happens.
 install_needs_clean_rebuild() {
     [[ ! -f install/setup.zsh ]] && return 0
     find install -xtype l -print -quit | grep -q . && return 0
-
-    if [[ -n "${INNATE_OS_HOST_REPO_ID:-}" ]]; then
-        local installed_repo_id
-        installed_repo_id="$(cat install/.innate-local-repo-id 2>/dev/null || true)"
-        [[ "$installed_repo_id" != "$INNATE_OS_HOST_REPO_ID" ]] && return 0
-    fi
 
     return 1
 }
@@ -140,7 +148,7 @@ elif seed_prebuilt_install; then
     :
 elif install_is_stale; then
     if install_needs_clean_rebuild; then
-        echo "Removing stale ROS build/install/log volumes before rebuild."
+        echo "ROS install is unusable (missing or dangling); cleaning build/install/log before rebuild."
         clean_ros_build_artifacts
     fi
     colcon_build_with_retry

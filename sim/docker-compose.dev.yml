@@ -1,3 +1,5 @@
+# The launcher passes `-p innate-os-<checkout id>`; this name is for running the
+# file by hand.
 name: innate-os
 
 services:
@@ -31,7 +33,8 @@ services:
       # fails with "Temporary failure resolving ...". Harmless where bridge
       # DNS already works.
       network: host
-    container_name: innate-dev
+    # config.OS_CONTAINER_NAME, matching the -p project above.
+    container_name: ${INNATE_OS_CONTAINER_NAME:-innate-dev}
     # Use host networking if you need direct access to hardware, or use your own approach
     environment:
       # Points at the optional novnc X display (COMPOSE_PROFILES=x11);

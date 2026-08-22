@@ -67,6 +67,11 @@ SIM_IMAGE_INPUT_FILES = (
     "ros2_ws/apt-dependencies.hardware.txt",
     "ros2_ws/apt-dependencies.sim.txt",
 )
+# Addressed by compute_local_image_inputs_hash, not the ROS image's hash: that
+# one covers ros2_ws/src, which this image does not contain, so a source edit
+# would rename an identical image out of reach.
+DEFAULT_SIM_DEPS_IMAGE = "ghcr.io/innate-inc/innate-os-sim-deps"
+DEPS_IMAGE_TAG_PREFIX = "deps-"
 # What the local (deps-only) sim/Dockerfile build actually reads from the repo.
 LOCAL_OS_IMAGE_REPO = "innate-os-sim-clean-innate"
 LOCAL_IMAGE_INPUT_FILES = (
@@ -109,11 +114,20 @@ ASSETS_IMAGE_INPUT_FILES = (
 # name does not mention it. Cheap because sim/Dockerfile.assets copies ros2_ws
 # in below CoACD: a driver edit re-runs the nav map (minutes), not the bake.
 ASSETS_IMAGE_PATHSPECS = (
+    "sim/environments",
     "sim/tools",
     "sim/viewer/tools",
     "ros2_ws/src/mars_bot/mars_sim_driver",
     "ros2_ws/src/mars_bot/mars_sim",
 )
+# Geometry is carved out by EXCLUSION, so a pathspec added above joins the
+# geometry hash by default: wrongly excluded costs a needless refusal, wrongly
+# included reuses geometry that no longer matches.
+NON_GEOMETRY_PATHSPECS = (
+    "ros2_ws/src/mars_bot/mars_sim_driver",
+    "ros2_ws/src/mars_bot/mars_sim",
+)
+GEOMETRY_INPUT_PATHSPECS = tuple(p for p in ASSETS_IMAGE_PATHSPECS if p not in NON_GEOMETRY_PATHSPECS)
 # The SimSession bundle the webapp loads, as its own image
 # (sim/viewer/Dockerfile), addressed by inputs-<compute_viewer_inputs_hash over
 # sim/viewer on disk>. That hash covers a little more than the build reads
@@ -151,9 +165,16 @@ SIM_ASSET_UNITS = SIM_ASSET_UNITS_DERIVED + SIM_ASSET_UNITS_AUTHORED
 # tests/test_assets_image_inputs.py holds the dockerignore (which IS hashed)
 # EQUAL to this set; weaken it to a subset check and that stops being true.
 OS_CONTAINER_SERVICE = "innate"
-# Must match `container_name:` / `name:` in sim/docker-compose.dev.yml.
-OS_CONTAINER_NAME = "innate-dev"
-COMPOSE_PROJECT_NAME = "innate-os"
+# One stack per checkout: clones used to share a container and a volume set, so
+# `up` from the second served the first one's code or wiped its build. The
+# compose file cannot compute this; it arrives as `-p` and
+# INNATE_OS_CONTAINER_NAME.
+HOST_REPO_ID = hashlib.sha256(str(REPO_ROOT.resolve()).encode("utf-8")).hexdigest()[:16]
+COMPOSE_PROJECT_NAME = f"innate-os-{HOST_REPO_ID}"
+OS_CONTAINER_NAME = f"innate-dev-{HOST_REPO_ID}"
+# Removed once on upgrade: it holds 443/80/9090.
+LEGACY_SHARED_CONTAINER = "innate-dev"
+LEGACY_SHARED_PROJECT = "innate-os"
 LEGACY_CLOUD_AGENT_CONTAINER = "innate-cloud-agent"
 OS_CONTAINER_TMUX_CMD = "./scripts/launch_sim_in_tmux.zsh --detach"
 SECRET_ENV_KEYS = (INNATE_SERVICE_KEY, GEMINI_API_KEY)
@@ -504,6 +525,23 @@ def resolve_assets_image(repo_root: Path) -> str:
 
 
 @functools.lru_cache
+def compute_geometry_inputs_hash(repo_root: Path) -> str:
+    """Whether the geometry already installed still describes this checkout.
+
+    A second hash, not a second identity: a driver edit rightly renames the
+    asset image, but must not hard-stop `up` -- geometry has no local build path
+    to fall back to, and a fork has no CI to publish a new one.
+    """
+    digest = hashlib.sha256()
+    _hash_input_files(
+        digest,
+        repo_root,
+        _collect_input_files(repo_root, ASSETS_IMAGE_INPUT_FILES, GEOMETRY_INPUT_PATHSPECS),
+    )
+    return digest.hexdigest()
+
+
+@functools.lru_cache
 def compute_viewer_inputs_hash(repo_root: Path) -> str:
     """Content hash of sim/viewer as it is ON DISK, tracked or not.
 
@@ -577,6 +615,13 @@ def resolve_local_os_image(repo_root: Path) -> str:
     different image inputs (Dockerfile, apt lists) keep separate images
     instead of clobbering a shared :latest."""
     return f"{LOCAL_OS_IMAGE_REPO}:inputs-{compute_local_image_inputs_hash(repo_root)}"
+
+
+def resolve_deps_image(repo_root: Path) -> str:
+    """The published twin of resolve_local_os_image: same Dockerfile, same
+    inputs, same hash. Its own prefix, because the ROS image alongside it names
+    a different hash under `inputs-`."""
+    return f"{DEFAULT_SIM_DEPS_IMAGE}:{DEPS_IMAGE_TAG_PREFIX}{compute_local_image_inputs_hash(repo_root)}"
 
 
 def resolve_os_image_setting(value: str | None, repo_root: Path) -> tuple[str, bool]:
@@ -660,6 +705,7 @@ if __name__ == "__main__":
     # Named, not argless: there are several hashes in this file.
     _hash_commands = {
         "assets-image-hash": compute_assets_image_inputs_hash,
+        "deps-image-hash": compute_local_image_inputs_hash,
         "sim-image-hash": compute_sim_image_inputs_hash,
         "viewer-image-hash": compute_viewer_inputs_hash,
     }

@@ -168,6 +168,35 @@ class ModeManager(Node):
         # Publisher to announce current map
         self.current_map_publisher = self.create_publisher(String, "/nav/current_map", 10)
 
+        # Each successful save as {"map": yaml name, "stamp": epoch seconds};
+        # brain_client promotes its staged mapping memories on it. Latched so a
+        # recorder respawning across the save still hears it — hence the stamp,
+        # which lets it tell that replay from an old save's.
+        self.map_saved_publisher = self.create_publisher(
+            String,
+            "/nav/map_saved",
+            QoSProfile(
+                depth=1,
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            ),
+        )
+
+        # Identity of the live SLAM session as {"started": epoch seconds},
+        # published on each entry into mapping mode. Latched so a brain_client
+        # respawning mid-tour can tell whether the memory stage it finds on
+        # disk was built by this very session (adopt) or an earlier one (wipe).
+        self._mapping_session_started = None
+        self.mapping_session_publisher = self.create_publisher(
+            String,
+            "/nav/mapping_session",
+            QoSProfile(
+                depth=1,
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            ),
+        )
+
         # Pre-create service clients for all nodes and service types we'll use
         self._init_service_clients()
 
@@ -1184,6 +1213,10 @@ class ModeManager(Node):
                     action_word = "overwritten" if is_overwriting else "saved"
                     response.message = f"Successfully {action_word} map as '{map_name}.yaml'"
                     self.get_logger().info(response.message)
+                    save_announcement = {"map": map_yaml_name, "stamp": time.time()}
+                    if self._mapping_session_started is not None:
+                        save_announcement["mapping_started"] = self._mapping_session_started
+                    self.map_saved_publisher.publish(String(data=json.dumps(save_announcement)))
 
                     # Refresh available maps list
                     self.available_maps = self.discover_maps()
@@ -1378,6 +1411,14 @@ class ModeManager(Node):
                         self.get_logger().info("BasicNavigator initialized for navigation mode")
                     except Exception as e:
                         self.get_logger().warning(f"Could not initialize BasicNavigator: {e}")
+                elif target_mode == "mapping":
+                    # Every slam_toolbox activation is a new coordinate frame;
+                    # stamp it before the mode flips so no subscriber pairs
+                    # mode "mapping" with a previous session's stamp.
+                    self._mapping_session_started = time.time()
+                    self.mapping_session_publisher.publish(
+                        String(data=json.dumps({"started": self._mapping_session_started}))
+                    )
                 self.current_mode = target_mode
                 self.save_last_mode(target_mode)
                 self.get_logger().info(response.message)
