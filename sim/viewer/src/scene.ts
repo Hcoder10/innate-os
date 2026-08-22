@@ -119,6 +119,7 @@ export type CameraView = "orbit" | "main" | "arm";
 export type OnboardingStep =
   | "await_hello"
   | "welcome"
+  | "await_go"
   | "tour_cameras"
   | "tour_telemetry"
   | "tour_chat"

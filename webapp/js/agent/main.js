@@ -185,8 +185,16 @@ function buildAgentView(root) {
   const telemetry = createTelemetry(telemetryOverlay, ros, { showBattery: !config.simControls });
   if (config.simControls) {
     micControl = createAgentMicControl(root, {
-      startListening: panel.startMic,
-      stopListening: panel.stopMic,
+      // The tour's prompts are answered by holding the mic, whatever the user
+      // says into it, so it needs both edges of the hold — not the transcript.
+      startListening: () => {
+        onboarding?.noteMicDown();
+        return panel.startMic();
+      },
+      stopListening: () => {
+        onboarding?.noteMicUp();
+        panel.stopMic();
+      },
     });
   }
 

@@ -6350,7 +6350,7 @@ select.skill-input {
   font-weight: 600;
 }
 
-.agent-cockpit.agent-onboarding-await_hello > .agent-onboarding-nudge {
+.agent-cockpit.agent-onboarding-awaiting > .agent-onboarding-nudge {
   visibility: visible;
   opacity: 1;
   transform: translate(-50%, 0);

@@ -61,12 +61,6 @@ export const GET_CHAT_HISTORY_SERVICE = "/brain/get_chat_history";
 export const GET_AVAILABLE_DIRECTIVES_SERVICE = "/brain/get_available_directives";
 export const SET_DIRECTIVE_TOPIC = "/brain/set_directive";
 export const SET_BRAIN_ACTIVE_SERVICE = "/brain/set_brain_active";
-// Which input devices input_manager should keep open (std_msgs/String JSON:
-// {inputs:[name,...]} — the full set, not a delta). Owned by input_manager, not
-// the brain: publishing {"inputs":["micro"]} runs the robot's own VAD + STT
-// before any agent exists, which is how onboarding hears "Hello MARS". The
-// brain republishes its directive's inputs on activation, taking ownership back.
-export const ACTIVE_INPUTS_TOPIC = "/input_manager/active_inputs";
 // A free-form event into the running agent's context (std_msgs/String JSON;
 // `input_device` names the source). Dropped while the brain is inactive, so
 // publish only after activation.

@@ -2,23 +2,26 @@
 // Versioned declarative onboarding engine. Steps own fixed dialogue, completion
 // events, entry actions, and next links. Progress is {version, stepId} only.
 //
-// The tour runs entirely from the browser: it opens the robot's own mic device
-// (ACTIVE_INPUTS_TOPIC) so STT transcribes "Hello MARS" onto /brain/chat_in
-// before any agent exists, then drives skills and speech through the scripted
-// runner. The brain stays inactive throughout, which is exactly why the agent
-// never consumes the scripted turns — an inactive brain drops chat_in. Handing
-// over means activating the directive and posting one custom-input event so the
-// agent picks up mid-conversation instead of introducing itself again.
+// The tour runs entirely from the browser and never listens to what the user
+// says: a step that waits on the user completes when they hold the mic, however
+// long they talk and whatever words they use. That keeps the brain out of it —
+// no agent, no STT, no transcript to match — so the only robot-side traffic is
+// speech and skills, plus one custom-input event at the handoff that tells the
+// agent it is joining a conversation already in progress.
 
-import { ACTIVE_INPUTS_TOPIC, CHAT_IN_TOPIC, CUSTOM_INPUT_TOPIC } from "../constants.js";
+import { CUSTOM_INPUT_TOPIC } from "../constants.js";
 
-const ONBOARDING_VERSION = 2;
+const ONBOARDING_VERSION = 3;
 const STORAGE_KEY = "innate.agentOnboarding";
 const LEGACY_STEP_KEY = "innate.agentOnboardingStep";
 const LEGACY_COMPLETE_KEY = "innate.agentOnboardingComplete";
 const RESET_EVENT = "innate:agent-onboarding-reset";
-// How long "Say Hello MARS" may go unanswered before offering a way past it.
-// The robot-level mic toggle can veto the device, and a tour that cannot be
+// A hold this long reads as "the user said something". Comfortably above the
+// mic control's 350ms short-click threshold, so a stray click cannot advance
+// the tour, and short enough that holding never feels like a wait.
+const MIN_HOLD_MS = 600;
+// How long a prompt may go unanswered before offering a way past it. Denied
+// microphone permission never produces a hold at all, and a tour that cannot be
 // skipped would strand the page on its first step.
 const SKIP_OFFER_MS = 25000;
 // Degrees the robot turns toward a panel as it appears. Every tour step turns
@@ -31,19 +34,18 @@ export const WELCOME_DIALOGUE =
 
 /**
  * Completion event kinds reserved for later lessons:
- * - speech: user transcript matched
+ * - hold: the user held the mic (content ignored)
  * - action: entry scripted runner finished
  * - skill_success / sim_event / user_action: extension points (unused yet)
  * - complete: terminal handoff step
  *
- * @typedef {"await_hello" | "welcome" | "tour_cameras" | "tour_telemetry" | "tour_chat" | "complete"} OnboardingStepId
- * @typedef {"speech" | "action" | "skill_success" | "sim_event" | "user_action" | "complete"} CompletionKind
+ * @typedef {"await_hello" | "welcome" | "await_go" | "tour_cameras" | "tour_telemetry" | "tour_chat" | "complete"} OnboardingStepId
+ * @typedef {"hold" | "action" | "skill_success" | "sim_event" | "user_action" | "complete"} CompletionKind
  * @typedef {{
  *   id: OnboardingStepId,
  *   instruction?: string,
  *   dialogue?: string,
  *   completeOn: CompletionKind,
- *   speechMatch?: (text: string) => boolean,
  *   reveal?: string,
  *   recap?: string,
  *   actions?: (reveal: () => void) => import("./onboardingWelcome.js").ScriptedAction[],
@@ -55,9 +57,9 @@ export const WELCOME_DIALOGUE =
 const STEPS = {
   await_hello: {
     id: "await_hello",
-    instruction: 'Say “Hello MARS”',
-    completeOn: "speech",
-    speechMatch: isGreeting,
+    // The words are a suggestion, not a condition — holding the mic is the gate.
+    instruction: 'Hold the mic and say <strong>“Hello MARS”</strong>',
+    completeOn: "hold",
     next: "welcome",
   },
   welcome: {
@@ -71,6 +73,12 @@ const STEPS = {
       { type: "skill", name: "head_emotion", inputs: { emotion: "excited", repeat: 5 }, afterSpeechStart: true },
       { type: "skill", name: "wave", inputs: {} },
     ],
+    next: "await_go",
+  },
+  await_go: {
+    id: "await_go",
+    instruction: 'Hold the mic and say <strong>“Let’s go”</strong>',
+    completeOn: "hold",
     next: "tour_cameras",
   },
   tour_cameras: {
@@ -109,7 +117,18 @@ const STEPS = {
 
 /** Step order, which is also reveal order: resuming re-applies every earlier reveal. */
 /** @type {OnboardingStepId[]} */
-const STEP_ORDER = ["await_hello", "welcome", "tour_cameras", "tour_telemetry", "tour_chat", "complete"];
+const STEP_ORDER = [
+  "await_hello",
+  "welcome",
+  "await_go",
+  "tour_cameras",
+  "tour_telemetry",
+  "tour_chat",
+  "complete",
+];
+
+/** @type {string[]} */
+const REVEAL_TARGETS = ["cameras", "telemetry", "chat"];
 
 /**
  * One tour beat: turn toward the panel, reveal it, say the line, react, turn back.
@@ -148,22 +167,21 @@ export function createAgentOnboarding(root, rosClient, options) {
   const stepListeners = new Set();
   let entryToken = 0;
   let destroyed = false;
-  /** Reveals applied ahead of their step's turn (none yet at this point). */
   /** @type {Set<string>} */
   const revealed = new Set();
   /** @type {ReturnType<typeof setTimeout> | null} */
   let skipTimer = null;
+  /** When the current mic hold started, 0 when the mic is not held. */
+  let micDownAt = 0;
   root.classList.add("agent-onboarding-enabled");
 
   // Advertised up front, not at first use: an unadvertised topic resolves its
   // type from an existing publisher, and the first message can be dropped
   // before rosbridge finishes wiring it up.
-  const unadvertiseInputs = rosClient.advertise(ACTIVE_INPUTS_TOPIC, "std_msgs/msg/String");
   const unadvertiseCustom = rosClient.advertise(CUSTOM_INPUT_TOPIC, "std_msgs/msg/String");
 
   const nudge = document.createElement("p");
   nudge.className = "agent-onboarding-nudge";
-  nudge.innerHTML = 'Say <strong>“Hello MARS”</strong>';
   root.append(nudge);
 
   const skip = document.createElement("button");
@@ -176,19 +194,27 @@ export function createAgentOnboarding(root, rosClient, options) {
   });
   root.append(skip);
 
+  /** @param {OnboardingStepId} id */
+  function waitsForHold(id) {
+    return STEPS[id]?.completeOn === "hold";
+  }
+
   function render() {
     const active = stepId !== "complete";
+    const awaiting = waitsForHold(stepId);
     root.classList.toggle("agent-onboarding-active", active);
     // Distinct from the per-step classes: the robot appears at the welcome and
     // stays on screen for the whole tour, so the stage cannot key off one step.
     root.classList.toggle("agent-onboarding-staged", stepId !== "await_hello");
+    root.classList.toggle("agent-onboarding-awaiting", awaiting);
     for (const id of STEP_ORDER) {
       root.classList.toggle(`agent-onboarding-${id}`, stepId === id);
     }
-    for (const target of ["cameras", "telemetry", "chat"]) {
+    for (const target of REVEAL_TARGETS) {
       root.classList.toggle(`agent-onboarding-show-${target}`, revealed.has(target));
     }
-    nudge.setAttribute("aria-hidden", String(stepId !== "await_hello"));
+    nudge.innerHTML = STEPS[stepId]?.instruction ?? "";
+    nudge.setAttribute("aria-hidden", String(!awaiting));
     for (const listener of stepListeners) listener(stepId);
   }
 
@@ -208,9 +234,10 @@ export function createAgentOnboarding(root, rosClient, options) {
 
   function armSkipOffer() {
     if (skipTimer !== null) clearTimeout(skipTimer);
+    const armedFor = stepId;
     skipTimer = setTimeout(() => {
       skipTimer = null;
-      if (destroyed || stepId !== "await_hello") return;
+      if (destroyed || stepId !== armedFor) return;
       skip.hidden = false;
     }, SKIP_OFFER_MS);
   }
@@ -220,6 +247,7 @@ export function createAgentOnboarding(root, rosClient, options) {
     if (destroyed) return;
     const crossingIntoComplete = nextId === "complete" && stepId !== "complete";
     stepId = nextId;
+    micDownAt = 0;
     syncRevealsThrough(nextId);
     persist();
     render();
@@ -228,13 +256,9 @@ export function createAgentOnboarding(root, rosClient, options) {
       clearTimeout(skipTimer);
       skipTimer = null;
     }
-    if (nextId !== "await_hello") skip.hidden = true;
+    skip.hidden = true;
     if (nextId === "complete") {
       runner.cancel();
-      skip.hidden = true;
-      // Inputs are deliberately left open: activating the directive republishes
-      // its own required inputs (micro among them), so closing here would only
-      // deafen the robot for the moment between the two.
       if (crossingIntoComplete) {
         await onHandoff?.();
         if (token !== entryToken || destroyed) return;
@@ -242,9 +266,10 @@ export function createAgentOnboarding(root, rosClient, options) {
       }
       return;
     }
-    await setMicInputOpen(rosClient, true);
-    if (token !== entryToken || destroyed) return;
-    if (nextId === "await_hello") armSkipOffer();
+    if (waitsForHold(nextId)) {
+      armSkipOffer();
+      return;
+    }
     const step = STEPS[nextId];
     if (step.completeOn !== "action" || !step.actions) return;
     await runner.run(step.actions(() => {
@@ -272,20 +297,6 @@ export function createAgentOnboarding(root, rosClient, options) {
     await enter("await_hello");
   }
 
-  const unsubChat = rosClient.subscribe(CHAT_IN_TOPIC, (message) => {
-    const step = STEPS[stepId];
-    if (step?.completeOn !== "speech" || typeof message?.data !== "string") return;
-    let payload;
-    try {
-      payload = JSON.parse(message.data);
-    } catch {
-      return;
-    }
-    if (String(payload?.sender ?? "") !== "user") return;
-    if (!step.speechMatch?.(String(payload?.text ?? ""))) return;
-    void advance();
-  }, undefined, "std_msgs/msg/String");
-
   const onReset = () => {
     void reset();
   };
@@ -300,11 +311,23 @@ export function createAgentOnboarding(root, rosClient, options) {
     isComplete() {
       return stepId === "complete";
     },
-    /** Keep the robot's mic device open without activating the agent. */
+    /**
+     * True while the tour still owns the mic button, which is what keeps
+     * holding it from starting the agent underneath the tour.
+     */
     async ensureListening() {
-      if (stepId === "complete") return false;
-      await setMicInputOpen(rosClient, true);
-      return true;
+      return stepId !== "complete";
+    },
+    /** The mic button went down: start timing the hold. */
+    noteMicDown() {
+      micDownAt = Date.now();
+    },
+    /** The mic button came up: a long enough hold answers a waiting step. */
+    noteMicUp() {
+      const heldFor = micDownAt ? Date.now() - micDownAt : 0;
+      micDownAt = 0;
+      if (heldFor < MIN_HOLD_MS || !waitsForHold(stepId)) return;
+      void advance();
     },
     /** @param {(step: OnboardingStepId) => void} listener */
     onStep(listener) {
@@ -316,7 +339,6 @@ export function createAgentOnboarding(root, rosClient, options) {
       destroyed = true;
       entryToken++;
       runner.cancel();
-      unsubChat();
       window.removeEventListener(RESET_EVENT, onReset);
       if (skipTimer !== null) clearTimeout(skipTimer);
       stepListeners.clear();
@@ -326,13 +348,10 @@ export function createAgentOnboarding(root, rosClient, options) {
         "agent-onboarding-enabled",
         "agent-onboarding-active",
         "agent-onboarding-staged",
+        "agent-onboarding-awaiting",
         ...STEP_ORDER.map((id) => `agent-onboarding-${id}`),
-        ...["cameras", "telemetry", "chat"].map((target) => `agent-onboarding-show-${target}`),
+        ...REVEAL_TARGETS.map((target) => `agent-onboarding-show-${target}`),
       );
-      if (stepId !== "complete") {
-        void setMicInputOpen(rosClient, false);
-      }
-      unadvertiseInputs();
       unadvertiseCustom();
     },
   };
@@ -372,26 +391,6 @@ function loadStepId() {
 /** @param {unknown} value @returns {value is OnboardingStepId} */
 function isStepId(value) {
   return typeof value === "string" && Object.prototype.hasOwnProperty.call(STEPS, value);
-}
-
-/** @param {string} text */
-function isGreeting(text) {
-  const words = text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  return /\b(?:hello|hi|hey)\s+mars\b/.test(words);
-}
-
-/**
- * Open or close the robot's microphone device without touching the brain.
- * input_manager owns this topic and applies it whatever the brain is doing, so
- * STT runs during the tour and the transcript lands on /brain/chat_in for the
- * subscription above. An inactive brain drops that same message, which is what
- * keeps the agent from answering the greeting itself.
- *
- * @param {import("../rosClient.js").RosClient} rosClient
- * @param {boolean} open
- */
-async function setMicInputOpen(rosClient, open) {
-  rosClient.publish(ACTIVE_INPUTS_TOPIC, { data: JSON.stringify({ inputs: open ? ["micro"] : [] }) });
 }
 
 /**
