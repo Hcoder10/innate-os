@@ -12,6 +12,7 @@ Hardware: MARS robot
 - Pan: Uses differential drive wheels to rotate body
 """
 
+import json
 import math
 import threading
 import time
@@ -22,9 +23,16 @@ import inspireface as isf
 import numpy as np
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
+from std_msgs.msg import String
 
 from brain_client.robot.head import Head
 from brain_client.robot.mobility import Mobility
+
+FACE_DEBUG_TOPIC = "/brain/face_debug"
+FACE_DETECTION_MIN_CONFIDENCE = 0.3
+FACE_CENTER_X_TOLERANCE = 0.15
+FACE_CENTER_Y_TOLERANCE = 0.18
+FACE_LOCK_FRAMES = 2
 
 
 class FaceDetector:
@@ -139,6 +147,11 @@ class GazeController:
             self._wheel_rotate(angular_speed, duration)
             self._last_pan_time = now
 
+    @property
+    def target_tilt(self) -> int:
+        with self._lock:
+            return round(self._target_tilt)
+
     def _loop(self):
         """Main tilt control loop at ~30Hz."""
         dt = 1.0 / 30.0
@@ -180,6 +193,8 @@ class ROSPersonTracker:
             wheel_rotate_fn=self._mobility.rotate_in_place,
         )
         self._detector: FaceDetector | None = None
+        self._debug_pub = node.create_publisher(String, FACE_DEBUG_TOPIC, 10)
+        self._debug_lock_frames = 0
 
         self._running = False
         self._thread: threading.Thread | None = None
@@ -220,7 +235,7 @@ class ROSPersonTracker:
 
     def _init_detector(self):
         try:
-            self._detector = FaceDetector(min_confidence=0.3)
+            self._detector = FaceDetector(min_confidence=FACE_DETECTION_MIN_CONFIDENCE)
             self._node.get_logger().info("👁️ Face detector initialized")
         except Exception as e:
             self._node.get_logger().error(f"Failed to init face detector: {e}")
@@ -236,6 +251,43 @@ class ROSPersonTracker:
     @property
     def is_running(self) -> bool:
         return self._running
+
+    def _publish_debug(self, faces: list[dict[str, float]], selected: dict[str, float] | None) -> None:
+        selected_index = next((index for index, face in enumerate(faces) if face is selected), None)
+        x_error = None if selected is None else selected["center_x"] - 0.5
+        y_error = None if selected is None else 0.5 - selected["center_y"]
+        if x_error is None or y_error is None:
+            self._debug_lock_frames = 0
+            action = "no_face_detected"
+            state = "searching"
+        elif abs(x_error) > FACE_CENTER_X_TOLERANCE:
+            self._debug_lock_frames = 0
+            action = "turn_needed"
+            state = "tracking"
+        elif abs(y_error) > FACE_CENTER_Y_TOLERANCE:
+            self._debug_lock_frames = 0
+            action = "tilt_needed"
+            state = "tracking"
+        else:
+            self._debug_lock_frames = min(FACE_LOCK_FRAMES, self._debug_lock_frames + 1)
+            action = "centered"
+            state = "locked" if self._debug_lock_frames >= FACE_LOCK_FRAMES else "tracking"
+        payload = {
+            "stamp": time.time(),
+            "state": state,
+            "faces": faces,
+            "selected": selected_index,
+            "x_error": x_error,
+            "y_error": y_error,
+            "lock_frames": self._debug_lock_frames,
+            "lock_needed": FACE_LOCK_FRAMES,
+            "head_tilt": self._gaze.target_tilt,
+            "action": action,
+            "x_tolerance": FACE_CENTER_X_TOLERANCE,
+            "y_tolerance": FACE_CENTER_Y_TOLERANCE,
+            "min_confidence": FACE_DETECTION_MIN_CONFIDENCE,
+        }
+        self._debug_pub.publish(String(data=json.dumps(payload, separators=(",", ":"))))
 
     def _track_loop(self):
         """Perception loop at ~5Hz."""
@@ -260,7 +312,10 @@ class ROSPersonTracker:
                     best = max(faces, key=lambda f: f["width"] * f["height"])
                     self._gaze.track_face(best, shape)
                     self._last_face_time = time.time()
-                elif time.time() - self._last_face_time > self._face_timeout:
+                else:
+                    best = None
+                self._publish_debug(faces, best)
+                if not faces and time.time() - self._last_face_time > self._face_timeout:
                     # Return to neutral after timeout
                     with self._gaze._lock:
                         self._gaze._target_tilt = 0.0

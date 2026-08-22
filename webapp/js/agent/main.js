@@ -26,6 +26,7 @@ import { createCameraSwitch } from "../teleop/cameraSwitch.js";
 import { sharedAgentState } from "../teleop/agentState.js";
 import { createAgentPanel } from "./agentPanel.js";
 import { createChallengePanel } from "./challengePanel.js";
+import { createFaceOverlay } from "./faceOverlay.js";
 import { createAgentMicControl } from "./agentMicControl.js";
 
 // Runtime feature flags (config.json, served static), same as teleop. simControls
@@ -186,6 +187,7 @@ function buildAgentView(root) {
   const parts = [
     videoStage,
     widthGuard,
+    createFaceOverlay(root, ros),
     ...(challengePanel ? [challengePanel] : []),
     ...(telemetry ? [telemetry] : []),
     // Square, always-live camera tiles (own prefs key so teleop's defaults stay put).
