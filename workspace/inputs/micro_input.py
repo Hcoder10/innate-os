@@ -33,6 +33,10 @@ import shutil
 import subprocess
 import threading
 import time
+from collections import deque
+from dataclasses import dataclass
+
+import numpy as np
 
 from brain_client.brain.transport import pick_rest
 from brain_client.common.logging import UniversalLogger
@@ -51,6 +55,7 @@ from brain_client.inputs.vad import silero_detector
 
 DEFAULT_SAMPLE_RATE = 24_000
 DEFAULT_CHANNELS = 1
+DEFAULT_CAPTURE_CHANNELS = 2
 CHUNK_DURATION_SEC = 0.02
 
 # ElevenLabs names the wire format after the rate; the two must agree or the
@@ -59,6 +64,102 @@ ELEVENLABS_AUDIO_FORMAT = f"pcm_{DEFAULT_SAMPLE_RATE}"
 
 # std_msgs/String of base64 PCM16 mono at DEFAULT_SAMPLE_RATE.
 MIC_AUDIO_TOPIC = "/mic/audio"
+MIC_CAPTURE_TOPIC = "/mic/capture"
+CALLER_AUDIO_TOPIC = "/mic/caller_audio"
+
+BEARING_WINDOW_CHUNKS = 150
+BEARING_STALE_SECONDS = 3.0
+BEARING_MIN_LEVEL = 0.005
+BEARING_DEADBAND = 0.12
+BEARING_CHANNEL_DIFFERENCE = 0.02
+CALLER_DIRECTION_TIMEOUT = 15.0
+
+WAKE_NAME_PATTERN = re.compile(r"\bmars\b", re.IGNORECASE)
+APPROACH_PATTERN = re.compile(r"\b(?:come over here|come here|come closer|move closer)\b", re.IGNORECASE)
+DIRECTION_PATTERNS = (
+    ("behind", re.compile(r"\b(?:behind|in back|at the back)\b", re.IGNORECASE)),
+    ("left", re.compile(r"\b(?:left|to your left|on your left)\b", re.IGNORECASE)),
+    ("right", re.compile(r"\b(?:right|to your right|on your right)\b", re.IGNORECASE)),
+    ("front", re.compile(r"\b(?:front|in front|ahead|straight ahead)\b", re.IGNORECASE)),
+)
+
+
+@dataclass(frozen=True)
+class AudioBearing:
+    side: str = "unknown"
+    level: float = 0.0
+    confidence: float = 0.0
+    timestamp: float = 0.0
+    directional: bool = False
+
+    def as_dict(self) -> dict:
+        return {
+            "side": self.side,
+            "level": round(self.level, 4),
+            "confidence": round(self.confidence, 3),
+            "timestamp": self.timestamp,
+            "directional": self.directional,
+        }
+
+
+class StereoBearingEstimator:
+    def __init__(self):
+        self._window: deque[tuple[float, float, float]] = deque(maxlen=BEARING_WINDOW_CHUNKS)
+        self._last_voiced = 0.0
+        self._lock = threading.Lock()
+
+    def process(self, chunk: bytes) -> bytes:
+        samples = np.frombuffer(chunk, dtype="<i2")
+        if samples.size < 2:
+            return b""
+        samples = samples[: samples.size - samples.size % 2].reshape(-1, 2)
+        left = samples[:, 0].astype(np.float32) / 32768.0
+        right = samples[:, 1].astype(np.float32) / 32768.0
+        mono = np.clip((left + right) * 16384.0, -32768, 32767).astype("<i2")
+
+        left_rms = float(np.sqrt(np.mean(left * left)))
+        right_rms = float(np.sqrt(np.mean(right * right)))
+        level = max(left_rms, right_rms)
+        if level >= BEARING_MIN_LEVEL:
+            difference_rms = float(np.sqrt(np.mean((left - right) ** 2)))
+            with self._lock:
+                self._window.append((left_rms, right_rms, difference_rms))
+                self._last_voiced = time.time()
+        return mono.tobytes()
+
+    def latest(self) -> AudioBearing:
+        with self._lock:
+            window = tuple(self._window)
+            timestamp = self._last_voiced
+        if not window or time.time() - timestamp > BEARING_STALE_SECONDS:
+            return AudioBearing()
+
+        left = float(np.sqrt(np.mean([sample[0] ** 2 for sample in window])))
+        right = float(np.sqrt(np.mean([sample[1] ** 2 for sample in window])))
+        difference = float(np.sqrt(np.mean([sample[2] ** 2 for sample in window])))
+        total = left + right
+        if total <= 0.0:
+            return AudioBearing()
+
+        directional = difference / total >= BEARING_CHANNEL_DIFFERENCE
+        imbalance = (right - left) / total
+        if not directional:
+            side = "unknown"
+        elif imbalance < -BEARING_DEADBAND:
+            side = "left"
+        elif imbalance > BEARING_DEADBAND:
+            side = "right"
+        else:
+            side = "center"
+        confidence = min(1.0, abs(imbalance) / max(BEARING_DEADBAND, 1e-6)) if directional else 0.0
+        return AudioBearing(
+            side=side,
+            level=max(left, right),
+            confidence=confidence,
+            timestamp=timestamp,
+            directional=directional,
+        )
+
 
 STT_BACKENDS = frozenset({"elevenlabs_batch", "gemini", "elevenlabs", "openai"})
 BATCH_BACKENDS = frozenset({"elevenlabs_batch", "gemini"})
@@ -116,6 +217,11 @@ class MicroInput(InputDevice):
         self._is_connected = False
         self._reconnect_delay = 1  # Start with 1 second
         self._max_reconnect_delay = 30  # Max 30 seconds between retries
+        self._caller_audio_pub = None
+        self._capture_audio_pub = None
+        self._say_publisher = None
+        self._awaiting_direction_until = 0.0
+        self._caller_direction: str | None = None
         # Initialize logger wrapper (will be updated when set_logger is called)
         self.logger = UniversalLogger(enabled=False)
 
@@ -149,6 +255,8 @@ class MicroInput(InputDevice):
         if not self.proxy:
             raise RuntimeError("no STT configuration (the proxy client was never created)")
 
+        self._ensure_publishers()
+        self._awaiting_direction_until = 0.0
         try:
             self.mic = self._start_audio_source()
             self.logger.info(f"🎙️ Microphone started (rate: {DEFAULT_SAMPLE_RATE}, channels: {DEFAULT_CHANNELS})")
@@ -170,7 +278,12 @@ class MicroInput(InputDevice):
 
         self.logger.info(f"🎙️ Using audio device: {device or 'default'}")
         mic = ArecordStreamer(self.logger)
-        mic.start(device=device or "default", sample_rate=DEFAULT_SAMPLE_RATE, channels=DEFAULT_CHANNELS)
+        mic.start(
+            device=device or "default",
+            sample_rate=DEFAULT_SAMPLE_RATE,
+            channels=DEFAULT_CHANNELS,
+            capture_channels=DEFAULT_CAPTURE_CHANNELS,
+        )
         return mic
 
     def _on_elevenlabs_message(self, ws, message: str):
@@ -393,12 +506,15 @@ class MicroInput(InputDevice):
         client, detector = self.client, self._vad_detector
         if client is None:
             return
+        bearing = self._audio_bearing()
         frame = {
             "kind": "vad_status",
             "backend": self._backend,
             "engine": self._vad_engine,
             "last_transcript": self._last_transcript,
+            "audio": bearing.as_dict(),
         }
+        self._publish_caller_audio(bearing)
         if self._backend not in BATCH_BACKENDS or detector is None:
             self.send_data({**frame, "engine": VENDOR_VAD_ENGINE}, data_type="telemetry")
             return
@@ -413,6 +529,49 @@ class MicroInput(InputDevice):
             },
             data_type="telemetry",
         )
+
+    def _audio_bearing(self) -> AudioBearing:
+        if self.mic is None:
+            return AudioBearing()
+        latest = getattr(self.mic, "audio_bearing", None)
+        return latest if isinstance(latest, AudioBearing) else AudioBearing()
+
+    def _publish_caller_audio(self, bearing: AudioBearing) -> None:
+        if self.node is None:
+            return
+        from std_msgs.msg import String
+
+        if self._caller_audio_pub is None:
+            self._caller_audio_pub = self.node.create_publisher(String, CALLER_AUDIO_TOPIC, 10)
+        self._caller_audio_pub.publish(String(data=json.dumps(bearing.as_dict())))
+
+    def _publish_capture_audio(self, chunk: bytes) -> None:
+        self._ensure_publishers()
+        if self._capture_audio_pub is None:
+            return
+        from std_msgs.msg import String
+
+        self._capture_audio_pub.publish(String(data=base64.b64encode(chunk).decode("ascii")))
+
+    def _ensure_publishers(self) -> None:
+        if self.node is None:
+            return
+        from std_msgs.msg import String
+
+        if self._caller_audio_pub is None:
+            self._caller_audio_pub = self.node.create_publisher(String, CALLER_AUDIO_TOPIC, 10)
+        if self._capture_audio_pub is None:
+            self._capture_audio_pub = self.node.create_publisher(String, MIC_CAPTURE_TOPIC, 10)
+        if self._say_publisher is None:
+            self._say_publisher = self.node.create_publisher(String, "/brain/tts", 10)
+
+    def _say(self, text: str) -> None:
+        self._ensure_publishers()
+        if self._say_publisher is None:
+            return
+        from std_msgs.msg import String
+
+        self._say_publisher.publish(String(data=text))
 
     def _connect_elevenlabs(self) -> str:
         """Open a Scribe realtime session. Returns the model id."""
@@ -541,10 +700,6 @@ class MicroInput(InputDevice):
                     continue
 
                 try:
-                    # Skip sending if not connected (reconnection in progress)
-                    if not self._is_connected:
-                        continue
-
                     # Status rides the chunk cadence for every backend — the webapp
                     # marks the voice panel stale after 2.5 s of silence — and keeps
                     # flowing while ducking, so the DUCKING chip stays live too.
@@ -560,6 +715,9 @@ class MicroInput(InputDevice):
                         continue
                     ducking_logged = False
 
+                    self._publish_capture_audio(chunk)
+                    if not self._is_connected:
+                        continue
                     self._send_chunk(chunk)
                     chunks_sent += 1
 
@@ -667,12 +825,56 @@ class MicroInput(InputDevice):
 
     def _on_transcript(self, text: str) -> None:
         """Called when transcript is ready."""
-        if text:
-            self.logger.info(f"🎤 Transcript: {text}")
+        text = text.strip()
+        if not text:
+            return
 
-            self.send_data(text, data_type="chat_in")
-            self._last_transcript = text
-            self._send_vad_status()
+        self.logger.info(f"🎤 Transcript: {text}")
+        self._last_transcript = text
+        self._send_vad_status()
+
+        if WAKE_NAME_PATTERN.search(text):
+            self._awaiting_direction_until = time.monotonic() + CALLER_DIRECTION_TIMEOUT
+            self._say("Yes, where are you?")
+            return
+
+        direction = self._direction_in(text)
+        if time.monotonic() < self._awaiting_direction_until:
+            if direction is None:
+                self._say("Please say left, right, in front, or behind.")
+                self._awaiting_direction_until = time.monotonic() + CALLER_DIRECTION_TIMEOUT
+                return
+            self._caller_direction = direction
+            self._awaiting_direction_until = 0.0
+            self._send_caller_command("find", direction)
+            return
+
+        if APPROACH_PATTERN.search(text):
+            direction = direction or self._caller_direction
+            if direction is None:
+                self._awaiting_direction_until = time.monotonic() + CALLER_DIRECTION_TIMEOUT
+                self._say("Which direction are you?")
+                return
+            self._send_caller_command("approach", direction)
+            return
+
+        self.send_data(text, data_type="chat_in")
+
+    @staticmethod
+    def _direction_in(text: str) -> str | None:
+        for direction, pattern in DIRECTION_PATTERNS:
+            if pattern.search(text):
+                return direction
+        return None
+
+    def _send_caller_command(self, action: str, direction: str) -> None:
+        bearing = self._audio_bearing()
+        command = (
+            f"Caller interaction request: action={action}, direction={direction}, "
+            f"audio_side={bearing.side}, audio_confidence={bearing.confidence:.2f}. "
+            "Call caller_interaction with these values now."
+        )
+        self.send_data(command, data_type="chat_in")
 
 
 # ========== Audio Streaming Helpers ==========
@@ -721,38 +923,36 @@ class ArecordStreamer:
         self.logger = logger
         self.sample_rate = DEFAULT_SAMPLE_RATE
         self.channels = DEFAULT_CHANNELS
+        self.capture_channels = DEFAULT_CHANNELS
+        self._bearing = StereoBearingEstimator()
         self._reader_thread: threading.Thread | None = None
         self._stop = threading.Event()
 
-    def start(self, device: str = "default", sample_rate: int = DEFAULT_SAMPLE_RATE, channels: int = DEFAULT_CHANNELS):
+    @property
+    def audio_bearing(self) -> AudioBearing:
+        return self._bearing.latest() if self.capture_channels == 2 else AudioBearing()
+
+    def start(
+        self,
+        device: str = "default",
+        sample_rate: int = DEFAULT_SAMPLE_RATE,
+        channels: int = DEFAULT_CHANNELS,
+        capture_channels: int = DEFAULT_CAPTURE_CHANNELS,
+    ):
         self.sample_rate = int(sample_rate)
         self.channels = int(channels)
-        # arecord raw PCM 16-bit, stdout
-        cmd = [
-            "arecord",
-            "-D",
-            str(device),
-            "-f",
-            "S16_LE",
-            "-r",
-            str(self.sample_rate),
-            "-c",
-            str(self.channels),
-            "-t",
-            "raw",
-            "-q",  # quiet
-            "-",
-        ]
-        self.logger.info(f"🎙️ Starting arecord: {' '.join(cmd)}")
-        self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+        self.capture_channels = int(capture_channels)
+        self._proc = self._start_arecord(device)
         if not self._proc or not self._proc.stdout:
             raise RuntimeError("Failed to start arecord process")
-        self.logger.info(f"🎙️ arecord process started (pid: {self._proc.pid})")
+        self.logger.info(
+            f"🎙️ arecord process started (pid: {self._proc.pid}, capture_channels: {self.capture_channels})"
+        )
 
         def reader():
             try:
                 bytes_per_sample = 2
-                frame_bytes = int(self.sample_rate * CHUNK_DURATION_SEC * self.channels * bytes_per_sample)
+                frame_bytes = int(self.sample_rate * CHUNK_DURATION_SEC * self.capture_channels * bytes_per_sample)
                 self.logger.info(f"🎙️ Reader thread started, reading {frame_bytes} bytes per chunk")
                 chunks_read = 0
                 # bufsize=0 makes stdout a raw FileIO: read(n) returns *at most* n
@@ -772,7 +972,10 @@ class ArecordStreamer:
                     pending.extend(buf)
                     if len(pending) < frame_bytes:
                         continue
-                    chunk, pending = bytes(pending), bytearray()
+                    captured, pending = bytes(pending), bytearray()
+                    chunk = self._bearing.process(captured) if self.capture_channels == 2 else captured
+                    if not chunk:
+                        continue
                     chunks_read += 1
                     if chunks_read == 1:
                         self.logger.info(f"🎙️ First audio chunk received ({len(chunk)} bytes)")
@@ -785,6 +988,34 @@ class ArecordStreamer:
 
         self._reader_thread = threading.Thread(target=reader, daemon=True)
         self._reader_thread.start()
+
+    def _start_arecord(self, device: str) -> subprocess.Popen:
+        errors = []
+        for capture_channels in dict.fromkeys((self.capture_channels, self.channels)):
+            cmd = [
+                "arecord",
+                "-D",
+                str(device),
+                "-f",
+                "S16_LE",
+                "-r",
+                str(self.sample_rate),
+                "-c",
+                str(capture_channels),
+                "-t",
+                "raw",
+                "-q",
+                "-",
+            ]
+            self.logger.info(f"🎙️ Starting arecord: {' '.join(cmd)}")
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+            time.sleep(0.1)
+            if proc.poll() is None:
+                self.capture_channels = capture_channels
+                return proc
+            stderr = proc.stderr.read().decode() if proc.stderr else ""
+            errors.append(stderr.strip())
+        raise RuntimeError(f"arecord could not open {device}: {'; '.join(error for error in errors if error)}")
 
     def stop(self):
         self._stop.set()
