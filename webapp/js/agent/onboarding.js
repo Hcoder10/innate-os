@@ -74,8 +74,12 @@ const STEPS = {
     dialogue: WELCOME_DIALOGUE,
     completeOn: "action",
     recap: "greeted them and waved",
+    // No approach step: the 0.2m nudge this used to open with cost seven to
+    // sixteen seconds of silence before the first word, and it displaced the
+    // robot a little further every run until it wedged against something and
+    // started failing outright. Appearing and speaking is the moment; creeping
+    // forward first was never part of it.
     actions: () => [
-      { type: "skill", name: "move_straight", inputs: { distance: 0.2, speed: 0.12 } },
       { type: "speak", text: WELCOME_LINES[0] },
       // Queued the moment the opener starts playing, so its synthesis overlaps
       // the opener instead of landing in the pause after it.

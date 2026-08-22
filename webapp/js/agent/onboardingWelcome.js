@@ -15,6 +15,12 @@ import { onTtsPlaybackStart } from "../ttsAudio.js";
 
 // Matches the panel reveal transition in app.css.
 const UI_SETTLE_MS = 260;
+// A spoken line normally starts playing within ~2s (synthesis plus transfer).
+// Past this the script stops waiting and carries on: playback start is a
+// convenience for syncing gestures, and several ordinary situations never
+// deliver it at all -- another tab holds the shared speaker lock, autoplay is
+// blocked, a clip fails to decode. None of those should strand the tour.
+const SPEECH_START_TIMEOUT_MS = 6000;
 
 /**
  * @typedef {{
@@ -64,7 +70,19 @@ export function createScriptedActionRunner(rosClient) {
         resolve();
         return;
       }
-      resolveSpeechStart = () => resolve();
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (resolveSpeechStart === finish) resolveSpeechStart = null;
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        console.warn("[onboarding] no speech playback heard — continuing without it");
+        finish();
+      }, SPEECH_START_TIMEOUT_MS);
+      resolveSpeechStart = finish;
     });
   }
 
