@@ -107,7 +107,11 @@ export function createTtsBar(parent, rosClient) {
   /** @param {KeyboardEvent} e */
   function focusSpeechInput(e) {
     if (e.key !== "/" || e.repeat || e.altKey || e.ctrlKey || e.metaKey) return;
-    if (input.disabled || document.activeElement !== document.body) return;
+    const active = document.activeElement;
+    const typing =
+      active instanceof HTMLElement &&
+      (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable);
+    if (input.disabled || typing) return;
     e.preventDefault();
     input.focus();
   }
