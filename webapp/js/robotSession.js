@@ -19,7 +19,8 @@ import { getConfig } from "./config.js";
  * @typedef {{
  *   audioEl: HTMLAudioElement | null,
  *   destroy: () => void,
- *   setOnboardingStep?: (step: "await_hello" | "welcome" | "complete") => void
+ *   setOnboardingStep?: (step: "await_hello" | "welcome" | "tour_cameras"
+ *     | "tour_telemetry" | "tour_chat" | "complete") => void
  * }} RobotStage
  */
 

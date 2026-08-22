@@ -367,7 +367,9 @@ export function createSimStage(
   };
   const setOnboardingStep = (step: OnboardingStep) => {
     if (step === onboardingStep) return;
-    const revealBackground = onboardingStep === "welcome" && step === "complete";
+    // Any step of the tour, not just the welcome: the world fades in once,
+    // when onboarding hands over.
+    const revealBackground = onboardingStep !== "complete" && step === "complete";
     backgroundFade?.remove();
     backgroundFade = null;
 

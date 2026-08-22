@@ -50,7 +50,6 @@ class BrainLifecycle:
             self._logger.warn("[BrainClient] No directive configured. Brain remains inactive.")
             return
         self._logger.info(f"[BrainClient] Activating brain with directive: {self._state.current_directive.id}")
-        self._state.is_onboarding_input = False
         self._state.is_brain_active = True
         self._camera.start()
         self._pose.start()
@@ -80,40 +79,10 @@ class BrainLifecycle:
         self._pose.stop()
         self._runner.interrupt_for_deactivation()
         self._gaze.stop()
-        if self._state.is_onboarding_input:
-            self._publish_onboarding_inputs()
-        else:
-            self._active_inputs_pub.publish(String(data=json.dumps({"inputs": []})))
+        self._active_inputs_pub.publish(String(data=json.dumps({"inputs": []})))
         self._stop_robot()
         self._publish_status()
         self._chat.emit_system(f"{self._directive_label()} stopped.")
-
-    def set_onboarding_input(self, enabled: bool) -> None:
-        """Open MicroInput for STT without starting BrainAgent.
-
-        Transcripts still land on /brain/chat_in for the web onboarding engine;
-        ``_on_chat_in`` ignores them while this flag is set.
-        """
-        if enabled:
-            if self._state.is_brain_active:
-                self.deactivate_brain()
-            self._state.is_onboarding_input = True
-            self._publish_onboarding_inputs()
-            self._logger.info("[BrainClient] Onboarding input mode enabled (micro only)")
-            self._publish_status()
-            return
-        if not self._state.is_onboarding_input:
-            return
-        self._state.is_onboarding_input = False
-        if self._state.is_brain_active:
-            self.activate_directive_inputs()
-        else:
-            self._active_inputs_pub.publish(String(data=json.dumps({"inputs": []})))
-        self._logger.info("[BrainClient] Onboarding input mode disabled")
-        self._publish_status()
-
-    def _publish_onboarding_inputs(self) -> None:
-        self._active_inputs_pub.publish(String(data=json.dumps({"inputs": ["micro"]})))
 
     # --- reset ---
     def perform_brain_reset(self, memory_state: str) -> None:

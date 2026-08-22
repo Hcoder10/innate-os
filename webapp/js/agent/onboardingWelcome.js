@@ -1,6 +1,8 @@
 // @ts-check
 // Deterministic scripted actions for onboarding: exact /brain/tts lines and
 // sequential /execute_skill goals. Motion gated on browser TTS playback start.
+// A "ui" action carries its own effect, which is how a tour step reveals the
+// panel it is pointing at without this runner knowing anything about the page.
 
 import {
   AVAILABLE_SKILLS_TOPIC,
@@ -11,6 +13,9 @@ import {
 } from "../constants.js";
 import { onTtsPlaybackStart } from "../ttsAudio.js";
 
+// Matches the panel reveal transition in app.css.
+const UI_SETTLE_MS = 260;
+
 /**
  * @typedef {{
  *   type: "speak",
@@ -20,6 +25,9 @@ import { onTtsPlaybackStart } from "../ttsAudio.js";
  *   name: string,
  *   inputs?: Record<string, unknown>,
  *   afterSpeechStart?: boolean,
+ * } | {
+ *   type: "ui",
+ *   apply: () => void,
  * }} ScriptedAction
  */
 
@@ -109,6 +117,13 @@ export function createScriptedActionRunner(rosClient) {
         rosClient.publish(TTS_TOPIC, { data: action.text });
         await speechStarted;
         heardSpeech = id === generation;
+        continue;
+      }
+      if (action.type === "ui") {
+        action.apply();
+        // Let the reveal's CSS transition start before the next line lands, so
+        // the panel is on screen while the robot talks about it.
+        await sleep(UI_SETTLE_MS);
         continue;
       }
       if (action.type === "skill") {

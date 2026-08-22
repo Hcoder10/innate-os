@@ -113,7 +113,16 @@ const TOP_FALLBACK_HEIGHT_M = 12;
 // Robot-mounted camera views: frames, axis conventions, FOV and near plane
 // match the driver's cameras (mars_sim_driver.core's CAMERAS).
 export type CameraView = "orbit" | "main" | "arm";
-export type OnboardingStep = "await_hello" | "welcome" | "complete";
+// The tour steps between the greeting and the handoff all behave alike here:
+// everything but "complete" keeps the world hidden, so the robot stays on the
+// blank onboarding background while the UI panels appear one by one.
+export type OnboardingStep =
+  | "await_hello"
+  | "welcome"
+  | "tour_cameras"
+  | "tour_telemetry"
+  | "tour_chat"
+  | "complete";
 // Track mars_sim_driver/constants.py: per-camera FOVs matching what the
 // driver renders (the head and wrist are different physical lenses), so the
 // operator's preview frames exactly what the robot consumes.

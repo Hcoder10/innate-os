@@ -32,8 +32,6 @@ class RunningSkill:
 class BrainState:
     # --- lifecycle flags ---
     is_brain_active: bool = False
-    # MicroInput open for STT → /brain/chat_in without BrainAgent consuming turns.
-    is_onboarding_input: bool = False
 
     # --- runtime-toggleable logging (via /brain/set_logging_config) ---
     log_everything: bool = False

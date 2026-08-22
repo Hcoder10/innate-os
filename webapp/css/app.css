@@ -6303,14 +6303,14 @@ select.skill-input {
 }
 
 .agent-cockpit.agent-onboarding-enabled
-  > :not(.agent-mic-control):not(.agent-onboarding-nudge) {
+  > :not(.agent-mic-control):not(.agent-onboarding-nudge):not(.agent-onboarding-skip) {
   transition:
     opacity 220ms cubic-bezier(0.215, 0.61, 0.355, 1),
     visibility 0s;
 }
 
 .agent-cockpit.agent-onboarding-active
-  > :not(.agent-mic-control):not(.agent-onboarding-nudge) {
+  > :not(.agent-mic-control):not(.agent-onboarding-nudge):not(.agent-onboarding-skip) {
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
@@ -6355,7 +6355,7 @@ select.skill-input {
     visibility 0s;
 }
 
-.agent-cockpit.agent-onboarding-active.agent-onboarding-welcome > .video-stage {
+.agent-cockpit.agent-onboarding-active.agent-onboarding-staged > .video-stage {
   visibility: visible;
   opacity: 1;
   pointer-events: auto;
@@ -6367,7 +6367,7 @@ select.skill-input {
   will-change: opacity;
 }
 
-.agent-cockpit.agent-onboarding-active.agent-onboarding-welcome
+.agent-cockpit.agent-onboarding-active.agent-onboarding-staged
   > .video-stage
   > canvas {
   opacity: 1;
@@ -6392,6 +6392,57 @@ select.skill-input {
 
 .agent-cockpit.agent-onboarding-active .video-stage > :not(canvas) {
   display: none;
+}
+
+/* Tour reveals: each step un-hides one panel and it stays up for the rest of
+   the tour, so the page assembles itself a piece at a time. The blanket hide
+   above is what these override. */
+.agent-cockpit.agent-onboarding-active.agent-onboarding-show-cameras
+  > .overlay-stack-top-left,
+.agent-cockpit.agent-onboarding-active.agent-onboarding-show-telemetry
+  > .agent-telemetry-overlay,
+.agent-cockpit.agent-onboarding-active.agent-onboarding-show-chat > .agent-panel {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  animation: agent-onboarding-reveal 260ms cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+
+@keyframes agent-onboarding-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Offered only when the greeting goes unheard — the robot-level mic toggle can
+   veto the mic device, and the first step has no other way forward. */
+.agent-onboarding-skip {
+  position: absolute;
+  left: 50%;
+  bottom: 214px;
+  z-index: 9;
+  padding: 6px 14px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 6%);
+  color: rgb(231 231 234 / 72%);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transform: translateX(-50%);
+  transition: color 160ms ease, background-color 160ms ease;
+}
+
+.agent-onboarding-skip:hover {
+  background: rgb(255 255 255 / 10%);
+  color: rgb(255 255 255 / 92%);
 }
 
 .agent-cockpit .cam-strip {
@@ -6425,11 +6476,20 @@ select.skill-input {
   .sim-placement-switch::before,
   .sim-placement-switch button,
   .agent-cockpit.agent-onboarding-enabled
-    > :not(.agent-mic-control):not(.agent-onboarding-nudge),
+    > :not(.agent-mic-control):not(.agent-onboarding-nudge):not(.agent-onboarding-skip),
   .agent-cockpit.agent-onboarding-active .video-stage > canvas,
   .sim-onboarding-background-fade,
   .agent-onboarding-nudge {
     transition: none;
+  }
+
+  .agent-cockpit.agent-onboarding-active.agent-onboarding-show-cameras
+    > .overlay-stack-top-left,
+  .agent-cockpit.agent-onboarding-active.agent-onboarding-show-telemetry
+    > .agent-telemetry-overlay,
+  .agent-cockpit.agent-onboarding-active.agent-onboarding-show-chat
+    > .agent-panel {
+    animation: none;
   }
 
   .telemetry-value-track {
