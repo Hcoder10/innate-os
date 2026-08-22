@@ -6411,6 +6411,9 @@ select.skill-input {
 .agent-cockpit {
   --agent-dock-width: 360px;
   --agent-dock-gutter: 18px;
+  /* Inset of every floating control from the feed frame's edge. The camera
+     strip set the precedent; the rest match it. */
+  --agent-overlay-inset: 14px;
   --agent-telemetry-height: 56px;
 }
 
@@ -6874,8 +6877,15 @@ select.skill-input {
   white-space: nowrap;
 }
 
+/* The agent page re-parents this stack out of the feed frame onto the cockpit
+   (see agent/main.js), so its offsets have to clear the gutter to reach the
+   frame's edge — same as the challenge dock and Inspect Brain. Hidden below
+   641px, so the gutter always applies here. */
 .agent-cockpit .sim-debug-stack {
-  bottom: 14px !important;
+  bottom: calc(
+    var(--agent-dock-gutter) + var(--agent-overlay-inset)
+  ) !important;
+  left: calc(var(--agent-dock-gutter) + var(--agent-overlay-inset));
 }
 
 /* Agent page keeps every camera live (no off pill), so any off tile here is the
@@ -8777,6 +8787,61 @@ select.skill-input {
 
   .agent-cockpit.agent-sim .video-stage > :is(canvas, video) {
     border-radius: 0;
+  }
+}
+
+/* Wide-but-short screens: the 4:3 frame is derived from whatever width the dock
+   leaves over, so past a certain aspect ratio it is taller than the stage and
+   its bottom corners get cropped. Invert the dependency — size the frame from
+   the available height, then define the dock as the width left over. Every rule
+   that already anchors to --agent-dock-width (the panel, the camera strip, the
+   Inspect Brain toggle) then follows the frame's edge for free. Below this the
+   dock's own width still binds, so the two agree at the boundary. */
+@media (min-width: 1401px) {
+  .agent-cockpit.agent-sim {
+    /* Fixed dock width, kept as its own name so --agent-dock-width can be
+       derived below without a circular reference. */
+    --agent-dock-base: 388px;
+    --agent-frame-fit: calc((100dvh - 2 * var(--agent-dock-gutter)) * 4 / 3);
+    --agent-frame-max: calc(
+      100% - var(--agent-dock-base) - 3 * var(--agent-dock-gutter)
+    );
+    --agent-frame-width: min(var(--agent-frame-fit), var(--agent-frame-max));
+    --agent-dock-width: calc(
+      100% - var(--agent-frame-width) - 3 * var(--agent-dock-gutter)
+    );
+  }
+}
+
+/* Floating controls all sit --agent-overlay-inset inside the frame's edge.
+   They live in two different containing blocks — the scene-setup stack is a
+   child of the stage, while the challenge dock and Inspect Brain hang off the
+   cockpit — so the cockpit-anchored pair add the gutter to reach the same edge
+   the stage-anchored ones start from. */
+@media (min-width: 641px) {
+  .agent-cockpit.agent-sim .overlay-stack-top-left {
+    top: calc(var(--agent-dock-gutter) + var(--agent-overlay-inset));
+    right: calc(
+      var(--agent-dock-width) + 2 * var(--agent-dock-gutter) +
+        var(--agent-overlay-inset)
+    );
+  }
+
+  .agent-cockpit .agent-stage-view-toggle {
+    right: calc(
+      var(--agent-dock-width) + 2 * var(--agent-dock-gutter) +
+        var(--agent-overlay-inset)
+    );
+    bottom: calc(var(--agent-dock-gutter) + var(--agent-overlay-inset));
+  }
+
+  /* Sits to the right of the scene-setup button, which is 56px wide and starts
+     one inset in from the frame's left edge. */
+  .agent-cockpit .agent-challenge-dock {
+    bottom: calc(var(--agent-dock-gutter) + var(--agent-overlay-inset));
+    left: calc(
+      var(--agent-dock-gutter) + var(--agent-overlay-inset) + 56px + 10px
+    );
   }
 }
 
