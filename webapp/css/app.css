@@ -6302,15 +6302,20 @@ select.skill-input {
   --agent-dock-width: 360px;
 }
 
+/* The onboarding hide/reveal pair is a specificity balance: this blanket rule
+   scores three classes (a :not() list counts once, as its most specific
+   argument), and every reveal below scores four, so reveals win on specificity
+   rather than on source order. Adding a chained :not() here would outscore them
+   and blank the page. */
 .agent-cockpit.agent-onboarding-enabled
-  > :not(.agent-mic-control):not(.agent-onboarding-nudge):not(.agent-onboarding-skip) {
+  > :not(.agent-mic-control, .agent-onboarding-nudge, .agent-onboarding-skip) {
   transition:
     opacity 220ms cubic-bezier(0.215, 0.61, 0.355, 1),
     visibility 0s;
 }
 
 .agent-cockpit.agent-onboarding-active
-  > :not(.agent-mic-control):not(.agent-onboarding-nudge):not(.agent-onboarding-skip) {
+  > :not(.agent-mic-control, .agent-onboarding-nudge, .agent-onboarding-skip) {
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
@@ -6476,7 +6481,7 @@ select.skill-input {
   .sim-placement-switch::before,
   .sim-placement-switch button,
   .agent-cockpit.agent-onboarding-enabled
-    > :not(.agent-mic-control):not(.agent-onboarding-nudge):not(.agent-onboarding-skip),
+    > :not(.agent-mic-control, .agent-onboarding-nudge, .agent-onboarding-skip),
   .agent-cockpit.agent-onboarding-active .video-stage > canvas,
   .sim-onboarding-background-fade,
   .agent-onboarding-nudge {
