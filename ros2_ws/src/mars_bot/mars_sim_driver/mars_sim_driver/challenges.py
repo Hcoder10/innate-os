@@ -290,11 +290,25 @@ class Goal:
 
 
 @dataclass
+class EnvironmentReply:
+    """One utterance spoken by a simulated character.
+
+    The challenge owns the words and voice choice; the generic bridge owns
+    delivery.  In simulator mode the brain speaks this through Cartesia and
+    releases the transcript to normal chat only after playback completes.
+    """
+
+    speaker: str
+    text: str
+    voice_id: str
+
+
+@dataclass
 class RuntimeResult:
     """Environment events and chat replies produced by one runtime update."""
 
     events: list[dict] = field(default_factory=list)
-    replies: list[str] = field(default_factory=list)
+    replies: list[str | EnvironmentReply] = field(default_factory=list)
 
 
 class ChallengeRuntime:
@@ -431,6 +445,7 @@ class ChallengeEngine:
         # aborting a challenge increments the token, so a delayed reply from an
         # old scene can never speak inside a new one.
         self._run_token = 0
+        self._speech_serial = 0
         self._chat_inputs: deque[tuple[int, dict]] = deque()
         self._chat_ready = threading.Condition(self._mutex)
         # Serializes the final token-check + websocket send against run
@@ -612,6 +627,15 @@ class ChallengeEngine:
             publish()
             return True
 
+    def requeue_chat_input_if_current(self, token: int, payload: dict) -> bool:
+        """Release a spoken environment reply into chat after its audio ends."""
+        with self._chat_ready:
+            if self.active is None or self.state not in ("running", "passed") or token != self._run_token:
+                return False
+            self._chat_inputs.append((token, payload))
+            self._chat_ready.notify_all()
+            return True
+
     # -- evaluation (physics thread, after state gathering; no sim access) --
 
     def tick(
@@ -655,16 +679,30 @@ class ChallengeEngine:
                                 raise TypeError("challenge runtime events must be dictionaries")
                             events.append({**event, "_source": _ENVIRONMENT_EVENT_SOURCE})
                         for reply in runtime_result.replies:
-                            if not isinstance(reply, str):
-                                raise TypeError("challenge runtime replies must be strings")
+                            if isinstance(reply, EnvironmentReply):
+                                self._speech_serial += 1
+                                text = f"{reply.speaker}: {reply.text}"
+                                speech = {
+                                    "id": f"{self._run_token}:{self._speech_serial}",
+                                    "text": reply.text,
+                                    "voice_id": reply.voice_id,
+                                }
+                            elif isinstance(reply, str):
+                                text = reply
+                                speech = None
+                            else:
+                                raise TypeError("challenge runtime replies must be strings or EnvironmentReply values")
+                            payload = {
+                                "text": text,
+                                "sender": "user",
+                                "timestamp": time.time(),
+                            }
+                            if speech is not None:
+                                payload["_environment_speech"] = speech
                             self._chat_inputs.append(
                                 (
                                     self._run_token,
-                                    {
-                                        "text": reply,
-                                        "sender": "user",
-                                        "timestamp": time.time(),
-                                    },
+                                    payload,
                                 )
                             )
                         if runtime_result.replies:
@@ -777,6 +815,8 @@ class ChallengeChatBridge:
 
     CHAT_OUT = "/brain/chat_out"
     CHAT_IN = "/brain/chat_in"
+    ENVIRONMENT_SPEECH_DONE = "/brain/environment_speech_done"
+    ENVIRONMENT_SPEECH_SENDER = "environment_speech"
 
     @staticmethod
     def _send_with_timeout(connection, message: str, timeout_s: float = CHAT_WRITE_TIMEOUT_S) -> None:
@@ -814,6 +854,9 @@ class ChallengeChatBridge:
     def __init__(self, engine: ChallengeEngine, url: str = "ws://127.0.0.1:9090"):
         self.engine = engine
         self.url = url
+        self._pending_speech: dict[str, tuple[int, dict]] = {}
+        self._pending_speech_lock = threading.Lock()
+        self._speech_done_ready = threading.Event()
         threading.Thread(target=self._subscribe, daemon=True).start()
         threading.Thread(target=self._publish, daemon=True).start()
 
@@ -832,6 +875,16 @@ class ChallengeChatBridge:
         timestamp = payload.get("timestamp")
         return text, float(timestamp) if isinstance(timestamp, int | float) else None
 
+    @classmethod
+    def environment_speech_done(cls, message: str) -> str | None:
+        """Decode one completion acknowledgment from the brain's TTS worker."""
+        frame = json.loads(message)
+        if frame.get("topic") != cls.ENVIRONMENT_SPEECH_DONE:
+            return None
+        payload = json.loads(frame["msg"]["data"])
+        request_id = payload.get("id")
+        return request_id if isinstance(request_id, str) and request_id else None
+
     def _subscribe(self) -> None:
         try:
             from websockets.sync.client import connect
@@ -842,12 +895,23 @@ class ChallengeChatBridge:
         while True:
             try:
                 with connect(self.url, open_timeout=5) as ws:
-                    ws.send(json.dumps({"op": "subscribe", "topic": self.CHAT_OUT, "type": "std_msgs/String"}))
+                    for topic in (self.CHAT_OUT, self.ENVIRONMENT_SPEECH_DONE):
+                        ws.send(json.dumps({"op": "subscribe", "topic": topic, "type": "std_msgs/String"}))
+                    self._speech_done_ready.set()
                     if not announced:
                         print(f"[challenges] environment chat listening ({self.url})", flush=True)
                         announced = True
                     for message in ws:
                         try:
+                            request_id = self.environment_speech_done(message)
+                            if request_id is not None:
+                                with self._pending_speech_lock:
+                                    pending = self._pending_speech.pop(request_id, None)
+                                if pending is not None:
+                                    token, payload = pending
+                                    payload["timestamp"] = time.time()
+                                    self.engine.requeue_chat_input_if_current(token, payload)
+                                continue
                             speech = self.robot_speech(message)
                             if speech is not None:
                                 self.engine.post_robot_speech(*speech)
@@ -855,6 +919,8 @@ class ChallengeChatBridge:
                             print(f"[challenges] ignoring chat event: {exc!r}", flush=True)
             except Exception:  # noqa: BLE001,S110 -- rosbridge down/restarting; retry
                 pass
+            finally:
+                self._speech_done_ready.clear()
             time.sleep(5)
 
     def _publish(self) -> None:
@@ -880,11 +946,29 @@ class ChallengeChatBridge:
                         if not announced:
                             print(f"[challenges] environment replies connected ({self.url})", flush=True)
                             announced = True
+                    outbound_payload = dict(payload)
+                    speech = outbound_payload.pop("_environment_speech", None)
+                    body = (
+                        {**speech, "sender": self.ENVIRONMENT_SPEECH_SENDER}
+                        if isinstance(speech, dict)
+                        else outbound_payload
+                    )
+                    if isinstance(speech, dict):
+                        request_id = speech.get("id")
+                        if not isinstance(request_id, str) or not request_id:
+                            raise ValueError("environment speech request has no id")
+                        # The completion subscription must exist before TTS can
+                        # answer; otherwise a fast failure (TTS unavailable)
+                        # could release its one-shot acknowledgment into a void.
+                        if not self._speech_done_ready.wait(5.0):
+                            raise TimeoutError("environment speech completion subscription is unavailable")
+                        with self._pending_speech_lock:
+                            self._pending_speech[request_id] = (token, outbound_payload)
                     frame = json.dumps(
                         {
                             "op": "publish",
                             "topic": self.CHAT_IN,
-                            "msg": {"data": json.dumps(payload)},
+                            "msg": {"data": json.dumps(body)},
                         }
                     )
 

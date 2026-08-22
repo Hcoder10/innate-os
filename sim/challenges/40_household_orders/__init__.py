@@ -6,6 +6,11 @@ from .runtime import HouseholdOrdersRuntime, Resident
 
 RESIDENT_DIALOGUE_RADIUS_M = 2.0
 
+# Stable American-English Cartesia voices recommended for conversational
+# agents. Blake's scan is masculine; Alex's and Casey's are feminine.
+MASCULINE_VOICE_ID = "a5136bf9-224c-4d76-b823-52bd5efcffcc"  # Jameson
+FEMININE_VOICE_ID = "f786b574-daa5-4673-aa0c-cbe3e8534c02"  # Katie
+
 # Orders are deliberately challenge-private: the public roster contains only
 # CHALLENGE.brief, while these facts stay inside this package and are disclosed
 # by each resident through dialogue. Confirmation accepts the exact disclosed
@@ -19,6 +24,7 @@ RESIDENTS = [
         order=(
             "From Chipotle, I'd like a chicken burrito bowl with brown rice, black beans, mild salsa, and no cheese."
         ),
+        voice_id=FEMININE_VOICE_ID,
         accepted_readbacks=("Chipotle chicken bowl with brown rice, black beans, mild salsa, and without cheese.",),
         required_facts=(
             ("Chipotle",),
@@ -38,6 +44,7 @@ RESIDENTS = [
             "From Sweetgreen, I'd like the Harvest Bowl with roasted chicken, "
             "no goat cheese, and the balsamic vinaigrette on the side."
         ),
+        voice_id=MASCULINE_VOICE_ID,
         required_facts=(
             ("Sweetgreen",),
             ("Harvest Bowl",),
@@ -53,6 +60,7 @@ RESIDENTS = [
         name="Casey",
         prop="resident_casey",
         order="From Shake Shack, I'd like a ShackBurger with no pickles, cheese fries, and a vanilla shake.",
+        voice_id=FEMININE_VOICE_ID,
         required_facts=(
             ("Shake Shack",),
             ("ShackBurger", "Shack Burger"),

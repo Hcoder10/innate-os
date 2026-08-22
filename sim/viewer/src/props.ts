@@ -41,6 +41,45 @@ export interface PropViewerDef {
   origin?: "base" | "center";
   /** CoACD hull soup (float32 xyz) in the body frame, for the collision overlay. */
   hulls?: string;
+  /** Draw the prop title as a browser-only billboard above the model. */
+  nameLabel?: boolean;
+  /** Body-frame height of the billboard's bottom edge. */
+  nameLabelHeightM?: number;
+}
+
+function makeNameLabel(text: string, heightM: number): THREE.Sprite {
+  const fontPx = 52;
+  const padX = 28;
+  const padY = 16;
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("2D canvas is unavailable for prop name label");
+  context.font = `600 ${fontPx}px system-ui, sans-serif`;
+  canvas.width = Math.ceil(context.measureText(text).width + padX * 2);
+  canvas.height = fontPx + padY * 2;
+
+  context.font = `600 ${fontPx}px system-ui, sans-serif`;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillStyle = "rgba(12, 14, 18, 0.82)";
+  context.beginPath();
+  context.roundRect(0, 0, canvas.width, canvas.height, 18);
+  context.fill();
+  context.fillStyle = "white";
+  context.fillText(text, canvas.width / 2, canvas.height / 2 + 1);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false, toneMapped: false }),
+  );
+  const labelHeightM = 0.22;
+  sprite.scale.set(labelHeightM * (canvas.width / canvas.height), labelHeightM, 1);
+  sprite.center.set(0.5, 0);
+  sprite.position.z = heightM;
+  sprite.renderOrder = 10;
+  return sprite;
 }
 
 /** One prop as the world server describes it (props.py Prop.manifest). */
@@ -256,6 +295,10 @@ export class PropLibrary {
       const placeholder = this.primitiveMesh(info);
       root.add(placeholder);
       if (info.viewer.glb) void this.swapWhenReady(info, root, placeholder);
+    }
+    if (info.viewer.nameLabel) {
+      const fallbackHeight = info.size.length === 3 ? info.size[2] * 2 + 0.08 : 0.5;
+      root.add(makeNameLabel(info.title, info.viewer.nameLabelHeightM ?? fallbackHeight));
     }
     this.onChanged();
     return root;

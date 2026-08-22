@@ -146,6 +146,10 @@ def _robot_frame(sender: str, text: str, topic: str = ChallengeChatBridge.CHAT_O
     )
 
 
+def _topic_frame(topic: str, payload: dict) -> str:
+    return json.dumps({"topic": topic, "msg": {"data": json.dumps(payload)}})
+
+
 def test_bridge_accepts_only_visible_robot_speech():
     assert ChallengeChatBridge.robot_speech(_robot_frame("robot", "Hello")) == ("Hello", 42.5)
 
@@ -153,6 +157,18 @@ def test_bridge_accepts_only_visible_robot_speech():
         assert ChallengeChatBridge.robot_speech(_robot_frame(sender, "not spoken")) is None
     assert ChallengeChatBridge.robot_speech(_robot_frame("robot", "Hello", topic="/somewhere/else")) is None
     assert ChallengeChatBridge.robot_speech(_robot_frame("robot", "   ")) is None
+
+
+def test_bridge_accepts_only_environment_speech_completions():
+    frame = _topic_frame(ChallengeChatBridge.ENVIRONMENT_SPEECH_DONE, {"id": "2:7", "success": True})
+    assert ChallengeChatBridge.environment_speech_done(frame) == "2:7"
+    assert ChallengeChatBridge.environment_speech_done(_topic_frame("/somewhere/else", {"id": "2:7"})) is None
+    assert (
+        ChallengeChatBridge.environment_speech_done(
+            _topic_frame(ChallengeChatBridge.ENVIRONMENT_SPEECH_DONE, {"id": ""})
+        )
+        is None
+    )
 
 
 def test_far_speech_is_silent(tmp_path):
@@ -175,6 +191,8 @@ def test_first_nearby_speech_reveals_the_private_order(tmp_path):
     assert alex.order in payload["text"]
     assert payload["sender"] == "user"
     assert "origin" not in payload  # do not reveal challenge metadata to the robot stack
+    assert payload["_environment_speech"]["text"].startswith("From Chipotle")
+    assert payload["_environment_speech"]["voice_id"] == alex.voice_id
     assert block["active"]["state"] == "running"
     assert not block["active"]["goals"][0]["done"]
 
@@ -488,6 +506,21 @@ def test_stale_replies_are_dropped_after_restart_and_abort(tmp_path):
     assert engine.next_chat_input(timeout=0.0) is None
 
 
+def test_environment_transcript_is_requeued_only_for_its_current_run(tmp_path):
+    engine, sim, centers, residents = _engine(tmp_path, ("alex",))
+    position = centers[residents["alex"].prop]
+    _speak(engine, sim, centers, position, "What is your order?")
+    token, payload = _reply(engine)
+    payload.pop("_environment_speech")
+
+    assert engine.requeue_chat_input_if_current(token, payload)
+    assert _reply(engine) == (token, payload)
+
+    engine.abort()
+    assert not engine.requeue_chat_input_if_current(token, payload)
+    assert engine.next_chat_input(timeout=0.0) is None
+
+
 def test_reply_send_is_serialized_before_abort(tmp_path):
     engine, sim, centers, residents = _engine(tmp_path, ("alex",))
     position = centers[residents["alex"].prop]
@@ -628,8 +661,16 @@ def test_household_residents_use_distinct_visual_sources():
     assert all(resident.collision == "hull" for resident in residents)
     assert all(resident.mesh_scale == 1.0 for resident in residents)
     assert all(resident.viewer["preNormalized"] is True for resident in residents)
+    assert all(resident.viewer["nameLabel"] is True for resident in residents)
     assert all("hulls" not in resident.viewer for resident in residents)
     assert all(resident.viewer["glb"] != "/models/human.glb" for resident in residents)
+
+
+def test_household_resident_voices_match_their_presented_people():
+    residents = {resident.id: resident for resident in _source_challenge().runtime.residents}
+
+    assert residents["alex"].voice_id == residents["casey"].voice_id
+    assert residents["blake"].voice_id != residents["alex"].voice_id
 
 
 def test_kinematic_prop_uses_mocap_pose_without_a_freejoint():

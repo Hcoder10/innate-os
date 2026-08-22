@@ -26,5 +26,6 @@ PROP = Prop(
     viewer={
         "glb": "/models/resident_alex.glb",
         "preNormalized": True,
+        "nameLabel": True,
     },
 )

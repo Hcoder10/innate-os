@@ -7,11 +7,14 @@ Generates speech audio and plays it through the robot's audio system.
 """
 
 import base64
+import io
 import queue
 import struct
 import subprocess
 import threading
 import time
+import wave
+from collections.abc import Callable
 from typing import Any
 
 from brain_client.common.logging import UniversalLogger
@@ -299,7 +302,15 @@ class TTSHandler:
             self.logger.error("❌ TTS produced no audio")
             return False
 
-        self._publish_audio(bytes(buf))
+        wav = _finalize_wav(bytes(buf))
+        self._publish_audio(wav)
+        # Publishing the full clip is the beginning of playback, not the end.
+        # Keep /tts/is_playing true (and the serialized worker occupied) for
+        # the clip's actual duration so completion callbacks match what the
+        # operator hears in the browser.
+        duration_s = _wav_duration_s(wav)
+        if duration_s > 0:
+            time.sleep(duration_s)
         self.logger.info(
             f"✅ TTS streamed to browser ({len(text)} chars, {len(buf) / 1024:.0f}KB, "
             f"total={(time.perf_counter() - t_start) * 1000:.0f}ms)"
@@ -316,8 +327,12 @@ class TTSHandler:
         self.tts_audio_pub.publish(String(data=payload))
 
     def speak_text_async(
-        self, text: str, voice_config: dict[str, Any] | None = None, replace_pending: bool = False
-    ) -> None:
+        self,
+        text: str,
+        voice_config: dict[str, Any] | None = None,
+        replace_pending: bool = False,
+        on_done: Callable[[bool], None] | None = None,
+    ) -> bool:
         """
         Queue text to be spoken. Utterances play in order, one at a time;
         nothing is dropped unless the queue is full. Returns immediately.
@@ -329,21 +344,27 @@ class TTSHandler:
                 conversational replies, where a newer reply supersedes queued
                 older ones (playing a backlog is what makes the robot talk
                 over the conversation). The currently playing clip finishes.
+            on_done: Optional callback invoked once, after playback (and one
+                retry on failure) has finished.
         """
         if not self.is_available():
             self.logger.debug("🔇 TTS not available, skipping async speech")
-            return
+            return False
         try:
             if replace_pending:
                 while True:
                     try:
-                        stale, _ = self._speech_queue.get_nowait()
+                        stale, _voice, stale_done = self._speech_queue.get_nowait()
                         self.logger.info(f"🔇 Dropping superseded speech: '{stale[:60]}'")
+                        if stale_done is not None:
+                            stale_done(False)
                     except queue.Empty:
                         break
-            self._speech_queue.put_nowait((text, voice_config))
+            self._speech_queue.put_nowait((text, voice_config, on_done))
+            return True
         except queue.Full:
             self.logger.warning(f"🔇 Speech queue full, dropping: '{text[:60]}'")
+            return False
 
     def _speech_loop(self):
         """Single worker: plays queued utterances in order, retrying each once."""
@@ -351,11 +372,17 @@ class TTSHandler:
             item = self._speech_queue.get()
             if item is None:
                 break
-            text, voice_config = item
-            if not self.speak_text(text, voice_config):
+            text, voice_config, on_done = item
+            success = self.speak_text(text, voice_config)
+            if not success:
                 self.logger.info("🔄 Retrying TTS after 1 second...")
                 time.sleep(1)
-                self.speak_text(text, voice_config)
+                success = self.speak_text(text, voice_config)
+            if on_done is not None:
+                try:
+                    on_done(success)
+                except Exception as e:
+                    self.logger.error(f"TTS completion callback failed: {e}")
 
     def close(self):
         """Clean up resources."""
@@ -392,3 +419,13 @@ def _finalize_wav(data: bytes) -> bytes:
     struct.pack_into("<I", out, 4, len(out) - 8)  # RIFF chunk size
     struct.pack_into("<I", out, data_idx + 4, len(out) - (data_idx + 8))  # data size
     return bytes(out)
+
+
+def _wav_duration_s(data: bytes) -> float:
+    """Duration of one complete WAV, or zero for an undecodable response."""
+    try:
+        with wave.open(io.BytesIO(data), "rb") as wav:
+            rate = wav.getframerate()
+            return wav.getnframes() / rate if rate > 0 else 0.0
+    except (EOFError, wave.Error):
+        return 0.0

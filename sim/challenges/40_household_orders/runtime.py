@@ -4,7 +4,7 @@ import math
 import re
 from dataclasses import dataclass
 
-from mars_sim_driver.challenges import ChallengeRuntime, RuntimeResult, WorldState
+from mars_sim_driver.challenges import ChallengeRuntime, EnvironmentReply, RuntimeResult, WorldState
 
 _NON_WORD = re.compile(r"[^a-z0-9]+")
 _READBACK_PREFIXES = ("actually ", "okay ", "so you want ", "you want ", "your order is ", "you said ")
@@ -25,6 +25,7 @@ class Resident:
     name: str
     prop: str
     order: str
+    voice_id: str
     # Complete alternate readbacks accepted in addition to the exact order.
     # Whole-utterance matching is deliberate: independent substring checks can
     # accept an order followed by a contradiction.
@@ -136,14 +137,24 @@ class HouseholdOrdersRuntime(ChallengeRuntime):
                 continue
             if resident.id not in self._shared:
                 self._shared.add(resident.id)
-                result.replies.append(f"{resident.name}: {resident.order} Please repeat the complete order back to me.")
+                result.replies.append(
+                    EnvironmentReply(
+                        resident.name,
+                        f"{resident.order} Please repeat the complete order back to me.",
+                        resident.voice_id,
+                    )
+                )
                 continue
             if self._matches(resident, event["text"]):
                 self._confirmed.add(resident.id)
                 result.events.append({"type": "resident_order_confirmed", "resident": resident.id})
-                result.replies.append(f"{resident.name}: That's correct. Thank you.")
+                result.replies.append(EnvironmentReply(resident.name, "That's correct. Thank you.", resident.voice_id))
             else:
                 result.replies.append(
-                    f"{resident.name}: Not quite. {resident.order} Please repeat the complete order back to me."
+                    EnvironmentReply(
+                        resident.name,
+                        f"Not quite. {resident.order} Please repeat the complete order back to me.",
+                        resident.voice_id,
+                    )
                 )
         return result
