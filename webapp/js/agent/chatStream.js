@@ -271,6 +271,9 @@ export function createChatStream(opts = {}) {
   function addThought(kind, text, ts) {
     const wasAtBottom = atBottom();
     if (!thoughts) {
+      // A thought block lands between the runs, so they are no longer
+      // contiguous — promoting the streak would hoist later runs above it.
+      skillStreak = null;
       const wrap = document.createElement("div");
       // Collapsed by default — only the latest thought (preview) shows until expanded.
       wrap.className = "chat-thoughts";

@@ -229,10 +229,11 @@ export function createAgentMicControl(root, callbacks) {
   }
 
   function spacebarCanControlMic() {
-    if (!(composerInput instanceof HTMLTextAreaElement) || composerInput.value.length !== 0) {
-      return false;
-    }
-    return document.activeElement === composerInput || !isTypingContext();
+    if (!(composerInput instanceof HTMLTextAreaElement)) return false;
+    // Only a focused composer holding a draft blocks the spacebar; an unsent
+    // draft must not disable push-to-talk for the whole page.
+    if (document.activeElement === composerInput) return composerInput.value.length === 0;
+    return !isTypingContext();
   }
 
   /** @param {KeyboardEvent} event */
