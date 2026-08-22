@@ -7,7 +7,7 @@ import wave
 
 import pytest
 
-from brain_client.transport.tts import _Utterance, _survives_flush, _wav_duration_s
+from brain_client.transport.tts import _survives_flush, _Utterance, _wav_duration_s
 
 
 def _utterance(reply_id=None, protected=False):

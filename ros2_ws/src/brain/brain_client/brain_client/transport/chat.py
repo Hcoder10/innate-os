@@ -9,12 +9,11 @@ history list so no other component needs to.
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 import threading
 import time
-
-import itertools
 
 from brain_client.brain.context import split_tool_narration
 from brain_client.common.enums import StrEnum
