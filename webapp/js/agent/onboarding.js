@@ -24,10 +24,15 @@ const MIN_HOLD_MS = 600;
 // microphone permission never produces a hold at all, and a tour that cannot be
 // skipped would strand the page on its first step.
 const SKIP_OFFER_MS = 25000;
-// Degrees the robot turns toward a panel as it appears. Every tour step turns
-// back by the same amount, so each one starts and ends centred — which is what
-// lets a step resume standalone from storage.
-const POINT_DEGREES = 25;
+// Where the arm reaches to point at a panel, in base_link metres: x forward,
+// y left, z up. The onboarding camera sits almost directly in front of the
+// robot (eye at -3.5,-3.5 looking at a spawn of -4.34,-0.17 facing -Y), so the
+// view is mirrored — reaching to the robot's left shows up on the viewer's
+// right. SIDE_LEFT/SIDE_RIGHT are named for where the panel is on screen, and
+// carry the flip so the call sites do not have to think about it.
+const POINT_REACH = { x: 0.25, z: 0.3, duration: 2 };
+const SIDE_LEFT = -0.2;
+const SIDE_RIGHT = 0.2;
 
 // Spoken as two utterances, not one: synthesis time scales with the text, so a
 // short opener is heard far sooner, and the longer line is generated while it
@@ -101,7 +106,7 @@ const STEPS = {
     completeOn: "action",
     reveal: "cameras",
     recap: "showed them the camera views",
-    actions: (reveal) => pointOut(POINT_DEGREES, reveal, STEPS.tour_cameras.dialogue ?? "", "happy"),
+    actions: (reveal) => pointOut(SIDE_LEFT, reveal, STEPS.tour_cameras.dialogue ?? "", "happy"),
     next: "tour_telemetry",
   },
   tour_telemetry: {
@@ -110,7 +115,7 @@ const STEPS = {
     completeOn: "action",
     reveal: "telemetry",
     recap: "showed them the telemetry panel",
-    actions: (reveal) => pointOut(-POINT_DEGREES, reveal, STEPS.tour_telemetry.dialogue ?? "", "agreeing"),
+    actions: (reveal) => pointOut(SIDE_RIGHT, reveal, STEPS.tour_telemetry.dialogue ?? "", "agreeing"),
     next: "tour_chat",
   },
   tour_chat: {
@@ -119,7 +124,7 @@ const STEPS = {
     completeOn: "action",
     reveal: "chat",
     recap: "showed them the chat panel",
-    actions: (reveal) => pointOut(-POINT_DEGREES, reveal, STEPS.tour_chat.dialogue ?? "", "very_happy"),
+    actions: (reveal) => pointOut(SIDE_RIGHT, reveal, STEPS.tour_chat.dialogue ?? "", "very_happy"),
     next: "complete",
   },
   complete: {
@@ -145,20 +150,24 @@ const STEP_ORDER = [
 const REVEAL_TARGETS = ["cameras", "telemetry", "chat"];
 
 /**
- * One tour beat: turn toward the panel, reveal it, say the line, react, turn back.
- * @param {number} degrees
+ * One tour beat: reach toward the panel, reveal it, say the line, react, lower
+ * the arm. Pointing is the arm, not the base — turning the whole robot reads as
+ * "it spun round", and it leaves the robot facing somewhere new for the step
+ * after it.
+ *
+ * @param {number} sideY signed base_link y: SIDE_LEFT or SIDE_RIGHT
  * @param {() => void} reveal
  * @param {string} text
  * @param {string} emotion
  * @returns {import("./onboardingWelcome.js").ScriptedAction[]}
  */
-function pointOut(degrees, reveal, text, emotion) {
+function pointOut(sideY, reveal, text, emotion) {
   return [
-    { type: "skill", name: "turn_in_place", inputs: { angle_degrees: degrees } },
+    { type: "skill", name: "arm_move_to_xyz", inputs: { ...POINT_REACH, y: sideY } },
     { type: "ui", apply: reveal },
     { type: "speak", text },
     { type: "skill", name: "head_emotion", inputs: { emotion }, afterSpeechStart: true },
-    { type: "skill", name: "turn_in_place", inputs: { angle_degrees: -degrees } },
+    { type: "skill", name: "arm_rest_position", inputs: {} },
   ];
 }
 
@@ -309,6 +318,10 @@ export function createAgentOnboarding(root, rosClient, options) {
 
   async function reset() {
     runner.cancel();
+    // The page has been up a while by the time anyone presses this, so the
+    // stage channel is connected and the reset lands immediately rather than
+    // waiting for the robot to reappear.
+    onResetWorld?.();
     entryToken++;
     revealed.clear();
     skip.hidden = true;

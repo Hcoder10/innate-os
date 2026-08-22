@@ -71,7 +71,13 @@ function buildAgentView(root) {
         },
         onResetWorld: () => {
           const sim = /** @type {any} */ (session);
-          if (typeof sim.resetWorld === "function") sim.resetWorld();
+          if (typeof sim.resetWorld !== "function") {
+            // Older viewer bundle: rebuilt from sim/viewer, not served from the
+            // working tree like the rest of this app.
+            console.warn("[onboarding] stage has no resetWorld — rebuild sim/viewer (npm run build:lib)");
+            return;
+          }
+          sim.resetWorld();
         },
       })
     : null;
