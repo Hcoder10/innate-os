@@ -1,5 +1,5 @@
 // @ts-check
-// Challenge panel (sim only) — top-left card on the Agent page. Renders the
+// Challenge panel (sim only) — a stage launcher beside Scene Setup. Renders the
 // world server's challenge judge state relayed through the sim session
 // (session.onChallenge, see challenges.py): a roster of challenges to start,
 // and while one runs, its goal checklist, timer, and pass/fail banner. All
@@ -9,20 +9,46 @@
 import { maybeShowChallengeIntro, showChallengeIntro } from "./challengeIntro.js";
 
 /**
- * @param {HTMLElement} container
+ * @param {HTMLElement} root
  * @param {any} session sim session exposing onChallenge/startChallenge/abortChallenge
- * @returns {{ destroy: () => void }}
+ * @returns {{ destroy: () => void, dismiss: () => void }}
  */
-export function createChallengePanel(container, session) {
+export function createChallengePanel(root, session) {
+  const dock = document.createElement("div");
+  dock.className = "agent-challenge-dock";
+  dock.hidden = true;
+
   const panel = document.createElement("section");
-  panel.className = "overlay challenge-panel";
-  panel.hidden = true; // until the first challenge block arrives
+  panel.id = "agent-challenge-panel";
+  panel.className = "challenge-panel";
 
   const head = document.createElement("div");
   head.className = "challenge-head";
   const title = document.createElement("span");
   title.className = "microlabel";
   title.textContent = "Challenges";
+  head.appendChild(title);
+
+  const launcher = document.createElement("button");
+  launcher.type = "button";
+  launcher.className = "agent-challenge-toggle";
+  launcher.setAttribute("aria-controls", panel.id);
+  launcher.innerHTML =
+    '<span class="agent-challenge-toggle-icon agent-challenge-toggle-flag" aria-hidden="true"></span>' +
+    '<svg class="agent-challenge-toggle-icon agent-challenge-toggle-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>';
+  let open = false;
+  let challengeRunning = false;
+  const setOpen = (/** @type {boolean} */ next) => {
+    open = next;
+    dock.classList.toggle("open", next);
+    launcher.setAttribute("aria-expanded", String(next));
+    launcher.setAttribute("aria-label", next ? "Close challenges" : "Open challenges");
+    if (next && !revealed) {
+      revealed = true;
+      intro = maybeShowChallengeIntro();
+    }
+  };
+  launcher.addEventListener("click", () => setOpen(!open));
   // Subtle standing hint back to the docs — reopens the first-run intro
   // (challengeIntro.js) with the tutorial link and preview.
   const tutorial = document.createElement("button");
@@ -42,17 +68,17 @@ export function createChallengePanel(container, session) {
     intro?.close();
     intro = showChallengeIntro();
   });
-  head.append(title, tutorial);
-
+  head.appendChild(tutorial);
   /** Open intro dialog, if any — closed on page teardown, not leaked. */
   /** @type {{ close: () => void } | null} */
   let intro = null;
   let revealed = false;
 
   const body = document.createElement("div");
-  body.className = "challenge-body";
   panel.append(head, body);
-  container.append(panel);
+  dock.append(panel, launcher);
+  root.appendChild(dock);
+  setOpen(false);
 
   /** Last rendered structure (block minus the ticking clock) — the timer text
    * updates in place so the DOM isn't rebuilt 10x a second. */
@@ -61,16 +87,10 @@ export function createChallengePanel(container, session) {
   let timerEl = null;
 
   const unsub = session.onChallenge((/** @type {any} */ block) => {
-    panel.hidden = false;
-    // First-ever reveal: one-time welcome -- but only once the panel is really
-    // on screen. Phones hide the whole corner stack (.overlay-stack-top-left,
-    // see app.css), and a modal introducing a panel that isn't there -- over
-    // the app promo, which does show there -- is worse than no intro at all.
-    if (!revealed && panel.getClientRects().length > 0) {
-      revealed = true;
-      intro = maybeShowChallengeIntro();
-    }
+    dock.hidden = false;
     const active = block.active;
+    challengeRunning = active?.state === "running";
+    dock.classList.toggle("active", challengeRunning);
     if (timerEl && active) timerEl.textContent = timerText(active);
     const key = JSON.stringify({ ...block, active: active && { ...active, elapsed_s: null } });
     if (key === renderedKey) return;
@@ -112,7 +132,8 @@ export function createChallengePanel(container, session) {
       text.append(name, meta);
       const play = document.createElement("span");
       play.className = "challenge-play";
-      play.textContent = "▶";
+      play.innerHTML =
+        '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9,6 15,12 9,18"/></svg>';
       item.append(dot, text, play);
       item.title = c.brief;
       item.addEventListener("click", () => session.startChallenge(c.id));
@@ -212,10 +233,13 @@ export function createChallengePanel(container, session) {
   }
 
   return {
+    dismiss() {
+      if (!challengeRunning) setOpen(false);
+    },
     destroy() {
       intro?.close();
       unsub();
-      panel.remove();
+      dock.remove();
     },
   };
 }

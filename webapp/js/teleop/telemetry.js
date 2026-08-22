@@ -10,42 +10,98 @@ import { BATTERY_STATE_TOPIC, ROBOT_INFO_TOPIC, WEBSOCKET_STATUS_TOPIC } from ".
 /**
  * @param {HTMLElement} parent
  * @param {import("../rosClient.js").RosClient} rosClient
- * @param {{ showBattery?: boolean }} [opts] The sim has no battery, so it opts out.
  * @returns {{ destroy: () => void }}
  */
-export function createTelemetry(parent, rosClient, opts = {}) {
-  const showBattery = opts.showBattery !== false;
-
+export function createTelemetry(parent, rosClient) {
   const wrap = document.createElement("div");
   wrap.className = "telemetry";
 
-  const name = item("robot", "—", ROBOT_INFO_TOPIC);
-  const battery = showBattery ? item("batt", "—", BATTERY_STATE_TOPIC) : null;
-  const link = item("link", "—", "rosbridge websocket to the robot");
-  // Cloud/local agent backend connection (the brain's websocket to its agent
-  // backend) — distinct from the rosbridge LINK above.
-  const agent = item("agent", "—", `the brain's connection to its agent backend — ${WEBSOCKET_STATUS_TOPIC}`);
-  wrap.append(name.el, ...(battery ? [battery.el] : []), link.el, agent.el);
+  const name = item("robot", "robot", "—", ROBOT_INFO_TOPIC);
+  const battery = item("battery", "battery", "—", BATTERY_STATE_TOPIC);
+  const link = item("link", "link", "—", "rosbridge websocket to the robot");
+  const agent = item("agent", "agent", "—", `the brain's connection to its agent backend — ${WEBSOCKET_STATUS_TOPIC}`);
+  wrap.append(name.el, battery.el, link.el, agent.el);
   parent.appendChild(wrap);
+  const items = [name, battery, link, agent];
+  /** @type {number | null} */
+  let measureFrame = null;
 
   /**
+   * @param {TelemetryKey} key
    * @param {string} labelText
    * @param {string} initial
    * @param {string} [title]
    */
-  function item(labelText, initial, title = "") {
+  function item(key, labelText, initial, title = "") {
     const el = document.createElement("div");
-    el.className = "telemetry-item";
+    el.className = `telemetry-item telemetry-item-${key}`;
     if (title) el.title = title;
+    const status = document.createElement("span");
+    status.className = "telemetry-status-dot";
+    status.setAttribute("aria-hidden", "true");
     const label = document.createElement("span");
     label.className = "microlabel";
     label.textContent = labelText;
     const value = document.createElement("span");
     value.className = "telemetry-value mono";
-    value.textContent = initial;
-    el.append(label, value);
-    return { el, value };
+    value.title = initial;
+    const meta = document.createElement("span");
+    meta.className = "telemetry-meta mono";
+    const track = document.createElement("span");
+    track.className = "telemetry-value-track";
+    const primary = document.createElement("span");
+    primary.textContent = initial;
+    const duplicate = document.createElement("span");
+    duplicate.className = "telemetry-value-duplicate";
+    duplicate.textContent = initial;
+    duplicate.setAttribute("aria-hidden", "true");
+    track.append(primary, duplicate);
+    value.append(track);
+    el.append(status, label, value, meta);
+    return { el, value, primary, duplicate, meta };
   }
+
+  /**
+   * @param {ReturnType<typeof item>} target
+   * @param {string} text
+   * @param {TelemetryTone} [tone]
+   * @param {string} [meta]
+   */
+  function update(target, text, tone = "", meta = "") {
+    renderValue(target, text, tone, meta);
+  }
+
+  /**
+   * @param {ReturnType<typeof item>} target
+   * @param {string} text
+   * @param {TelemetryTone} tone
+   * @param {string} meta
+   */
+  function renderValue(target, text, tone, meta) {
+    target.primary.textContent = text;
+    target.duplicate.textContent = text;
+    target.meta.textContent = meta;
+    target.value.title = meta ? `${text} · ${meta}` : text;
+    target.el.classList.toggle("live", tone === "live");
+    target.el.classList.toggle("warn", tone === "warn");
+    scheduleOverflowMeasure();
+  }
+
+  function scheduleOverflowMeasure() {
+    if (measureFrame !== null) cancelAnimationFrame(measureFrame);
+    measureFrame = requestAnimationFrame(() => {
+      measureFrame = null;
+      for (const target of items) {
+        const overflow = Math.ceil(target.primary.scrollWidth - target.value.clientWidth);
+        target.value.classList.toggle("overflowing", overflow > 1);
+        target.value.style.setProperty("--telemetry-duration", `${Math.max(5, (target.primary.scrollWidth + 24) / 28)}s`);
+      }
+    });
+  }
+
+  const resizeObserver = new ResizeObserver(scheduleOverflowMeasure);
+  resizeObserver.observe(wrap);
+  scheduleOverflowMeasure();
 
   const unsubs = [
     rosClient.subscribe(ROBOT_INFO_TOPIC, (payload) => {
@@ -59,12 +115,12 @@ export function createTelemetry(parent, rosClient, opts = {}) {
       }
       const label = info.robot_name || info.hostname;
       if (label) {
-        name.value.textContent = info.version ? `${label} · v${info.version}` : label;
+        update(name, label, "", info.version ? `v${info.version}` : "");
       }
     }, undefined, "std_msgs/msg/String"),
     rosClient.onStateChange((state) => {
-      link.value.textContent = state === "connected" ? "live" : state;
-      link.el.classList.toggle("live", state === "connected");
+      const text = state === "connected" ? "live" : state;
+      update(link, text, state === "connected" ? "live" : state === "disconnected" ? "warn" : "");
     }),
     rosClient.subscribe(
       WEBSOCKET_STATUS_TOPIC,
@@ -93,37 +149,37 @@ export function createTelemetry(parent, rosClient, opts = {}) {
           text = "offline";
           warn = true;
         }
-        agent.value.textContent = text;
-        agent.el.classList.toggle("live", ok);
-        agent.el.classList.toggle("warn", warn);
+        update(agent, text, ok ? "live" : warn ? "warn" : "");
       },
       500,
       "std_msgs/msg/String",
     ),
   ];
 
-  if (battery) {
-    unsubs.push(
-      rosClient.subscribe(
-        BATTERY_STATE_TOPIC,
-        (/** @type {BatteryStateMsg} */ msg) => {
-          const p = msg?.percentage;
-          if (typeof p !== "number" || Number.isNaN(p)) return;
-          // The robot publishes 0–100; tolerate a spec-compliant 0–1 source.
-          const pct = p <= 1 ? p * 100 : p;
-          battery.value.textContent = `${Math.round(pct)}%`;
-          battery.el.classList.toggle("warn", pct <= 15);
-        },
-        1000,
-        "sensor_msgs/msg/BatteryState",
-      ),
-    );
-  }
+  unsubs.push(
+    rosClient.subscribe(
+      BATTERY_STATE_TOPIC,
+      (/** @type {BatteryStateMsg} */ msg) => {
+        const p = msg?.percentage;
+        if (typeof p !== "number" || Number.isNaN(p)) return;
+        // The robot publishes 0–100; tolerate a spec-compliant 0–1 source.
+        const pct = p <= 1 ? p * 100 : p;
+        update(battery, `${Math.round(pct)}%`, pct <= 15 ? "warn" : "");
+      },
+      1000,
+      "sensor_msgs/msg/BatteryState",
+    ),
+  );
 
   return {
     destroy() {
+      if (measureFrame !== null) cancelAnimationFrame(measureFrame);
+      resizeObserver.disconnect();
       for (const unsub of unsubs) unsub();
       wrap.remove();
     },
   };
 }
+
+/** @typedef {"robot" | "battery" | "link" | "agent"} TelemetryKey */
+/** @typedef {"" | "live" | "warn"} TelemetryTone */

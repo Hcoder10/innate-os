@@ -3,13 +3,16 @@
 import { isTypingContext } from "../shell.js";
 
 const RIPPLE_COUNT = 3;
-const WAVEFORM_BAR_COUNT = 7;
+const WAVEFORM_BAR_COUNT = 9;
+const POINTER_HOLD_DELAY_MS = 350;
+const SPACEBAR_KEY_CODE = "Space";
+const SPACEBAR_HOLD_DELAY_MS = 180;
+const HOLD_HINT_DURATION_MS = 4200;
 /** Mic RMS is quiet; scale it so the resting glass glow reads as activity. */
 const LEVEL_GAIN = 6;
-/** Band RMS is quieter still; scale so waveform bars fill the puck. */
-const WAVEFORM_GAIN = 10;
 /** Idle bar height so the waveform never collapses to a flat line. */
 const WAVEFORM_FLOOR = 0.12;
+const WAVEFORM_DB_RANGE = 48;
 
 /**
  * @param {HTMLElement} root
@@ -26,6 +29,7 @@ const WAVEFORM_FLOOR = 0.12;
  */
 export function createAgentMicControl(root, callbacks) {
   const { startListening, stopListening } = callbacks;
+  const composerInput = root.closest(".agent-compose")?.querySelector(".agent-compose-input");
 
   const control = document.createElement("div");
   control.className = "agent-mic-control";
@@ -35,7 +39,7 @@ export function createAgentMicControl(root, callbacks) {
   button.className = "agent-mic-button";
   button.setAttribute("aria-label", "Hold to talk to the agent");
   button.setAttribute("aria-pressed", "false");
-  button.title = "Hold to talk — Space, or click and hold";
+  button.title = "Hold to talk — Spacebar, or click and hold";
 
   const icon = decorativeSpan("agent-mic-icon");
 
@@ -49,167 +53,287 @@ export function createAgentMicControl(root, callbacks) {
   const hoverGlow = decorativeSpan("agent-mic-hover-glow");
   const outerWaves = rippleGroup("agent-mic-outer-waves", "agent-mic-outer-wave");
 
-  const label = document.createElement("span");
-  label.className = "agent-mic-label";
-  label.textContent = "Hold to talk";
+  const stateLabel = document.createElement("span");
+  stateLabel.className = "agent-mic-label";
+
+  const messageBubble = document.createElement("span");
+  messageBubble.className = "agent-mic-message";
+  messageBubble.setAttribute("role", "status");
+  messageBubble.setAttribute("aria-hidden", "true");
 
   button.append(innerWaves, hoverGlow, icon, waveform);
-  control.append(outerWaves, button, label);
+  control.append(outerWaves, button, stateLabel, messageBubble);
   root.append(control);
 
-  /** @type {Set<"pointer" | "space">} */
-  const holdSources = new Set();
-  const eventController = new AbortController();
-  let isHeld = false;
-  let captureOn = false;
-  let captureBusy = false;
-  let isViewEnabled = true;
+  /** @type {Set<"pointer" | "spacebar">} */
+  const activeHoldSources = new Set();
+  const eventListenerController = new AbortController();
+  let isPushToTalkActive = false;
+  let isCaptureOn = false;
+  let isCaptureBusy = false;
+  let isMicEnabled = true;
   /** @type {string | null} */
   let unavailableReason = null;
-  let activationId = 0;
+  let listeningRequestId = 0;
+  let pointerHoldTimeout = 0;
+  let spacebarHoldTimeout = 0;
+  let isHoldHintVisible = false;
+  let isUnavailableMessageVisible = false;
+  let holdHintTimeout = 0;
 
-  function renderHoldState() {
-    const unavailable = unavailableReason !== null;
-    const listening = isHeld && captureOn && !unavailable;
-    const waiting = isHeld && (captureBusy || !captureOn) && !unavailable;
-    control.classList.toggle("listening", listening);
-    control.classList.toggle("waiting", waiting);
-    control.classList.toggle("unavailable", unavailable);
-    button.setAttribute("aria-pressed", String(isHeld));
-    button.setAttribute("aria-busy", String(waiting));
-    button.setAttribute("aria-label", unavailable ? "Microphone disabled" : "Hold to talk to the agent");
-    button.title = unavailableReason ?? "Hold to talk — Space, or click and hold";
-    label.textContent = unavailable ? "Mic disabled" : waiting ? "Starting…" : listening ? "Listening…" : "Hold to talk";
+  function renderMicState() {
+    const isUnavailable = unavailableReason !== null;
+    const isListening = isPushToTalkActive && isCaptureOn && !isUnavailable;
+    const isWaiting =
+      isPushToTalkActive && (isCaptureBusy || !isCaptureOn) && !isUnavailable;
+    const shouldShowHoldHint =
+      isHoldHintVisible && !isUnavailable && !isWaiting && !isListening;
+    const shouldShowUnavailableMessage = isUnavailable && isUnavailableMessageVisible;
+    control.classList.toggle("listening", isListening);
+    control.classList.toggle("waiting", isWaiting);
+    control.classList.toggle("unavailable", isUnavailable);
+    control.classList.toggle("show-hold-hint", shouldShowHoldHint);
+    control.classList.toggle("show-unavailable-message", shouldShowUnavailableMessage);
+    button.setAttribute("aria-pressed", String(isPushToTalkActive));
+    button.setAttribute("aria-busy", String(isWaiting));
+    button.setAttribute(
+      "aria-label",
+      isUnavailable ? unavailableReason || "Microphone unavailable" : "Hold to talk to the agent",
+    );
+    button.title = isUnavailable ? "" : "Hold to talk — Spacebar, or click and hold";
+    stateLabel.textContent = isWaiting ? "Starting…" : isListening ? "Listening…" : "";
+    const messageText = shouldShowUnavailableMessage
+      ? unavailableReason || "Microphone unavailable"
+      : shouldShowHoldHint
+        ? "Hold down your spacebar or mouse to talk"
+        : "";
+    renderMessageBubble(messageText);
   }
 
-  function applyAvailability() {
+  /** @param {string} text */
+  function renderMessageBubble(text) {
+    if (!text) {
+      messageBubble.setAttribute("aria-hidden", "true");
+      return;
+    }
+    messageBubble.textContent = text;
+    messageBubble.removeAttribute("aria-hidden");
+  }
+
+  function dismissHoldHint() {
+    window.clearTimeout(holdHintTimeout);
+    isHoldHintVisible = false;
+  }
+
+  function showHoldHint() {
+    dismissHoldHint();
+    isHoldHintVisible = true;
+    holdHintTimeout = window.setTimeout(() => {
+      isHoldHintVisible = false;
+      renderMicState();
+    }, HOLD_HINT_DURATION_MS);
+    renderMicState();
+  }
+
+  function dismissMicMessages() {
+    if (!isHoldHintVisible && !isUnavailableMessageVisible) return;
+    dismissHoldHint();
+    isUnavailableMessageVisible = false;
+    renderMicState();
+  }
+
+  function updateMicAvailability() {
     const wasDisabled = button.disabled;
-    button.disabled = !isViewEnabled || unavailableReason !== null;
-    if (button.disabled && !wasDisabled) releaseAllHolds();
-    renderHoldState();
+    button.disabled = !isMicEnabled || unavailableReason !== null;
+    if (button.disabled && !wasDisabled) releaseAllPushToTalkHolds();
+    renderMicState();
   }
 
-  async function beginHold() {
-    if (button.disabled || isHeld) return;
-    isHeld = true;
-    const currentActivationId = ++activationId;
-    renderHoldState();
+  async function startPushToTalk() {
+    if (button.disabled || isPushToTalkActive) return;
+    isPushToTalkActive = true;
+    const requestId = ++listeningRequestId;
+    renderMicState();
     try {
       await startListening();
       // release may land while permission or agent startup is pending
-      if (currentActivationId !== activationId && !isHeld) stopListening();
+      if (requestId !== listeningRequestId && !isPushToTalkActive) stopListening();
     } catch {
-      if (currentActivationId !== activationId) return;
-      holdSources.clear();
-      isHeld = false;
-      renderHoldState();
+      if (requestId !== listeningRequestId) return;
+      activeHoldSources.clear();
+      isPushToTalkActive = false;
+      renderMicState();
     }
   }
 
-  function endHold() {
-    if (!isHeld) return;
-    isHeld = false;
-    activationId++;
-    renderHoldState();
+  function stopPushToTalk() {
+    if (!isPushToTalkActive) return;
+    isPushToTalkActive = false;
+    listeningRequestId++;
+    renderMicState();
     stopListening();
   }
 
-  function syncHoldState() {
-    if (holdSources.size > 0) void beginHold();
-    else endHold();
+  function syncPushToTalk() {
+    if (activeHoldSources.size > 0) void startPushToTalk();
+    else stopPushToTalk();
   }
 
-  function releaseAllHolds() {
-    holdSources.clear();
-    syncHoldState();
+  function cancelPendingPointerHold() {
+    const pending = pointerHoldTimeout !== 0;
+    window.clearTimeout(pointerHoldTimeout);
+    pointerHoldTimeout = 0;
+    return pending;
+  }
+
+  function cancelPendingSpacebarHold() {
+    const pending = spacebarHoldTimeout !== 0;
+    window.clearTimeout(spacebarHoldTimeout);
+    spacebarHoldTimeout = 0;
+    return pending;
+  }
+
+  function releaseAllPushToTalkHolds() {
+    cancelPendingPointerHold();
+    cancelPendingSpacebarHold();
+    activeHoldSources.clear();
+    syncPushToTalk();
   }
 
   /** @param {PointerEvent} event */
-  function onPointerDown(event) {
+  function onMicPointerDown(event) {
     if (event.button !== 0) return;
     event.preventDefault();
+    dismissHoldHint();
+    renderMicState();
     button.setPointerCapture(event.pointerId);
-    holdSources.add("pointer");
-    syncHoldState();
+    cancelPendingPointerHold();
+    pointerHoldTimeout = window.setTimeout(() => {
+      pointerHoldTimeout = 0;
+      activeHoldSources.add("pointer");
+      syncPushToTalk();
+    }, POINTER_HOLD_DELAY_MS);
   }
 
-  function onPointerRelease() {
-    holdSources.delete("pointer");
-    syncHoldState();
+  function onMicPointerUp() {
+    const wasQuickClick = cancelPendingPointerHold();
+    activeHoldSources.delete("pointer");
+    syncPushToTalk();
+    if (wasQuickClick && !button.disabled) showHoldHint();
+  }
+
+  function onMicPointerCancel() {
+    cancelPendingPointerHold();
+    activeHoldSources.delete("pointer");
+    syncPushToTalk();
+  }
+
+  function spacebarCanControlMic() {
+    if (!(composerInput instanceof HTMLTextAreaElement)) return false;
+    // Only a focused composer holding a draft blocks the spacebar; an unsent
+    // draft must not disable push-to-talk for the whole page.
+    if (document.activeElement === composerInput) return composerInput.value.length === 0;
+    return !isTypingContext();
   }
 
   /** @param {KeyboardEvent} event */
-  function onKeyDown(event) {
+  function onWindowKeyDown(event) {
+    if (event.code !== SPACEBAR_KEY_CODE) {
+      cancelPendingSpacebarHold();
+      return;
+    }
+    if (event.repeat) {
+      if (spacebarHoldTimeout !== 0 || activeHoldSources.has("spacebar")) {
+        event.preventDefault();
+      }
+      return;
+    }
     if (
       button.disabled ||
-      event.code !== "Space" ||
-      event.repeat ||
       event.metaKey ||
       event.ctrlKey ||
       event.altKey ||
       event.shiftKey ||
-      isTypingContext()
+      !spacebarCanControlMic()
     ) {
       return;
     }
     event.preventDefault();
-    holdSources.add("space");
-    syncHoldState();
+    cancelPendingSpacebarHold();
+    spacebarHoldTimeout = window.setTimeout(() => {
+      spacebarHoldTimeout = 0;
+      if (!spacebarCanControlMic()) return;
+      activeHoldSources.add("spacebar");
+      syncPushToTalk();
+    }, SPACEBAR_HOLD_DELAY_MS);
   }
 
   /** @param {KeyboardEvent} event */
-  function onKeyUp(event) {
-    if (event.code !== "Space" || !holdSources.has("space")) return;
+  function onWindowKeyUp(event) {
+    if (event.code !== SPACEBAR_KEY_CODE) return;
+    if (cancelPendingSpacebarHold()) {
+      event.preventDefault();
+      showHoldHint();
+      return;
+    }
+    if (!activeHoldSources.has("spacebar")) return;
     event.preventDefault();
-    holdSources.delete("space");
-    syncHoldState();
+    activeHoldSources.delete("spacebar");
+    syncPushToTalk();
   }
 
-  function onVisibilityChange() {
-    if (document.visibilityState === "hidden") releaseAllHolds();
+  function onDocumentVisibilityChange() {
+    if (document.visibilityState === "hidden") releaseAllPushToTalkHolds();
   }
 
-  function onFocusIn() {
-    if (isTypingContext() && holdSources.delete("space")) {
-      syncHoldState();
+  function onDocumentFocusIn() {
+    if (isTypingContext() && activeHoldSources.delete("spacebar")) {
+      syncPushToTalk();
     }
   }
 
-  const listenerOptions = { signal: eventController.signal };
-  button.addEventListener("pointerdown", onPointerDown, listenerOptions);
-  button.addEventListener("pointerup", onPointerRelease, listenerOptions);
-  button.addEventListener("pointercancel", onPointerRelease, listenerOptions);
-  button.addEventListener("lostpointercapture", onPointerRelease, listenerOptions);
-  window.addEventListener("keydown", onKeyDown, listenerOptions);
-  window.addEventListener("keyup", onKeyUp, listenerOptions);
-  window.addEventListener("blur", releaseAllHolds, listenerOptions);
-  document.addEventListener("visibilitychange", onVisibilityChange, listenerOptions);
-  document.addEventListener("focusin", onFocusIn, listenerOptions);
+  const listenerOptions = { signal: eventListenerController.signal };
+  button.addEventListener("pointerdown", onMicPointerDown, listenerOptions);
+  button.addEventListener("pointerup", onMicPointerUp, listenerOptions);
+  button.addEventListener("pointercancel", onMicPointerCancel, listenerOptions);
+  button.addEventListener("lostpointercapture", onMicPointerCancel, listenerOptions);
+  window.addEventListener("keydown", onWindowKeyDown, listenerOptions);
+  window.addEventListener("keyup", onWindowKeyUp, listenerOptions);
+  window.addEventListener("blur", releaseAllPushToTalkHolds, listenerOptions);
+  document.addEventListener("visibilitychange", onDocumentVisibilityChange, listenerOptions);
+  document.addEventListener("focusin", onDocumentFocusIn, listenerOptions);
+  document.addEventListener("pointerdown", dismissMicMessages, listenerOptions);
 
   return {
     setEnabled(enabled) {
-      if (isViewEnabled === enabled) return;
-      isViewEnabled = enabled;
-      applyAvailability();
+      if (isMicEnabled === enabled) return;
+      isMicEnabled = enabled;
+      updateMicAvailability();
     },
     setCaptureState({ on, busy, error }) {
-      if (captureOn === on && captureBusy === busy && unavailableReason === error) return;
-      captureOn = on;
-      captureBusy = busy;
+      if (isCaptureOn === on && isCaptureBusy === busy && unavailableReason === error) return;
+      const errorChanged = unavailableReason !== error;
+      isCaptureOn = on;
+      isCaptureBusy = busy;
       unavailableReason = error;
-      applyAvailability();
+      if (errorChanged) {
+        dismissHoldHint();
+        isUnavailableMessageVisible = error !== null;
+      }
+      updateMicAvailability();
     },
     /** @param {{ level: number, waveform: number[] }} feedback */
     setAudioFeedback({ level, waveform }) {
       control.style.setProperty("--agent-mic-level", String(clamp(level * LEVEL_GAIN)));
       waveformBars.forEach((bar, index) => {
-        const amplitude = clamp((waveform[index] ?? 0) * WAVEFORM_GAIN, WAVEFORM_FLOOR);
+        const amplitude = waveformHeight(waveform[index] ?? 0);
         bar.style.setProperty("--agent-wave", String(amplitude));
       });
     },
     destroy() {
-      releaseAllHolds();
-      eventController.abort();
+      dismissHoldHint();
+      releaseAllPushToTalkHolds();
+      eventListenerController.abort();
       control.remove();
     },
   };
@@ -234,4 +358,11 @@ function rippleGroup(groupClass, rippleClass) {
 /** @param {number} value @param {number} [min] @returns {number} */
 function clamp(value, min = 0) {
   return Math.max(min, Math.min(1, value));
+}
+
+/** @param {number} amplitude @returns {number} */
+function waveformHeight(amplitude) {
+  if (amplitude <= 0) return WAVEFORM_FLOOR;
+  const decibels = 20 * Math.log10(amplitude);
+  return clamp((decibels + WAVEFORM_DB_RANGE) / WAVEFORM_DB_RANGE, WAVEFORM_FLOOR);
 }
