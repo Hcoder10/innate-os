@@ -295,7 +295,7 @@ class EnvironmentReply:
 
     The challenge owns the words and voice choice; the generic bridge owns
     delivery.  In simulator mode the brain speaks this through Cartesia and
-    releases the transcript to normal chat only after playback completes.
+    releases the transcript to normal chat as playback starts.
     """
 
     speaker: str
@@ -817,6 +817,8 @@ class ChallengeChatBridge:
     CHAT_IN = "/brain/chat_in"
     ENVIRONMENT_SPEECH_DONE = "/brain/environment_speech_done"
     ENVIRONMENT_SPEECH_SENDER = "environment_speech"
+    # Lost playback ack: post the transcript as text anyway after this long.
+    SPEECH_ACK_TIMEOUT_S = 30.0
 
     @staticmethod
     def _send_with_timeout(connection, message: str, timeout_s: float = CHAT_WRITE_TIMEOUT_S) -> None:
@@ -854,7 +856,7 @@ class ChallengeChatBridge:
     def __init__(self, engine: ChallengeEngine, url: str = "ws://127.0.0.1:9090"):
         self.engine = engine
         self.url = url
-        self._pending_speech: dict[str, tuple[int, dict]] = {}
+        self._pending_speech: dict[str, tuple[int, dict, threading.Timer]] = {}
         self._pending_speech_lock = threading.Lock()
         self._speech_done_ready = threading.Event()
         threading.Thread(target=self._subscribe, daemon=True).start()
@@ -885,6 +887,17 @@ class ChallengeChatBridge:
         request_id = payload.get("id")
         return request_id if isinstance(request_id, str) and request_id else None
 
+    def _release_pending_speech(self, request_id: str) -> None:
+        """Post a spoken reply's transcript into chat, exactly once."""
+        with self._pending_speech_lock:
+            entry = self._pending_speech.pop(request_id, None)
+        if entry is None:
+            return
+        token, payload, timer = entry
+        timer.cancel()
+        payload["timestamp"] = time.time()
+        self.engine.requeue_chat_input_if_current(token, payload)
+
     def _subscribe(self) -> None:
         try:
             from websockets.sync.client import connect
@@ -905,12 +918,7 @@ class ChallengeChatBridge:
                         try:
                             request_id = self.environment_speech_done(message)
                             if request_id is not None:
-                                with self._pending_speech_lock:
-                                    pending = self._pending_speech.pop(request_id, None)
-                                if pending is not None:
-                                    token, payload = pending
-                                    payload["timestamp"] = time.time()
-                                    self.engine.requeue_chat_input_if_current(token, payload)
+                                self._release_pending_speech(request_id)
                                 continue
                             speech = self.robot_speech(message)
                             if speech is not None:
@@ -930,7 +938,32 @@ class ChallengeChatBridge:
             return  # the subscriber logged the missing optional dependency
         ws = None
         announced = False
+
+        def open_connection():
+            # No advertise: rws resolves the topic type itself.
+            connection = connect(self.url, open_timeout=5, close_timeout=CHAT_WRITE_TIMEOUT_S)
+            nonlocal announced
+            if not announced:
+                print(f"[challenges] environment replies connected ({self.url})", flush=True)
+                announced = True
+            return connection
+
+        # Connect early, but clear of rws startup and its handshake hang
+        # (see sim_rosbridge.launch.py): the subscriber proves rws is serving.
+        EAGER_CONNECT_GRACE_S = 10.0
+        ready_since = None
         while True:
+            if ws is None:
+                if not self._speech_done_ready.is_set():
+                    ready_since = None
+                elif ready_since is None:
+                    ready_since = time.time()
+                elif time.time() - ready_since >= EAGER_CONNECT_GRACE_S:
+                    try:
+                        ws = open_connection()
+                    except Exception:  # noqa: BLE001 -- rosbridge dropped again; re-arm the grace period
+                        ws = None
+                        ready_since = None
             item = self.engine.next_chat_input(timeout=1.0)
             if item is None:
                 continue
@@ -938,14 +971,7 @@ class ChallengeChatBridge:
             while self.engine.chat_input_is_current(token):
                 try:
                     if ws is None:
-                        ws = connect(self.url, open_timeout=5, close_timeout=CHAT_WRITE_TIMEOUT_S)
-                        self._send_with_timeout(
-                            ws,
-                            json.dumps({"op": "advertise", "topic": self.CHAT_IN, "type": "std_msgs/String"}),
-                        )
-                        if not announced:
-                            print(f"[challenges] environment replies connected ({self.url})", flush=True)
-                            announced = True
+                        ws = open_connection()
                     outbound_payload = dict(payload)
                     speech = outbound_payload.pop("_environment_speech", None)
                     body = (
@@ -962,8 +988,14 @@ class ChallengeChatBridge:
                         # could release its one-shot acknowledgment into a void.
                         if not self._speech_done_ready.wait(5.0):
                             raise TimeoutError("environment speech completion subscription is unavailable")
+                        # A lost request or ack must not silence the resident.
+                        watchdog = threading.Timer(
+                            self.SPEECH_ACK_TIMEOUT_S, self._release_pending_speech, args=(request_id,)
+                        )
+                        watchdog.daemon = True
                         with self._pending_speech_lock:
-                            self._pending_speech[request_id] = (token, outbound_payload)
+                            self._pending_speech[request_id] = (token, outbound_payload, watchdog)
+                        watchdog.start()
                     frame = json.dumps(
                         {
                             "op": "publish",
