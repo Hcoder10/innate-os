@@ -32,8 +32,12 @@ const MAP_ZOOM_DEFAULT = { small: 6, big: 16 }; // tighter as a thumbnail, wider
  * @param {HTMLElement} parent cockpit root — owns the strip and (when big) the map layer.
  * @param {import("../webrtcSession.js").WebRtcSession} session
  * @param {import("../rosClient.js").RosClient} ros
- * @param {{ storeKey?: string, stripParent?: HTMLElement }} [opts]
+ * @param {{ storeKey?: string, stripParent?: HTMLElement, primaryOnMount?: string }} [opts]
  *   storeKey: isolate this strip's prefs (primary view, map state) per page.
+ *   primaryOnMount: open on this view every time, ignoring any persisted
+ *   primary. Switching views still works and still persists — the next mount
+ *   just starts here again. Falls back to the usual default if the view is not
+ *   in the roster.
  * @returns {{ destroy: () => void }}
  */
 export function createCameraSwitch(parent, session, ros, opts = {}) {
@@ -69,9 +73,12 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
       const p = JSON.parse(localStorage.getItem(storeKey) || "{}");
       enabledCams = new Set(Array.isArray(p.enabled) ? p.enabled : []);
       mapOn = p.mapOn === true;
-      primary = typeof p.primary === "string" ? p.primary : ""; // "" = no saved choice; reconcile picks
+      // "" = no saved choice; reconcile picks. A primaryOnMount caller overrides
+      // the saved value outright — reconcile validates it against the roster.
+      primary = opts.primaryOnMount ?? (typeof p.primary === "string" ? p.primary : "");
     } catch {
-      /* defaults: nothing enabled, reconcile picks the first camera */
+      primary = opts.primaryOnMount ?? "";
+      /* other defaults: nothing enabled, reconcile picks the first camera */
     }
     try {
       const z = JSON.parse(localStorage.getItem(MAP_ZOOM_KEY) || "{}");

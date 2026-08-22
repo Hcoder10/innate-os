@@ -77,6 +77,10 @@ function buildAgentView(root) {
   const cameraSwitch = createCameraSwitch(root, session, ros, {
     storeKey: "innate.cameras.agent",
     stripParent: cornerStack,
+    // The Agent page is for watching the agent work, so open on the sim's orbit
+    // "top view" every visit rather than whatever was left selected last time.
+    // Real robots have no orbit camera, so their saved choice is untouched.
+    primaryOnMount: config.simControls ? "orbit" : undefined,
   });
   const telemetryOverlay = config.simControls ? null : document.createElement("div");
   if (telemetryOverlay) {
