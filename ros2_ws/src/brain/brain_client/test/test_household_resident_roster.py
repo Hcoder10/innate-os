@@ -2537,6 +2537,14 @@ def test_choose_view_penalizes_a_winding_route(monkeypatch):
     assert (view.row, view.col) == same_side
 
 
+def test_sweep_information_utility_prefers_efficient_gain_over_long_detour():
+    nearby = search_module._coverage_travel_utility(40, 2.0, sweeping=True)
+    distant = search_module._coverage_travel_utility(50, 8.0, sweeping=True)
+
+    assert nearby > distant
+    assert search_module._coverage_travel_utility(50, 0.0, sweeping=True) == 50
+
+
 def test_choose_view_avoids_looking_toward_a_handled_person(monkeypatch):
     reachable = np.ones((10, 10), dtype=bool)
     plan = search_module._PlanningGrid(
@@ -2805,7 +2813,7 @@ def test_apartment_route_cost_exposes_the_long_path_hidden_by_euclidean_distance
     assert route_distance > direct_distance * 3.0
 
 
-def test_apartment_search_spreads_to_the_unobserved_wing_after_two_stops(monkeypatch):
+def test_apartment_search_prefers_efficient_unseen_view_after_two_stops():
     map_state = _apartment_map_state()
     pose = Pose(-1.93, 2.71, math.radians(-8.0))
     observations = [
@@ -2817,14 +2825,10 @@ def test_apartment_search_spreads_to_the_unobserved_wing_after_two_stops(monkeyp
     assert plan is not None
     view, _covered = search_module._choose_view(plan, pose, observations, [])
     assert view is not None
-    assert view.x == pytest.approx(-0.2134, abs=0.001)
-    assert view.y == pytest.approx(-2.7856, abs=0.001)
-    assert math.degrees(view.theta) == pytest.approx(180.0)
-
-    monkeypatch.setattr(search_module, "NOVELTY_BONUS_CELLS_PER_M", 9.0)
-    underweighted_view, _covered = search_module._choose_view(plan, pose, observations, [])
-    assert underweighted_view is not None
-    assert (underweighted_view.x, underweighted_view.y) != pytest.approx((view.x, view.y))
+    route_distances = search_module._grid_travel_distances(plan, pose)
+    old_far_target = search_module._world_to_cell(plan, -0.2134, -2.7856)
+    assert route_distances[view.row, view.col] < route_distances[old_far_target]
+    assert view.gain >= search_module.MIN_NEW_CELLS
 
 
 def test_visualize_saves_map_without_camera_or_safe_viewpoint(tmp_path, monkeypatch):
