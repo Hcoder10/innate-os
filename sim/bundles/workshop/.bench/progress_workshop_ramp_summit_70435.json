@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "challenges": {
+    "workshop_ramp_summit": {
+      "attempts": 1,
+      "passed": false,
+      "best_time_s": null,
+      "last_result": "failed",
+      "updated_at": "2026-08-12T05:47:41-0700"
+    }
+  }
+}

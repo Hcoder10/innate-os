@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "challenges": {
+    "rounds_deliver_book": {
+      "attempts": 1,
+      "passed": true,
+      "best_time_s": 103.9,
+      "last_result": "passed",
+      "updated_at": "2026-08-12T06:12:39-0700"
+    }
+  }
+}

@@ -1,0 +1,4 @@
+gallery gallery_fetch_mug
+gallery gallery_ring_tour
+rounds rounds_find_bathroom
+rounds rounds_count_doors

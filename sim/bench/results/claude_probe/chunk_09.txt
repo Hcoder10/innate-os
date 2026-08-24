@@ -1,0 +1,4 @@
+rounds rounds_narrow_door
+rounds rounds_all_doors
+rounds rounds_deliver_book
+household household_fetch_mug

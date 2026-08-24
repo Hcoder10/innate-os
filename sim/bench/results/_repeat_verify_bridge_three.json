@@ -1,0 +1,50 @@
+[
+  {
+    "i": 0,
+    "passed": false,
+    "goals_done": 1,
+    "goals_total": 3,
+    "reason": "went through the wrong door",
+    "wall_s": 98.6
+  },
+  {
+    "i": 1,
+    "passed": false,
+    "goals_done": 1,
+    "goals_total": 3,
+    "reason": "went through the wrong door",
+    "wall_s": 124.7
+  },
+  {
+    "i": 2,
+    "passed": false,
+    "goals_done": 2,
+    "goals_total": 3,
+    "reason": "went through the wrong door",
+    "wall_s": 403.5
+  },
+  {
+    "i": 3,
+    "passed": false,
+    "goals_done": 1,
+    "goals_total": 3,
+    "reason": "went through the wrong door",
+    "wall_s": 48.3
+  },
+  {
+    "i": 4,
+    "passed": false,
+    "goals_done": 0,
+    "goals_total": 3,
+    "reason": "agent finished its plan",
+    "wall_s": 433.5
+  },
+  {
+    "i": 5,
+    "passed": false,
+    "goals_done": 1,
+    "goals_total": 3,
+    "reason": "went through the wrong door",
+    "wall_s": 129.5
+  }
+]

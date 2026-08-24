@@ -1,0 +1,288 @@
+=== full benchmark, maps: counter pantry workshop gallery rounds household bridge blaze
+=== caps: cat1 180s, cat2 300s, cat3 480s
+
+########## counter
+--- backend: Innate proxy
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (182x177 @ 0.05m): 5496 free, 506 occupied, 26212 unknown (23397 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 7
+--- category 1 (180s cap): counter_floor_within_reach counter_follow_up counter_out_of_reach counter_read_the_pass counter_which_colour counter_within_reach
+6 challenges against ws://127.0.0.1:8800, 180s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      instructed via /brain/chat_in
+[  1/6] fail  live       counter_floor_within_reach   system  0/3  sim  178.9s  wall 180.2s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  2/6] PASS  live       counter_follow_up            system  2/2  sim   14.0s  wall  14.2s  
+      instructed via /brain/chat_in
+[  3/6] fail  live       counter_out_of_reach         system  0/3  sim  178.9s  wall 180.1s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  4/6] PASS  live       counter_read_the_pass        system  1/1  sim    2.6s  wall   2.8s  
+      instructed via /brain/chat_in
+[  5/6] PASS  live       counter_which_colour         system  1/1  sim    3.0s  wall   3.1s  
+      instructed via /brain/chat_in
+[  6/6] fail  live       counter_within_reach         system  0/2  sim  178.9s  wall 181.0s  harness timeout (challenge still running)
+
+3/6 challenges passed, 4/12 goals
+results -> sim/bench/results/eval/counter_cat1.json
+--- category 2 (300s cap): counter_change_of_mind counter_floor_serve counter_not_for_you counter_route_change counter_second_order counter_serve_the_red counter_unspoken_request counter_which_one
+8 challenges against ws://127.0.0.1:8800, 300s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      instructed via /brain/chat_in
+      narrator +64.01s (say): 'Sorry -- actually, make it the green one instead. Leave the red where it is.'
+[  1/8] fail  live       counter_change_of_mind       system  1/3  sim  298.3s  wall 300.2s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  2/8] fail  live       counter_floor_serve          system  1/3  sim  297.9s  wall 300.2s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  3/8] fail  live       counter_not_for_you          system  0/3  sim  298.2s  wall 300.1s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  4/8] fail  live       counter_route_change         system  0/2  sim  298.3s  wall 300.1s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+      narrator +46.22s (say): "Sorry to interrupt -- when you've done that, could you bring the blue one to the right-hand seat as well? No rush."
+[  5/8] fail  live       counter_second_order         system  1/3  sim  298.2s  wall 300.1s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  6/8] fail  live       counter_serve_the_red        system  1/2  sim  298.3s  wall 300.1s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  7/8] PASS  live       counter_unspoken_request     system  2/2  sim   18.7s  wall  19.0s  
+      instructed via /brain/chat_in
+[  8/8] fail  live       counter_which_one            system  0/2  sim  298.3s  wall 300.1s  harness timeout (challenge still running)
+
+1/8 challenges passed, 6/20 goals
+results -> sim/bench/results/eval/counter_cat2.json
+--- category 3 (480s cap): counter_cafe_shift counter_carried_detail counter_floor_two_orders counter_three_orders
+4 challenges against ws://127.0.0.1:8800, 480s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      instructed via /brain/chat_in
+      narrator +45.16s (say): "While you're up -- the blue one goes to the middle seat as well, when you've done that one."
+[  1/4] fail  live       counter_cafe_shift           system  1/5  sim  477.0s  wall 480.6s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  2/4] fail  live       counter_carried_detail       system  1/4  sim  477.2s  wall 480.2s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  3/4] fail  live       counter_floor_two_orders     system  0/3  sim  476.4s  wall 480.2s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  4/4] fail  live       counter_three_orders         system  0/3  sim  476.8s  wall 480.1s  harness timeout (challenge still running)
+
+0/4 challenges passed, 2/15 goals
+results -> sim/bench/results/eval/counter_cat3.json
+
+per call: $0.00437   (5,456 in / 16 out avg)
+
+########## pantry
+--- backend: Innate proxy
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (189x185 @ 0.05m): 6584 free, 397 occupied, 27984 unknown (25212 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 7
+--- category 1 (180s cap): pantry_count_jars
+1 challenges against ws://127.0.0.1:8800, 180s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      instructed via /brain/chat_in
+[  1/1] fail  live       pantry_count_jars            system  0/2  sim  179.0s  wall 180.1s  harness timeout (challenge still running)
+
+0/1 challenges passed, 0/2 goals
+results -> sim/bench/results/eval/pantry_cat1.json
+--- category 2 (300s cap): pantry_misfiled pantry_restock
+2 challenges against ws://127.0.0.1:8800, 300s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      instructed via /brain/chat_in
+[  1/2] fail  live       pantry_misfiled              system  0/2  sim  298.2s  wall 300.2s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  2/2] fail  live       pantry_restock               system  0/2  sim  298.2s  wall 300.1s  harness timeout (challenge still running)
+
+0/2 challenges passed, 0/4 goals
+results -> sim/bench/results/eval/pantry_cat2.json
+--- category 3 (480s cap): pantry_stocktake
+1 challenges against ws://127.0.0.1:8800, 480s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      instructed via /brain/chat_in
+[  1/1] fail  live       pantry_stocktake             system  0/5  sim  477.2s  wall 480.0s  harness timeout (challenge still running)
+
+0/1 challenges passed, 0/5 goals
+results -> sim/bench/results/eval/pantry_cat3.json
+
+per call: $0.00438   (5,488 in / 16 out avg)
+
+########## workshop
+--- backend: Innate proxy
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (302x300 @ 0.05m): 16960 free, 858 occupied, 72782 unknown (67352 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 7
+--- category 1 (180s cap): workshop_count_benches workshop_occlusion
+2 challenges against ws://127.0.0.1:8800, 180s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      instructed via /brain/chat_in
+[  1/2] fail  live       workshop_count_benches       system  0/2  sim  179.2s  wall 180.1s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  2/2] fail  live       workshop_occlusion           system  0/1  sim  179.0s  wall 180.1s  harness timeout (challenge still running)
+
+0/2 challenges passed, 0/3 goals
+results -> sim/bench/results/eval/workshop_cat1.json
+--- category 2 (300s cap): workshop_fetch_gauge
+1 challenges against ws://127.0.0.1:8800, 300s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      instructed via /brain/chat_in
+[  1/1] fail  live       workshop_fetch_gauge         system  1/2  sim  298.2s  wall 300.2s  harness timeout (challenge still running)
+
+0/1 challenges passed, 1/2 goals
+results -> sim/bench/results/eval/workshop_cat2.json
+--- category 3 (480s cap): workshop_bench_tour
+1 challenges against ws://127.0.0.1:8800, 480s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      instructed via /brain/chat_in
+[  1/1] fail  live       workshop_bench_tour          system  0/5  sim  420.0s  wall 422.7s  time limit
+
+0/1 challenges passed, 0/5 goals
+results -> sim/bench/results/eval/workshop_cat3.json
+
+per call: $0.00439   (5,511 in / 16 out avg)
+
+########## gallery
+--- backend: Innate proxy
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (379x379 @ 0.05m): 30681 free, 867 occupied, 112093 unknown (106501 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 7
+--- category 1 (180s cap): gallery_count_ring gallery_ladder_reach
+2 challenges against ws://127.0.0.1:8800, 180s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      instructed via /brain/chat_in
+[  1/2] fail  live       gallery_count_ring           system  1/2  sim  178.9s  wall 180.0s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  2/2] fail  live       gallery_ladder_reach         system  0/1  sim  178.9s  wall 180.2s  harness timeout (challenge still running)
+
+0/2 challenges passed, 1/3 goals
+results -> sim/bench/results/eval/gallery_cat1.json
+--- category 2 (300s cap): gallery_fetch_mug
+1 challenges against ws://127.0.0.1:8800, 300s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      instructed via /brain/chat_in
+[  1/1] fail  live       gallery_fetch_mug            system  1/2  sim  297.4s  wall 300.1s  harness timeout (challenge still running)
+
+0/1 challenges passed, 1/2 goals
+results -> sim/bench/results/eval/gallery_cat2.json
+--- category 3 (480s cap): gallery_ring_tour
+1 challenges against ws://127.0.0.1:8800, 480s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      instructed via /brain/chat_in
+[  1/1] fail  live       gallery_ring_tour            system  1/4  sim  300.0s  wall 301.9s  time limit
+
+0/1 challenges passed, 1/4 goals
+results -> sim/bench/results/eval/gallery_cat3.json
+
+per call: $0.00439   (5,513 in / 16 out avg)
+
+########## rounds
+--- backend: Innate proxy
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (382x331 @ 0.05m): 21617 free, 1960 occupied, 102865 unknown (95924 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 7
+--- category 1 (180s cap): rounds_count_doors rounds_find_bathroom
+2 challenges against ws://127.0.0.1:8800, 180s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      instructed via /brain/chat_in
+[  1/2] fail  live       rounds_count_doors           system  0/2  sim  178.9s  wall 180.2s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  2/2] fail  live       rounds_find_bathroom         system  0/1  sim  178.6s  wall 180.0s  harness timeout (challenge still running)
+
+0/2 challenges passed, 0/3 goals
+results -> sim/bench/results/eval/rounds_cat1.json
+--- category 2 (300s cap): rounds_narrow_door
+1 challenges against ws://127.0.0.1:8800, 300s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      instructed via /brain/chat_in
+[  1/1] PASS  live       rounds_narrow_door           system  1/1  sim  135.3s  wall 136.2s  
+
+1/1 challenges passed, 1/1 goals
+results -> sim/bench/results/eval/rounds_cat2.json
+--- category 3 (480s cap): rounds_all_doors rounds_deliver_book
+2 challenges against ws://127.0.0.1:8800, 480s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      prime failed: TimeoutExpired: Command '['bash', '/home/sarta/prime_brain.sh', '--reset']' timed out after 240 seconds
+      instructed via /brain/chat_in (FAILED: TimeoutExpired: Command '['bash', '/home/sarta/say_brief.sh']' timed out after 120 seconds)
+[  1/2] fail  live       rounds_all_doors             system  0/4  sim  472.1s  wall 480.1s  harness timeout (challenge still running)
+      prime failed: TimeoutExpired: Command '['bash', '/home/sarta/prime_brain.sh', '--reset']' timed out after 240 seconds
+      instructed via /brain/chat_in (FAILED: TimeoutExpired: Command '['bash', '/home/sarta/say_brief.sh']' timed out after 120 seconds)
+[  2/2] fail  live       rounds_deliver_book          system  0/3  sim  475.6s  wall 480.0s  harness timeout (challenge still running)
+
+0/2 challenges passed, 0/7 goals
+results -> sim/bench/results/eval/rounds_cat3.json
+
+per call: $0.00442   (5,566 in / 15 out avg)
+
+########## household
+--- backend: Innate proxy
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (340x339 @ 0.05m): 20683 free, 1694 occupied, 92883 unknown (86975 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 0
+    the CONTAINER cannot reach Innate auth -- skipping household
+
+########## bridge
+--- backend: Innate proxy
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (282x289 @ 0.05m): 7151 free, 643 occupied, 73704 unknown (70318 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 0
+    the CONTAINER cannot reach Innate auth -- skipping bridge
+
+########## blaze
+--- backend: Innate proxy
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (236x233 @ 0.05m): 9537 free, 990 occupied, 44461 unknown (40780 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 0
+    the CONTAINER cannot reach Innate auth -- skipping blaze
+
+=== done. results in sim/bench/results/eval, log sim/bench/results/eval/run-20260817-184317.log
+------------------------------------------------------------------
+TOTAL                        1370                       $ 6.0531
+
+per call: $0.00442   (5,566 in / 15 out avg)

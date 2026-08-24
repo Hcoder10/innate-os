@@ -1,0 +1,968 @@
+{
+  "result": {
+    "passed": false,
+    "goals_done": 0,
+    "goals_total": 2,
+    "reason": "agent finished its plan"
+  },
+  "trace": [
+    {
+      "turn": 0,
+      "pose_before": [
+        0.0,
+        -1.35,
+        1.5707963267948966
+      ],
+      "heading_deg_before": 90.0,
+      "last_result": "",
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 2.0
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 1,
+      "pose_before": [
+        -0.017816830614598135,
+        0.4764081723530649,
+        1.5117555136218457
+      ],
+      "heading_deg_before": 86.6,
+      "last_result": "driving 2.00 m (gave up after 1.83 of 2.00 m: took too long, probably blocked)",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 45
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 2,
+      "pose_before": [
+        0.07067395050987958,
+        0.476431917699622,
+        2.273639283478024
+      ],
+      "heading_deg_before": 130.3,
+      "last_result": "turning 45 degrees",
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 0.8
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 3,
+      "pose_before": [
+        0.02321559747074139,
+        0.46986398289999043,
+        1.869602116785669
+      ],
+      "heading_deg_before": 107.1,
+      "last_result": "driving 0.80 m (gave up after 0.05 of 0.80 m, heading drifted 23 deg right: took too long, probably blocked)",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 60
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 4,
+      "pose_before": [
+        0.12496863006450927,
+        0.5189743070405537,
+        2.86685260047752
+      ],
+      "heading_deg_before": 164.3,
+      "last_result": "turning 60 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 35
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 5,
+      "pose_before": [
+        0.15905572281292227,
+        0.5665442050590732,
+        3.4300271626642598
+      ],
+      "heading_deg_before": 196.5,
+      "last_result": "turning 35 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 33
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 6,
+      "pose_before": [
+        0.19379345605930323,
+        0.6379174065293746,
+        3.957233688150813
+      ],
+      "heading_deg_before": 226.7,
+      "last_result": "turning 33 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -33
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 7,
+      "pose_before": [
+        0.1948310460052255,
+        0.6351861903607361,
+        3.4286806305236808
+      ],
+      "heading_deg_before": 196.4,
+      "last_result": "turning -33 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 33
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 8,
+      "pose_before": [
+        0.1942782580796726,
+        0.6377943008429848,
+        3.9566663196561502
+      ],
+      "heading_deg_before": 226.7,
+      "last_result": "turning 33 degrees",
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 1.2
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 9,
+      "pose_before": [
+        -0.12309339746724213,
+        0.5379734583694057,
+        0.9540989559119546
+      ],
+      "heading_deg_before": 54.7,
+      "last_result": "driving 1.20 m (gave up after 0.33 of 1.20 m, heading drifted 172 deg right: took too long, probably blocked)",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 45
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 10,
+      "pose_before": [
+        -0.07610773732748322,
+        0.4643307322513495,
+        1.6895001466696962
+      ],
+      "heading_deg_before": 96.8,
+      "last_result": "turning 45 degrees",
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 0.4
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 11,
+      "pose_before": [
+        -0.06018584635442916,
+        0.7549424306984347,
+        -0.865178839157831
+      ],
+      "heading_deg_before": -49.6,
+      "last_result": "driving 0.40 m (gave up after 0.29 of 0.40 m, heading drifted 146 deg right: took too long, probably blocked)",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -104
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 12,
+      "pose_before": [
+        0.04107243575404352,
+        0.7886194759781738,
+        -2.6343381619631097
+      ],
+      "heading_deg_before": -150.9,
+      "last_result": "turning -104 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 26
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 13,
+      "pose_before": [
+        0.036381636609944805,
+        0.7938001685014084,
+        -2.226450474447026
+      ],
+      "heading_deg_before": -127.6,
+      "last_result": "turning 26 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 21
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 14,
+      "pose_before": [
+        0.03518188920342547,
+        0.7950442306052236,
+        -1.90752883840241
+      ],
+      "heading_deg_before": -109.3,
+      "last_result": "turning 21 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 45
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 15,
+      "pose_before": [
+        0.03266422881067064,
+        0.7957276096172434,
+        -1.170699510530242
+      ],
+      "heading_deg_before": -67.1,
+      "last_result": "turning 45 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -25
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 16,
+      "pose_before": [
+        0.034146532466048915,
+        0.7956752605341797,
+        -1.5574385365453172
+      ],
+      "heading_deg_before": -89.2,
+      "last_result": "turning -25 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -41
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 17,
+      "pose_before": [
+        0.03598993210737325,
+        0.7943992068822995,
+        -2.226335131821038
+      ],
+      "heading_deg_before": -127.6,
+      "last_result": "turning -41 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -60
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 18,
+      "pose_before": [
+        0.03639908226050254,
+        0.7895892132946352,
+        -3.227522801098732
+      ],
+      "heading_deg_before": -184.9,
+      "last_result": "turning -60 degrees",
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 1.0
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 19,
+      "pose_before": [
+        -0.9291953214319892,
+        0.8863410779672452,
+        -3.238420389993009
+      ],
+      "heading_deg_before": -185.5,
+      "last_result": "driving 1.00 m",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 60
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 20,
+      "pose_before": [
+        -0.929945418078812,
+        0.8919351651249363,
+        -2.236275111544203
+      ],
+      "heading_deg_before": -128.1,
+      "last_result": "turning 60 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -25
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 21,
+      "pose_before": [
+        -0.9291417686179886,
+        0.8901696879454338,
+        -2.6279721728350247
+      ],
+      "heading_deg_before": -150.6,
+      "last_result": "turning -25 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -25.0
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 22,
+      "pose_before": [
+        -0.9291101990454119,
+        0.8879760023472444,
+        -3.018395780361834
+      ],
+      "heading_deg_before": -172.9,
+      "last_result": "turning -25 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 34
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 23,
+      "pose_before": [
+        -0.9293531769124868,
+        0.891255356683681,
+        -2.4708277816472983
+      ],
+      "heading_deg_before": -141.6,
+      "last_result": "turning 34 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 19
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 24,
+      "pose_before": [
+        -0.9300567265371307,
+        0.8926782350053717,
+        -2.18406285002448
+      ],
+      "heading_deg_before": -125.1,
+      "last_result": "turning 19 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -18
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 25,
+      "pose_before": [
+        -0.9293745603467678,
+        0.8915671964949229,
+        -2.450780956659372
+      ],
+      "heading_deg_before": -140.4,
+      "last_result": "turning -18 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -44
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 26,
+      "pose_before": [
+        -0.9292809717219024,
+        0.8874251607157677,
+        -3.1695969234948813
+      ],
+      "heading_deg_before": -181.6,
+      "last_result": "turning -44 degrees",
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 0.7
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 27,
+      "pose_before": [
+        -1.6013000000110909,
+        0.9141287746502579,
+        -3.18090380832694
+      ],
+      "heading_deg_before": -182.3,
+      "last_result": "driving 0.70 m",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 60
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 28,
+      "pose_before": [
+        -1.6021907388936016,
+        0.919672114159499,
+        -2.180086896402308
+      ],
+      "heading_deg_before": -124.9,
+      "last_result": "turning 60 degrees",
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 0.4
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 29,
+      "pose_before": [
+        -1.7935236498322298,
+        0.6019632756065002,
+        -2.7861542279824905
+      ],
+      "heading_deg_before": -159.6,
+      "last_result": "driving 0.40 m",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -16
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 30,
+      "pose_before": [
+        -1.791711496346954,
+        0.5995238884157404,
+        -3.036385664899726
+      ],
+      "heading_deg_before": -174.0,
+      "last_result": "turning -16 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 45
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 31,
+      "pose_before": [
+        -1.7425633945841454,
+        0.678093396818195,
+        -2.3009733195755087
+      ],
+      "heading_deg_before": -131.8,
+      "last_result": "turning 45 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -44
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 32,
+      "pose_before": [
+        -1.7415681564306964,
+        0.6743357724362069,
+        -3.0218283094208758
+      ],
+      "heading_deg_before": -173.1,
+      "last_result": "turning -44 degrees",
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 0.55
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 33,
+      "pose_before": [
+        -1.827701070992662,
+        0.6650833003692093,
+        -3.1748819371843755
+      ],
+      "heading_deg_before": -181.9,
+      "last_result": "driving 0.55 m (gave up after 0.09 of 0.55 m, heading drifted 9 deg right: took too long, probably blocked)",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 90
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 34,
+      "pose_before": [
+        -1.8447364513596112,
+        0.8278491168499258,
+        -1.6333172003398944
+      ],
+      "heading_deg_before": -93.6,
+      "last_result": "turning 90 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -11
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 35,
+      "pose_before": [
+        -1.8439409726185205,
+        0.8277718832966735,
+        -1.7799557742918266
+      ],
+      "heading_deg_before": -102.0,
+      "last_result": "turning -11 degrees",
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 1.5
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 36,
+      "pose_before": [
+        -1.826303153364255,
+        0.6463536814332541,
+        -3.1439093819534047
+      ],
+      "heading_deg_before": -180.1,
+      "last_result": "driving 1.50 m (gave up after 0.18 of 1.50 m, heading drifted 78 deg right: took too long, probably blocked)",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -90
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 37,
+      "pose_before": [
+        -1.8091314705774075,
+        0.6122181965210975,
+        -4.6559312930812915
+      ],
+      "heading_deg_before": -266.8,
+      "last_result": "turning -90 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 173.4
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 38,
+      "pose_before": [
+        -1.7657379562038467,
+        0.8053060330030817,
+        -1.6785744350281182
+      ],
+      "heading_deg_before": -96.2,
+      "last_result": "turning 173 degrees",
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 1.0
+        }
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 39,
+      "pose_before": [
+        -1.8274809557989462,
+        0.5533155582211343,
+        -3.1384262479710854
+      ],
+      "heading_deg_before": -179.8,
+      "last_result": "driving 1.00 m (gave up after 0.26 of 1.00 m, heading drifted 84 deg right: took too long, probably blocked)",
+      "action": {
+        "action": "finish",
+        "args": {}
+      },
+      "goals": [
+        {
+          "id": "fetch_jar",
+          "description": "Bring jar from bottom shelf to counter"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    }
+  ]
+}

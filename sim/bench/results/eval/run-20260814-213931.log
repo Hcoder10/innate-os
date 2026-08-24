@@ -1,0 +1,65 @@
+=== full benchmark, maps: counter pantry workshop gallery rounds household bridge blaze
+=== caps: cat1 180s, cat2 300s, cat3 480s
+
+########## counter
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (182x177 @ 0.05m): 5496 free, 506 occupied, 26212 unknown (23397 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 7
+--- category 1 (180s cap): counter_out_of_reach counter_read_the_pass counter_which_colour counter_within_reach
+[  1/4] fail  live       counter_out_of_reach         system  0/3  sim  163.3s  wall 180.0s  harness timeout (challenge still running)
+[  2/4] PASS  live       counter_read_the_pass        system  1/1  sim    8.3s  wall  10.7s  
+[  3/4] PASS  live       counter_which_colour         system  1/1  sim    2.4s  wall   2.4s  
+[  4/4] fail  live       counter_within_reach         system  0/2  sim  160.0s  wall 180.0s  harness timeout (challenge still running)
+2/4 challenges passed, 2/7 goals
+--- category 2 (300s cap): counter_change_of_mind counter_not_for_you counter_second_order counter_serve_the_red counter_which_one
+[  1/5] fail  live       counter_change_of_mind       system  0/3  sim  270.1s  wall 300.0s  harness timeout (challenge still running)
+[  2/5] fail  live       counter_not_for_you          system  0/3  sim  269.9s  wall 300.0s  harness timeout (challenge still running)
+[  3/5] fail  live       counter_second_order         system  0/3  sim  270.0s  wall 300.0s  harness timeout (challenge still running)
+[  4/5] fail  live       counter_serve_the_red        system  1/2  sim  270.0s  wall 300.0s  harness timeout (challenge still running)
+[  5/5] fail  live       counter_which_one            system  0/2  sim  270.1s  wall 300.0s  harness timeout (challenge still running)
+0/5 challenges passed, 1/13 goals
+--- category 3 (480s cap): counter_cafe_shift counter_three_orders
+[  1/2] fail  live       counter_cafe_shift           system  0/5  sim  430.0s  wall 480.0s  harness timeout (challenge still running)
+[  2/2] fail  live       counter_three_orders         system  0/3  sim  433.3s  wall 480.0s  harness timeout (challenge still running)
+0/2 challenges passed, 0/8 goals
+
+per call: $0.00317   (4,171 in / 11 out avg)
+
+########## pantry
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (189x185 @ 0.05m): 6584 free, 397 occupied, 27984 unknown (25212 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 7
+--- category 1 (180s cap): pantry_count_jars
+[  1/1] fail  live       pantry_count_jars            system  0/2  sim  160.1s  wall 180.0s  harness timeout (challenge still running)
+0/1 challenges passed, 0/2 goals
+--- category 2 (300s cap): pantry_misfiled pantry_restock
+[  1/2] fail  live       pantry_misfiled              system  0/2  sim  270.1s  wall 300.0s  harness timeout (challenge still running)
+[  2/2] fail  live       pantry_restock               system  0/2  sim  270.0s  wall 300.0s  harness timeout (challenge still running)
+0/2 challenges passed, 0/4 goals
+--- category 3 (480s cap): pantry_stocktake
+[  1/1] fail  live       pantry_stocktake             system  0/5  sim  433.3s  wall 480.0s  harness timeout (challenge still running)
+0/1 challenges passed, 0/5 goals
+
+per call: $0.00318   (4,187 in / 11 out avg)
+
+########## workshop
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (302x300 @ 0.05m): 16960 free, 858 occupied, 72782 unknown (67352 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 7
+--- category 1 (180s cap): workshop_count_benches workshop_occlusion
+[  1/2] fail  live       workshop_count_benches       system  1/2  sim  160.0s  wall 180.0s  harness timeout (challenge still running)
+[  2/2] PASS  live       workshop_occlusion           system  1/1  sim   43.6s  wall  47.0s  
+1/2 challenges passed, 2/3 goals
+--- category 2 (300s cap): workshop_fetch_gauge
+[  1/1] fail  live       workshop_fetch_gauge         system  1/2  sim  270.0s  wall 300.0s  harness timeout (challenge still running)
+0/1 challenges passed, 1/2 goals
+--- category 3 (480s cap): workshop_bench_tour

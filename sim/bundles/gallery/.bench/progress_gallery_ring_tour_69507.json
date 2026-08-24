@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "challenges": {
+    "gallery_ring_tour": {
+      "attempts": 1,
+      "passed": true,
+      "best_time_s": 56.5,
+      "last_result": "passed",
+      "updated_at": "2026-08-12T05:45:44-0700"
+    }
+  }
+}

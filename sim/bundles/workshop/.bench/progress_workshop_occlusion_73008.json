@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "challenges": {
+    "workshop_occlusion": {
+      "attempts": 1,
+      "passed": false,
+      "best_time_s": null,
+      "last_result": "failed",
+      "updated_at": "2026-08-12T05:56:01-0700"
+    }
+  }
+}

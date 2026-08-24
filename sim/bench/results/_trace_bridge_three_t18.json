@@ -1,0 +1,442 @@
+{
+  "result": {
+    "passed": false,
+    "goals_done": 1,
+    "goals_total": 3,
+    "reason": "went through the wrong door"
+  },
+  "trace": [
+    {
+      "turn": 0,
+      "pose_before": [
+        0.0,
+        -2.9,
+        1.5707963267948966
+      ],
+      "heading_deg_before": 90.0,
+      "last_result": "",
+      "blocked_streak": 0,
+      "warned": false,
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -35
+        }
+      },
+      "goals": [
+        {
+          "id": "gate1",
+          "description": "Go right at 1st gate"
+        },
+        {
+          "id": "gate2",
+          "description": "Go left at 2nd gate"
+        },
+        {
+          "id": "gate3",
+          "description": "Go right at 3rd gate"
+        }
+      ],
+      "facts": {},
+      "constraints": [
+        "Do not take wrong door"
+      ]
+    },
+    {
+      "turn": 1,
+      "pose_before": [
+        -0.0017613150422397836,
+        -2.8990441399521396,
+        1.0040206426000262
+      ],
+      "heading_deg_before": 57.5,
+      "last_result": "turning -35 degrees",
+      "blocked_streak": 0,
+      "warned": false,
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -30
+        }
+      },
+      "goals": [
+        {
+          "id": "gate1",
+          "description": "Go right at 1st gate"
+        },
+        {
+          "id": "gate2",
+          "description": "Go left at 2nd gate"
+        },
+        {
+          "id": "gate3",
+          "description": "Go right at 3rd gate"
+        }
+      ],
+      "facts": {},
+      "constraints": [
+        "Do not take wrong door"
+      ]
+    },
+    {
+      "turn": 2,
+      "pose_before": [
+        -0.0028939972459047585,
+        -2.8968750467692588,
+        0.5242936599463855
+      ],
+      "heading_deg_before": 30.0,
+      "last_result": "turning -30 degrees",
+      "blocked_streak": 0,
+      "warned": false,
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 60
+        }
+      },
+      "goals": [
+        {
+          "id": "gate1",
+          "description": "Go right at 1st gate"
+        },
+        {
+          "id": "gate2",
+          "description": "Go left at 2nd gate"
+        },
+        {
+          "id": "gate3",
+          "description": "Go right at 3rd gate"
+        }
+      ],
+      "facts": {},
+      "constraints": [
+        "Do not take wrong door"
+      ]
+    },
+    {
+      "turn": 3,
+      "pose_before": [
+        -0.00045303142463707627,
+        -2.900036006214248,
+        1.5279106421044732
+      ],
+      "heading_deg_before": 87.5,
+      "last_result": "turning 60 degrees",
+      "blocked_streak": 0,
+      "warned": false,
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -45
+        }
+      },
+      "goals": [
+        {
+          "id": "gate1",
+          "description": "Go right at 1st gate"
+        },
+        {
+          "id": "gate2",
+          "description": "Go left at 2nd gate"
+        },
+        {
+          "id": "gate3",
+          "description": "Go right at 3rd gate"
+        }
+      ],
+      "facts": {},
+      "constraints": [
+        "Do not take wrong door"
+      ]
+    },
+    {
+      "turn": 4,
+      "pose_before": [
+        -0.0025051350762582783,
+        -2.898392407678257,
+        0.7913565651950814
+      ],
+      "heading_deg_before": 45.3,
+      "last_result": "turning -45 degrees",
+      "blocked_streak": 0,
+      "warned": false,
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 15
+        }
+      },
+      "goals": [
+        {
+          "id": "gate1",
+          "description": "Go right at 1st gate"
+        },
+        {
+          "id": "gate2",
+          "description": "Go left at 2nd gate"
+        },
+        {
+          "id": "gate3",
+          "description": "Go right at 3rd gate"
+        }
+      ],
+      "facts": {},
+      "constraints": [
+        "Do not take wrong door"
+      ]
+    },
+    {
+      "turn": 5,
+      "pose_before": [
+        -0.001810881106212025,
+        -2.8993832905984656,
+        1.0042880432468724
+      ],
+      "heading_deg_before": 57.5,
+      "last_result": "turning 15 degrees",
+      "blocked_streak": 0,
+      "warned": false,
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -35
+        }
+      },
+      "goals": [
+        {
+          "id": "gate1",
+          "description": "Go right at 1st gate"
+        },
+        {
+          "id": "gate2",
+          "description": "Go left at 2nd gate"
+        },
+        {
+          "id": "gate3",
+          "description": "Go right at 3rd gate"
+        }
+      ],
+      "facts": {},
+      "constraints": [
+        "Do not take wrong door"
+      ]
+    },
+    {
+      "turn": 6,
+      "pose_before": [
+        -0.0029397629272010723,
+        -2.896923540677524,
+        0.44019536951860083
+      ],
+      "heading_deg_before": 25.2,
+      "last_result": "turning -35 degrees",
+      "blocked_streak": 0,
+      "warned": false,
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 65
+        }
+      },
+      "goals": [
+        {
+          "id": "gate1",
+          "description": "Go right at 1st gate"
+        },
+        {
+          "id": "gate2",
+          "description": "Go left at 2nd gate"
+        },
+        {
+          "id": "gate3",
+          "description": "Go right at 3rd gate"
+        }
+      ],
+      "facts": {},
+      "constraints": [
+        "Do not take wrong door"
+      ]
+    },
+    {
+      "turn": 7,
+      "pose_before": [
+        -0.00013851529497742847,
+        -2.9007709282490914,
+        1.5293026522166493
+      ],
+      "heading_deg_before": 87.6,
+      "last_result": "turning 65 degrees",
+      "blocked_streak": 0,
+      "warned": false,
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -30
+        }
+      },
+      "goals": [
+        {
+          "id": "gate1",
+          "description": "Go right at 1st gate"
+        },
+        {
+          "id": "gate2",
+          "description": "Go left at 2nd gate"
+        },
+        {
+          "id": "gate3",
+          "description": "Go right at 3rd gate"
+        }
+      ],
+      "facts": {},
+      "constraints": [
+        "Do not take wrong door"
+      ]
+    },
+    {
+      "turn": 8,
+      "pose_before": [
+        -0.001392976687634854,
+        -2.900069368382556,
+        1.0531634800036171
+      ],
+      "heading_deg_before": 60.3,
+      "last_result": "turning -30 degrees",
+      "blocked_streak": 0,
+      "warned": false,
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 1.2
+        }
+      },
+      "goals": [
+        {
+          "id": "gate1",
+          "description": "Go right at 1st gate"
+        },
+        {
+          "id": "gate2",
+          "description": "Go left at 2nd gate"
+        },
+        {
+          "id": "gate3",
+          "description": "Go right at 3rd gate"
+        }
+      ],
+      "facts": {},
+      "constraints": [
+        "Do not take wrong door"
+      ]
+    },
+    {
+      "turn": 9,
+      "pose_before": [
+        0.5857511332318242,
+        -1.8872459350077353,
+        1.0457922901804946
+      ],
+      "heading_deg_before": 59.9,
+      "last_result": "driving 1.20 m",
+      "blocked_streak": 0,
+      "warned": false,
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 35
+        }
+      },
+      "goals": [
+        {
+          "id": "gate1",
+          "description": "Go right at 1st gate"
+        },
+        {
+          "id": "gate2",
+          "description": "Go left at 2nd gate"
+        },
+        {
+          "id": "gate3",
+          "description": "Go right at 3rd gate"
+        }
+      ],
+      "facts": {},
+      "constraints": [
+        "Do not take wrong door"
+      ]
+    },
+    {
+      "turn": 10,
+      "pose_before": [
+        0.5877190978973046,
+        -1.8877451570327082,
+        1.611766610975222
+      ],
+      "heading_deg_before": 92.3,
+      "last_result": "turning 35 degrees",
+      "blocked_streak": 0,
+      "warned": false,
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 1.5
+        }
+      },
+      "goals": [
+        {
+          "id": "gate1",
+          "description": "Go right at 1st gate"
+        },
+        {
+          "id": "gate2",
+          "description": "Go left at 2nd gate"
+        },
+        {
+          "id": "gate3",
+          "description": "Go right at 3rd gate"
+        }
+      ],
+      "facts": {},
+      "constraints": [
+        "Do not take wrong door"
+      ]
+    },
+    {
+      "turn": 11,
+      "pose_before": [
+        0.5357303023007137,
+        -0.41378611988461833,
+        1.6082986145400227
+      ],
+      "heading_deg_before": 92.1,
+      "last_result": "driving 1.50 m",
+      "blocked_streak": 0,
+      "warned": false,
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 1.0
+        }
+      },
+      "goals": [
+        {
+          "id": "gate1",
+          "description": "Go right at 1st gate"
+        },
+        {
+          "id": "gate2",
+          "description": "Go left at 2nd gate"
+        },
+        {
+          "id": "gate3",
+          "description": "Go right at 3rd gate"
+        }
+      ],
+      "facts": {},
+      "constraints": [
+        "Do not take wrong door"
+      ]
+    }
+  ]
+}

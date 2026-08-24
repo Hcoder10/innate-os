@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "challenges": {
+    "gallery_fetch_mug": {
+      "attempts": 1,
+      "passed": false,
+      "best_time_s": null,
+      "last_result": "failed",
+      "updated_at": "2026-08-12T05:55:09-0700"
+    }
+  }
+}

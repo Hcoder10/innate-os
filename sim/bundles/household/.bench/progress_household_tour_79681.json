@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "challenges": {
+    "household_tour": {
+      "attempts": 1,
+      "passed": true,
+      "best_time_s": 794.3,
+      "last_result": "passed",
+      "updated_at": "2026-08-12T06:30:16-0700"
+    }
+  }
+}

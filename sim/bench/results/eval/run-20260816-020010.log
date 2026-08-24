@@ -1,0 +1,55 @@
+=== full benchmark, maps: counter pantry workshop gallery rounds household bridge blaze
+=== caps: cat1 180s, cat2 300s, cat3 480s
+
+########## counter
+--- backend: Innate proxy
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (182x177 @ 0.05m): 5496 free, 506 occupied, 26212 unknown (23397 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 7
+--- category 1 (180s cap): counter_floor_within_reach counter_out_of_reach counter_read_the_pass counter_which_colour counter_within_reach
+5 challenges against ws://127.0.0.1:8800, 180s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      instructed via /brain/chat_in
+[  1/5] fail  live       counter_floor_within_reach   system  0/2  sim  167.8s  wall 180.1s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  2/5] fail  live       counter_out_of_reach         system  0/3  sim  167.8s  wall 180.1s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  3/5] PASS  live       counter_read_the_pass        system  1/1  sim    6.8s  wall   7.0s  
+      instructed via /brain/chat_in
+[  4/5] PASS  live       counter_which_colour         system  1/1  sim    2.6s  wall   4.7s  
+      instructed via /brain/chat_in
+[  5/5] fail  live       counter_within_reach         system  0/2  sim  169.8s  wall 180.2s  harness timeout (challenge still running)
+
+2/5 challenges passed, 2/9 goals
+results -> sim/bench/results/eval/counter_cat1.json
+--- category 2 (300s cap): counter_change_of_mind counter_floor_serve counter_not_for_you counter_second_order counter_serve_the_red counter_which_one
+6 challenges against ws://127.0.0.1:8800, 300s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      instructed via /brain/chat_in
+[  1/6] fail  live       counter_change_of_mind       system  0/3  sim  281.7s  wall 300.1s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  2/6] fail  live       counter_floor_serve          system  1/2  sim  281.7s  wall 300.1s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  3/6] fail  live       counter_not_for_you          system  1/3  sim  280.5s  wall 300.8s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  4/6] fail  live       counter_second_order         system  0/3  sim  281.8s  wall 300.2s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  5/6] fail  live       counter_serve_the_red        system  1/2  sim  279.7s  wall 300.2s  harness timeout (challenge still running)
+      instructed via /brain/chat_in
+[  6/6] fail  live       counter_which_one            system  0/2  sim  281.6s  wall 300.1s  harness timeout (challenge still running)
+
+0/6 challenges passed, 3/15 goals
+results -> sim/bench/results/eval/counter_cat2.json
+--- category 3 (480s cap): counter_cafe_shift counter_floor_two_orders counter_three_orders
+3 challenges against ws://127.0.0.1:8800, 480s each
+instructing via ws://127.0.0.1:9090
+brain primed (active + skills enabled)
+
+      instructed via /brain/chat_in

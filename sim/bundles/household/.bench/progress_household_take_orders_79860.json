@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "challenges": {
+    "household_take_orders": {
+      "attempts": 1,
+      "passed": true,
+      "best_time_s": 220.2,
+      "last_result": "passed",
+      "updated_at": "2026-08-12T06:31:12-0700"
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "challenges": {
+    "workshop_fetch_gauge": {
+      "attempts": 1,
+      "passed": false,
+      "best_time_s": null,
+      "last_result": "failed",
+      "updated_at": "2026-08-12T05:48:21-0700"
+    }
+  }
+}

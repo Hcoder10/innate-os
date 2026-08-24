@@ -1,0 +1,28 @@
+=== full benchmark, maps: counter pantry workshop gallery rounds household bridge blaze
+=== caps: cat1 180s, cat2 300s, cat3 480s
+
+########## counter
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (182x177 @ 0.05m): 5496 free, 506 occupied, 26212 unknown (23397 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 5
+    the CONTAINER cannot reach the shim -- skipping counter
+
+########## pantry
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (189x185 @ 0.05m): 6584 free, 397 occupied, 27984 unknown (25212 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 5
+    the CONTAINER cannot reach the shim -- skipping pantry
+
+########## workshop
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (302x300 @ 0.05m): 16960 free, 858 occupied, 72782 unknown (67352 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 5

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "challenges": {
+    "gallery_ladder_reach": {
+      "attempts": 1,
+      "passed": true,
+      "best_time_s": 18.5,
+      "last_result": "passed",
+      "updated_at": "2026-08-12T06:13:46-0700"
+    }
+  }
+}

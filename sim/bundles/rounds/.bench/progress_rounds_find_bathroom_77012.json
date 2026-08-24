@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "challenges": {
+    "rounds_find_bathroom": {
+      "attempts": 1,
+      "passed": true,
+      "best_time_s": 45.6,
+      "last_result": "passed",
+      "updated_at": "2026-08-12T06:08:25-0700"
+    }
+  }
+}

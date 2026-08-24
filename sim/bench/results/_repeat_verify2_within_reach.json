@@ -1,0 +1,50 @@
+[
+  {
+    "i": 0,
+    "passed": false,
+    "goals_done": 0,
+    "goals_total": 2,
+    "reason": "agent finished its plan",
+    "wall_s": 208.3
+  },
+  {
+    "i": 1,
+    "passed": false,
+    "goals_done": 0,
+    "goals_total": 2,
+    "reason": "agent finished its plan",
+    "wall_s": 582.1
+  },
+  {
+    "i": 2,
+    "passed": false,
+    "goals_done": 0,
+    "goals_total": 2,
+    "reason": "agent finished its plan",
+    "wall_s": 453.2
+  },
+  {
+    "i": 3,
+    "passed": false,
+    "goals_done": 0,
+    "goals_total": 2,
+    "reason": "agent finished its plan",
+    "wall_s": 445.6
+  },
+  {
+    "i": 4,
+    "passed": false,
+    "goals_done": 0,
+    "goals_total": 2,
+    "reason": "agent finished its plan",
+    "wall_s": 613.3
+  },
+  {
+    "i": 5,
+    "passed": false,
+    "goals_done": 0,
+    "goals_total": 2,
+    "reason": "agent finished its plan",
+    "wall_s": 497.5
+  }
+]

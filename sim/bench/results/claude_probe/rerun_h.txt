@@ -1,0 +1,4 @@
+counter counter_out_of_reach
+counter counter_floor_within_reach
+counter counter_floor_two_orders
+counter counter_cafe_shift

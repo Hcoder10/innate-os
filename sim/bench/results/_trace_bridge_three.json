@@ -1,0 +1,362 @@
+{
+  "result": {
+    "passed": false,
+    "goals_done": 1,
+    "goals_total": 3,
+    "reason": "went through the wrong door"
+  },
+  "trace": [
+    {
+      "turn": 0,
+      "pose_before": [
+        0.0,
+        -2.9,
+        1.5707963267948966
+      ],
+      "heading_deg_before": 90.0,
+      "last_result": "",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -30
+        }
+      },
+      "goals": [
+        {
+          "desc": "Go right at the first gate",
+          "id": "gate1"
+        },
+        {
+          "desc": "Go left at the second gate",
+          "id": "gate2"
+        },
+        {
+          "desc": "Go right at the third gate",
+          "id": "gate3"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 1,
+      "pose_before": [
+        -0.0015169021308707729,
+        -2.8992972327048814,
+        1.0923598506699872
+      ],
+      "heading_deg_before": 62.6,
+      "last_result": "turning -30 degrees",
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 1.5
+        }
+      },
+      "goals": [
+        {
+          "desc": "Go right at the first gate",
+          "id": "gate1"
+        },
+        {
+          "desc": "Go left at the second gate",
+          "id": "gate2"
+        },
+        {
+          "desc": "Go right at the third gate",
+          "id": "gate3"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 2,
+      "pose_before": [
+        0.6422064138620347,
+        -1.5767309084987542,
+        0.7736505750564397
+      ],
+      "heading_deg_before": 44.3,
+      "last_result": "driving 1.50 m",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": -30
+        }
+      },
+      "goals": [
+        {
+          "desc": "Go right at the first gate",
+          "id": "gate1"
+        },
+        {
+          "desc": "Go left at the second gate",
+          "id": "gate2"
+        },
+        {
+          "desc": "Go right at the third gate",
+          "id": "gate3"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 3,
+      "pose_before": [
+        0.6384679648965225,
+        -1.5721731925141116,
+        0.2873115851731553
+      ],
+      "heading_deg_before": 16.5,
+      "last_result": "turning -30 degrees",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 60
+        }
+      },
+      "goals": [
+        {
+          "desc": "Go right at the first gate",
+          "id": "gate1"
+        },
+        {
+          "desc": "Go left at the second gate",
+          "id": "gate2"
+        },
+        {
+          "desc": "Go right at the third gate",
+          "id": "gate3"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 4,
+      "pose_before": [
+        0.627650476038825,
+        -1.5825122397854259,
+        1.2864463133470876
+      ],
+      "heading_deg_before": 73.7,
+      "last_result": "turning 60 degrees",
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 1.5
+        }
+      },
+      "goals": [
+        {
+          "desc": "Go right at the first gate",
+          "id": "gate1"
+        },
+        {
+          "desc": "Go left at the second gate",
+          "id": "gate2"
+        },
+        {
+          "desc": "Go right at the third gate",
+          "id": "gate3"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 5,
+      "pose_before": [
+        0.7254310023978302,
+        -1.2038053044018473,
+        0.021672294376057024
+      ],
+      "heading_deg_before": 1.2,
+      "last_result": "driving 1.50 m (gave up after 0.39 of 1.50 m, heading drifted 72 deg right: took too long, probably blocked)",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 75
+        }
+      },
+      "goals": [
+        {
+          "desc": "Go right at the first gate",
+          "id": "gate1"
+        },
+        {
+          "desc": "Go left at the second gate",
+          "id": "gate2"
+        },
+        {
+          "desc": "Go right at the third gate",
+          "id": "gate3"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 6,
+      "pose_before": [
+        0.6275650017192983,
+        -1.273050242058659,
+        1.2868704936910944
+      ],
+      "heading_deg_before": 73.7,
+      "last_result": "turning 75 degrees",
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 1.5
+        }
+      },
+      "goals": [
+        {
+          "desc": "Go right at the first gate",
+          "id": "gate1"
+        },
+        {
+          "desc": "Go left at the second gate",
+          "id": "gate2"
+        },
+        {
+          "desc": "Go right at the third gate",
+          "id": "gate3"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 7,
+      "pose_before": [
+        0.7254311934767878,
+        -0.8874419266865791,
+        0.021659800596847682
+      ],
+      "heading_deg_before": 1.2,
+      "last_result": "driving 1.50 m (gave up after 0.40 of 1.50 m, heading drifted 72 deg right: took too long, probably blocked)",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 75
+        }
+      },
+      "goals": [
+        {
+          "desc": "Go right at the first gate",
+          "id": "gate1"
+        },
+        {
+          "desc": "Go left at the second gate",
+          "id": "gate2"
+        },
+        {
+          "desc": "Go right at the third gate",
+          "id": "gate3"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 8,
+      "pose_before": [
+        0.6276603393433148,
+        -0.9563351761405544,
+        1.2861763677119062
+      ],
+      "heading_deg_before": 73.7,
+      "last_result": "turning 75 degrees",
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 1.5
+        }
+      },
+      "goals": [
+        {
+          "desc": "Go right at the first gate",
+          "id": "gate1"
+        },
+        {
+          "desc": "Go left at the second gate",
+          "id": "gate2"
+        },
+        {
+          "desc": "Go right at the third gate",
+          "id": "gate3"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 9,
+      "pose_before": [
+        0.7254324972795447,
+        -0.569319661521699,
+        0.021620011443380778
+      ],
+      "heading_deg_before": 1.2,
+      "last_result": "driving 1.50 m (gave up after 0.40 of 1.50 m, heading drifted 72 deg right: took too long, probably blocked)",
+      "action": {
+        "action": "turn",
+        "args": {
+          "degrees": 75
+        }
+      },
+      "goals": [
+        {
+          "desc": "Go right at the first gate",
+          "id": "gate1"
+        },
+        {
+          "desc": "Go left at the second gate",
+          "id": "gate2"
+        },
+        {
+          "desc": "Go right at the third gate",
+          "id": "gate3"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    },
+    {
+      "turn": 10,
+      "pose_before": [
+        0.6276609159844447,
+        -0.6392242995440799,
+        1.2878212542049126
+      ],
+      "heading_deg_before": 73.8,
+      "last_result": "turning 75 degrees",
+      "action": {
+        "action": "forward",
+        "args": {
+          "metres": 0.8
+        }
+      },
+      "goals": [
+        {
+          "desc": "Go right at the first gate",
+          "id": "gate1"
+        },
+        {
+          "desc": "Go left at the second gate",
+          "id": "gate2"
+        },
+        {
+          "desc": "Go right at the third gate",
+          "id": "gate3"
+        }
+      ],
+      "facts": {},
+      "constraints": []
+    }
+  ]
+}

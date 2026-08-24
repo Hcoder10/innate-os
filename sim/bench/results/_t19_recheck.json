@@ -1,0 +1,142 @@
+[
+  {
+    "map": "counter",
+    "challenge": "counter_floor_two_orders",
+    "passed": false,
+    "goals_done": 0,
+    "goals_total": 3,
+    "reason": "agent finished its plan",
+    "turns": 66,
+    "wall_s": 674.0
+  },
+  {
+    "map": "counter",
+    "challenge": "counter_carried_detail",
+    "passed": false,
+    "goals_done": 1,
+    "goals_total": 4,
+    "reason": "agent finished its plan",
+    "turns": 31,
+    "wall_s": 489.1
+  },
+  {
+    "map": "counter",
+    "challenge": "counter_floor_within_reach",
+    "passed": false,
+    "goals_done": 0,
+    "goals_total": 3,
+    "reason": "agent finished its plan",
+    "turns": 46,
+    "wall_s": 672.8
+  },
+  {
+    "map": "counter",
+    "challenge": "counter_not_for_you",
+    "passed": true,
+    "goals_done": 3,
+    "goals_total": 3,
+    "reason": "",
+    "turns": 16,
+    "wall_s": 249.6
+  },
+  {
+    "map": "counter",
+    "challenge": "counter_three_orders",
+    "passed": false,
+    "goals_done": 0,
+    "goals_total": 3,
+    "reason": "agent finished its plan",
+    "turns": 9,
+    "wall_s": 114.7
+  },
+  {
+    "map": "counter",
+    "challenge": "counter_which_one",
+    "passed": false,
+    "goals_done": 0,
+    "goals_total": 2,
+    "reason": "agent finished its plan",
+    "turns": 37,
+    "wall_s": 505.2
+  },
+  {
+    "map": "pantry",
+    "challenge": "pantry_stocktake",
+    "passed": false,
+    "goals_done": 0,
+    "goals_total": 5,
+    "reason": "agent finished its plan",
+    "turns": 80,
+    "wall_s": 1366.2
+  },
+  {
+    "map": "workshop",
+    "challenge": "workshop_count_benches",
+    "passed": false,
+    "goals_done": 1,
+    "goals_total": 2,
+    "reason": "agent finished its plan",
+    "turns": 46,
+    "wall_s": 464.1
+  },
+  {
+    "map": "rounds",
+    "challenge": "rounds_count_doors",
+    "passed": false,
+    "goals_done": 1,
+    "goals_total": 2,
+    "reason": "agent finished its plan",
+    "turns": 46,
+    "wall_s": 311.7
+  },
+  {
+    "map": "rounds",
+    "challenge": "rounds_all_doors",
+    "passed": false,
+    "goals_done": 1,
+    "goals_total": 4,
+    "reason": "agent finished its plan",
+    "turns": 80,
+    "wall_s": 718.0
+  },
+  {
+    "map": "rounds",
+    "challenge": "rounds_find_bathroom",
+    "passed": false,
+    "goals_done": 0,
+    "goals_total": 1,
+    "reason": "agent finished its plan",
+    "turns": 46,
+    "wall_s": 298.8
+  },
+  {
+    "map": "rounds",
+    "challenge": "rounds_deliver_book",
+    "passed": false,
+    "goals_done": 0,
+    "goals_total": 3,
+    "reason": "agent finished its plan",
+    "turns": 100,
+    "wall_s": 702.8
+  },
+  {
+    "map": "household",
+    "challenge": "household_fetch_mug",
+    "passed": false,
+    "goals_done": 0,
+    "goals_total": 2,
+    "reason": "agent finished its plan",
+    "turns": 100,
+    "wall_s": 1122.0
+  },
+  {
+    "map": "bridge",
+    "challenge": "bridge_stutter",
+    "passed": false,
+    "goals_done": 2,
+    "goals_total": 5,
+    "reason": "went through the wrong door",
+    "turns": 18,
+    "wall_s": 159.7
+  }
+]

@@ -1,0 +1,1370 @@
+{"t": 1787017444.196, "model": "gemini-3.6-flash", "prompt": 1673, "cached": 0, "thoughts": 0, "output": 8, "total": 1681}
+{"t": 1787017447.964, "model": "gemini-3.6-flash", "prompt": 2948, "cached": 0, "thoughts": 0, "output": 8, "total": 2956}
+{"t": 1787017456.832, "model": "gemini-3.6-flash", "prompt": 4089, "cached": 0, "thoughts": 0, "output": 34, "total": 4123}
+{"t": 1787017459.373, "model": "gemini-3.6-flash", "prompt": 4056, "cached": 0, "thoughts": 0, "output": 8, "total": 4064}
+{"t": 1787017465.099, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1605}
+{"t": 1787017466.068, "model": "gemini-3.6-flash", "prompt": 5178, "cached": 0, "thoughts": 0, "output": 8, "total": 5186}
+{"t": 1787017473.015, "model": "gemini-3.6-flash", "prompt": 5242, "cached": 0, "thoughts": 0, "output": 8, "total": 5250}
+{"t": 1787017479.828, "model": "gemini-3.6-flash", "prompt": 5306, "cached": 0, "thoughts": 0, "output": 8, "total": 5314}
+{"t": 1787017481.67, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1718}
+{"t": 1787017488.45, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1142, "cached": 0, "thoughts": 0, "output": 36, "total": 1361}
+{"t": 1787017493.506, "model": "gemini-3.6-flash", "prompt": 5370, "cached": 0, "thoughts": 0, "output": 8, "total": 5378}
+{"t": 1787017501.856, "model": "gemini-3.6-flash", "prompt": 5434, "cached": 0, "thoughts": 0, "output": 8, "total": 5442}
+{"t": 1787017502.673, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1142, "cached": 0, "thoughts": 0, "output": 37, "total": 1531}
+{"t": 1787017509.107, "model": "gemini-3.6-flash", "prompt": 5498, "cached": 0, "thoughts": 0, "output": 8, "total": 5506}
+{"t": 1787017515.568, "model": "gemini-3.6-flash", "prompt": 5562, "cached": 0, "thoughts": 0, "output": 8, "total": 5570}
+{"t": 1787017522.247, "model": "gemini-3.6-flash", "prompt": 5626, "cached": 0, "thoughts": 0, "output": 8, "total": 5634}
+{"t": 1787017526.919, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 2257, "cached": 0, "thoughts": 0, "output": 1, "total": 2458}
+{"t": 1787017529.221, "model": "gemini-3.6-flash", "prompt": 5690, "cached": 0, "thoughts": 0, "output": 8, "total": 5698}
+{"t": 1787017535.966, "model": "gemini-3.6-flash", "prompt": 6981, "cached": 0, "thoughts": 0, "output": 32, "total": 7013}
+{"t": 1787017542.869, "model": "gemini-3.6-flash", "prompt": 5888, "cached": 0, "thoughts": 0, "output": 8, "total": 5896}
+{"t": 1787017545.524, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 1809}
+{"t": 1787017549.247, "model": "gemini-3.6-flash", "prompt": 5954, "cached": 0, "thoughts": 0, "output": 8, "total": 5962}
+{"t": 1787017551.917, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 1675}
+{"t": 1787017556.184, "model": "gemini-3.6-flash", "prompt": 6020, "cached": 0, "thoughts": 0, "output": 8, "total": 6028}
+{"t": 1787017559.303, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 1657}
+{"t": 1787017563.07, "model": "gemini-3.6-flash", "prompt": 6086, "cached": 0, "thoughts": 0, "output": 8, "total": 6094}
+{"t": 1787017567.5, "model": "gemini-3.6-flash", "prompt": 7374, "cached": 0, "thoughts": 0, "output": 22, "total": 7396}
+{"t": 1787017589.4, "model": "gemini-3.6-flash", "prompt": 7445, "cached": 0, "thoughts": 0, "output": 8, "total": 7453}
+{"t": 1787017611.077, "model": "gemini-3.6-flash", "prompt": 7502, "cached": 0, "thoughts": 0, "output": 8, "total": 7510}
+{"t": 1787017632.91, "model": "gemini-3.6-flash", "prompt": 7559, "cached": 0, "thoughts": 0, "output": 8, "total": 7567}
+{"t": 1787017636.23, "model": "gemini-3.6-flash", "prompt": 2951, "cached": 0, "thoughts": 0, "output": 8, "total": 2959}
+{"t": 1787017645.167, "model": "gemini-3.6-flash", "prompt": 4085, "cached": 0, "thoughts": 0, "output": 16, "total": 4101}
+{"t": 1787017646.563, "model": "gemini-3.6-flash", "prompt": 4025, "cached": 0, "thoughts": 0, "output": 16, "total": 4041}
+{"t": 1787017652.991, "model": "gemini-3.6-flash", "prompt": 5154, "cached": 0, "thoughts": 0, "output": 8, "total": 5162}
+{"t": 1787017655.946, "model": "gemini-3.6-flash", "prompt": 6435, "cached": 0, "thoughts": 0, "output": 31, "total": 6466}
+{"t": 1787017658.499, "model": "gemini-3.6-flash", "prompt": 2950, "cached": 0, "thoughts": 0, "output": 8, "total": 2958}
+{"t": 1787017667.1, "model": "gemini-3.6-flash", "prompt": 4090, "cached": 0, "thoughts": 0, "output": 20, "total": 4110}
+{"t": 1787017668.832, "model": "gemini-3.6-flash", "prompt": 4044, "cached": 0, "thoughts": 0, "output": 8, "total": 4052}
+{"t": 1787017675.664, "model": "gemini-3.6-flash", "prompt": 6382, "cached": 0, "thoughts": 0, "output": 16, "total": 6398}
+{"t": 1787017677.198, "model": "gemini-3.6-flash", "prompt": 5264, "cached": 0, "thoughts": 0, "output": 8, "total": 5272}
+{"t": 1787017683.828, "model": "gemini-3.6-flash", "prompt": 5327, "cached": 0, "thoughts": 0, "output": 8, "total": 5335}
+{"t": 1787017686.366, "model": "gemini-3.6-flash", "prompt": 6608, "cached": 0, "thoughts": 0, "output": 20, "total": 6628}
+{"t": 1787017687.576, "model": "gemini-3.6-flash", "prompt": 5504, "cached": 0, "thoughts": 0, "output": 8, "total": 5512}
+{"t": 1787017694.284, "model": "gemini-3.6-flash", "prompt": 5569, "cached": 0, "thoughts": 0, "output": 8, "total": 5577}
+{"t": 1787017696.948, "model": "gemini-3.6-flash", "prompt": 6849, "cached": 0, "thoughts": 0, "output": 19, "total": 6868}
+{"t": 1787017698.088, "model": "gemini-3.6-flash", "prompt": 5744, "cached": 0, "thoughts": 0, "output": 8, "total": 5752}
+{"t": 1787017702.292, "model": "gemini-3.6-flash", "prompt": 7024, "cached": 0, "thoughts": 0, "output": 36, "total": 7060}
+{"t": 1787017703.957, "model": "gemini-3.6-flash", "prompt": 5929, "cached": 0, "thoughts": 0, "output": 8, "total": 5937}
+{"t": 1787017706.449, "model": "gemini-3.6-flash", "prompt": 6007, "cached": 0, "thoughts": 0, "output": 8, "total": 6015}
+{"t": 1787017708.894, "model": "gemini-3.6-flash", "prompt": 7292, "cached": 0, "thoughts": 0, "output": 8, "total": 7300}
+{"t": 1787017730.713, "model": "gemini-3.6-flash", "prompt": 7349, "cached": 0, "thoughts": 0, "output": 8, "total": 7357}
+{"t": 1787017752.462, "model": "gemini-3.6-flash", "prompt": 7406, "cached": 0, "thoughts": 0, "output": 8, "total": 7414}
+{"t": 1787017773.779, "model": "gemini-3.6-flash", "prompt": 7463, "cached": 0, "thoughts": 0, "output": 8, "total": 7471}
+{"t": 1787017795.36, "model": "gemini-3.6-flash", "prompt": 7520, "cached": 0, "thoughts": 0, "output": 8, "total": 7528}
+{"t": 1787017817.06, "model": "gemini-3.6-flash", "prompt": 7577, "cached": 0, "thoughts": 0, "output": 8, "total": 7585}
+{"t": 1787017838.773, "model": "gemini-3.6-flash", "prompt": 7634, "cached": 0, "thoughts": 0, "output": 8, "total": 7642}
+{"t": 1787017846.821, "model": "gemini-3.6-flash", "prompt": 2951, "cached": 0, "thoughts": 0, "output": 8, "total": 2959}
+{"t": 1787017855.084, "model": "gemini-3.6-flash", "prompt": 4091, "cached": 0, "thoughts": 0, "output": 8, "total": 4099}
+{"t": 1787017857.617, "model": "gemini-3.6-flash", "prompt": 2950, "cached": 0, "thoughts": 0, "output": 8, "total": 2958}
+{"t": 1787017866.158, "model": "gemini-3.6-flash", "prompt": 4086, "cached": 0, "thoughts": 0, "output": 14, "total": 4100}
+{"t": 1787017868.809, "model": "gemini-3.6-flash", "prompt": 2950, "cached": 0, "thoughts": 0, "output": 8, "total": 2958}
+{"t": 1787017877.433, "model": "gemini-3.6-flash", "prompt": 4089, "cached": 0, "thoughts": 0, "output": 20, "total": 4109}
+{"t": 1787017878.551, "model": "gemini-3.6-flash", "prompt": 4043, "cached": 0, "thoughts": 0, "output": 8, "total": 4051}
+{"t": 1787017885.193, "model": "gemini-3.6-flash", "prompt": 5167, "cached": 0, "thoughts": 0, "output": 8, "total": 5175}
+{"t": 1787017887.791, "model": "gemini-3.6-flash", "prompt": 6447, "cached": 0, "thoughts": 0, "output": 16, "total": 6463}
+{"t": 1787017888.738, "model": "gemini-3.6-flash", "prompt": 5329, "cached": 0, "thoughts": 0, "output": 8, "total": 5337}
+{"t": 1787017895.474, "model": "gemini-3.6-flash", "prompt": 5392, "cached": 0, "thoughts": 0, "output": 8, "total": 5400}
+{"t": 1787017898.036, "model": "gemini-3.6-flash", "prompt": 6673, "cached": 0, "thoughts": 0, "output": 20, "total": 6693}
+{"t": 1787017899.287, "model": "gemini-3.6-flash", "prompt": 5569, "cached": 0, "thoughts": 0, "output": 8, "total": 5577}
+{"t": 1787017906.012, "model": "gemini-3.6-flash", "prompt": 5634, "cached": 0, "thoughts": 0, "output": 8, "total": 5642}
+{"t": 1787017908.684, "model": "gemini-3.6-flash", "prompt": 6914, "cached": 0, "thoughts": 0, "output": 19, "total": 6933}
+{"t": 1787017909.659, "model": "gemini-3.6-flash", "prompt": 5809, "cached": 0, "thoughts": 0, "output": 8, "total": 5817}
+{"t": 1787017913.998, "model": "gemini-3.6-flash", "prompt": 7089, "cached": 0, "thoughts": 0, "output": 28, "total": 7117}
+{"t": 1787017915.71, "model": "gemini-3.6-flash", "prompt": 6018, "cached": 0, "thoughts": 0, "output": 8, "total": 6026}
+{"t": 1787017922.343, "model": "gemini-3.6-flash", "prompt": 6084, "cached": 0, "thoughts": 0, "output": 8, "total": 6092}
+{"t": 1787017925.122, "model": "gemini-3.6-flash", "prompt": 7469, "cached": 0, "thoughts": 0, "output": 22, "total": 7491}
+{"t": 1787017926.473, "model": "gemini-3.6-flash", "prompt": 6368, "cached": 0, "thoughts": 0, "output": 8, "total": 6376}
+{"t": 1787017933.277, "model": "gemini-3.6-flash", "prompt": 6434, "cached": 0, "thoughts": 0, "output": 8, "total": 6442}
+{"t": 1787017934.442, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1265, "cached": 0, "thoughts": 0, "output": 61, "total": 1740}
+{"t": 1787017940.13, "model": "gemini-3.6-flash", "prompt": 6500, "cached": 0, "thoughts": 0, "output": 8, "total": 6508}
+{"t": 1787017946.9, "model": "gemini-3.6-flash", "prompt": 6566, "cached": 0, "thoughts": 0, "output": 8, "total": 6574}
+{"t": 1787017953.472, "model": "gemini-3.6-flash", "prompt": 6632, "cached": 0, "thoughts": 0, "output": 8, "total": 6640}
+{"t": 1787017960.435, "model": "gemini-3.6-flash", "prompt": 6642, "cached": 0, "thoughts": 0, "output": 8, "total": 6650}
+{"t": 1787017967.331, "model": "gemini-3.6-flash", "prompt": 6602, "cached": 0, "thoughts": 0, "output": 8, "total": 6610}
+{"t": 1787017969.304, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1265, "cached": 0, "thoughts": 0, "output": 62, "total": 1768}
+{"t": 1787017973.898, "model": "gemini-3.6-flash", "prompt": 6590, "cached": 0, "thoughts": 0, "output": 8, "total": 6598}
+{"t": 1787017981.008, "model": "gemini-3.6-flash", "prompt": 6590, "cached": 0, "thoughts": 0, "output": 8, "total": 6598}
+{"t": 1787017989.079, "model": "gemini-3.6-flash", "prompt": 6566, "cached": 0, "thoughts": 0, "output": 8, "total": 6574}
+{"t": 1787017994.306, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1265, "cached": 0, "thoughts": 0, "output": 61, "total": 1723}
+{"t": 1787017995.445, "model": "gemini-3.6-flash", "prompt": 6558, "cached": 0, "thoughts": 0, "output": 8, "total": 6566}
+{"t": 1787018002.204, "model": "gemini-3.6-flash", "prompt": 6561, "cached": 0, "thoughts": 0, "output": 8, "total": 6569}
+{"t": 1787018009.004, "model": "gemini-3.6-flash", "prompt": 6530, "cached": 0, "thoughts": 0, "output": 8, "total": 6538}
+{"t": 1787018016.29, "model": "gemini-3.6-flash", "prompt": 6518, "cached": 0, "thoughts": 0, "output": 8, "total": 6526}
+{"t": 1787018018.659, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1265, "cached": 0, "thoughts": 0, "output": 61, "total": 1722}
+{"t": 1787018023.054, "model": "gemini-3.6-flash", "prompt": 6519, "cached": 0, "thoughts": 0, "output": 8, "total": 6527}
+{"t": 1787018029.982, "model": "gemini-3.6-flash", "prompt": 6488, "cached": 0, "thoughts": 0, "output": 8, "total": 6496}
+{"t": 1787018037.32, "model": "gemini-3.6-flash", "prompt": 6476, "cached": 0, "thoughts": 0, "output": 8, "total": 6484}
+{"t": 1787018043.394, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1265, "cached": 0, "thoughts": 0, "output": 60, "total": 1716}
+{"t": 1787018044.03, "model": "gemini-3.6-flash", "prompt": 6412, "cached": 0, "thoughts": 0, "output": 8, "total": 6420}
+{"t": 1787018050.868, "model": "gemini-3.6-flash", "prompt": 6399, "cached": 0, "thoughts": 0, "output": 8, "total": 6407}
+{"t": 1787018057.724, "model": "gemini-3.6-flash", "prompt": 6399, "cached": 0, "thoughts": 0, "output": 8, "total": 6407}
+{"t": 1787018062.268, "model": "gemini-3.6-flash", "prompt": 2951, "cached": 0, "thoughts": 0, "output": 8, "total": 2959}
+{"t": 1787018070.27, "model": "gemini-3.6-flash", "prompt": 4087, "cached": 0, "thoughts": 0, "output": 39, "total": 4126}
+{"t": 1787018074.794, "model": "gemini-3.6-flash", "prompt": 5254, "cached": 0, "thoughts": 0, "output": 28, "total": 5282}
+{"t": 1787018075.687, "model": "gemini-3.6-flash", "prompt": 5240, "cached": 0, "thoughts": 0, "output": 8, "total": 5248}
+{"t": 1787018084.203, "model": "gemini-3.6-flash", "prompt": 5305, "cached": 0, "thoughts": 0, "output": 8, "total": 5313}
+{"t": 1787018088.385, "model": "gemini-3.6-flash", "prompt": 6678, "cached": 0, "thoughts": 0, "output": 19, "total": 6697}
+{"t": 1787018089.501, "model": "gemini-3.6-flash", "prompt": 5574, "cached": 0, "thoughts": 0, "output": 8, "total": 5582}
+{"t": 1787018095.948, "model": "gemini-3.6-flash", "prompt": 5640, "cached": 0, "thoughts": 0, "output": 8, "total": 5648}
+{"t": 1787018096.872, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 1657}
+{"t": 1787018102.319, "model": "gemini-3.6-flash", "prompt": 5706, "cached": 0, "thoughts": 0, "output": 8, "total": 5714}
+{"t": 1787018103.011, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 1698}
+{"t": 1787018109.053, "model": "gemini-3.6-flash", "prompt": 5772, "cached": 0, "thoughts": 0, "output": 8, "total": 5780}
+{"t": 1787018112.089, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 61, "total": 2091}
+{"t": 1787018115.994, "model": "gemini-3.6-flash", "prompt": 5838, "cached": 0, "thoughts": 0, "output": 8, "total": 5846}
+{"t": 1787018122.74, "model": "gemini-3.6-flash", "prompt": 5904, "cached": 0, "thoughts": 0, "output": 8, "total": 5912}
+{"t": 1787018129.667, "model": "gemini-3.6-flash", "prompt": 5970, "cached": 0, "thoughts": 0, "output": 8, "total": 5978}
+{"t": 1787018134.956, "model": "gemini-3.6-flash", "prompt": 6050, "cached": 0, "thoughts": 0, "output": 23, "total": 6073}
+{"t": 1787018136.895, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1768}
+{"t": 1787018142.135, "model": "gemini-3.6-flash", "prompt": 6156, "cached": 0, "thoughts": 0, "output": 8, "total": 6164}
+{"t": 1787018145.36, "model": "gemini-3.6-flash", "prompt": 7429, "cached": 0, "thoughts": 0, "output": 19, "total": 7448}
+{"t": 1787018154.162, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 5, "total": 1451}
+{"t": 1787018162.721, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 1389}
+{"t": 1787018170.108, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 1564}
+{"t": 1787018176.569, "model": "gemini-3.6-flash", "prompt": 6325, "cached": 0, "thoughts": 0, "output": 8, "total": 6333}
+{"t": 1787018177.925, "model": "gemini-3.6-flash", "prompt": 7613, "cached": 0, "thoughts": 0, "output": 11, "total": 7624}
+{"t": 1787018182.368, "model": "gemini-3.6-flash", "prompt": 7662, "cached": 0, "thoughts": 0, "output": 8, "total": 7670}
+{"t": 1787018204.516, "model": "gemini-3.6-flash", "prompt": 7719, "cached": 0, "thoughts": 0, "output": 8, "total": 7727}
+{"t": 1787018226.179, "model": "gemini-3.6-flash", "prompt": 7776, "cached": 0, "thoughts": 0, "output": 8, "total": 7784}
+{"t": 1787018247.499, "model": "gemini-3.6-flash", "prompt": 7776, "cached": 0, "thoughts": 0, "output": 8, "total": 7784}
+{"t": 1787018268.979, "model": "gemini-3.6-flash", "prompt": 7702, "cached": 0, "thoughts": 0, "output": 8, "total": 7710}
+{"t": 1787018290.229, "model": "gemini-3.6-flash", "prompt": 7646, "cached": 0, "thoughts": 0, "output": 8, "total": 7654}
+{"t": 1787018312.214, "model": "gemini-3.6-flash", "prompt": 7625, "cached": 0, "thoughts": 0, "output": 8, "total": 7633}
+{"t": 1787018333.626, "model": "gemini-3.6-flash", "prompt": 7617, "cached": 0, "thoughts": 0, "output": 8, "total": 7625}
+{"t": 1787018355.033, "model": "gemini-3.6-flash", "prompt": 7484, "cached": 0, "thoughts": 0, "output": 8, "total": 7492}
+{"t": 1787018370.042, "model": "gemini-3.6-flash", "prompt": 2951, "cached": 0, "thoughts": 0, "output": 8, "total": 2959}
+{"t": 1787018378.042, "model": "gemini-3.6-flash", "prompt": 4089, "cached": 0, "thoughts": 0, "output": 36, "total": 4125}
+{"t": 1787018379.944, "model": "gemini-3.6-flash", "prompt": 4059, "cached": 0, "thoughts": 0, "output": 8, "total": 4067}
+{"t": 1787018386.643, "model": "gemini-3.6-flash", "prompt": 5182, "cached": 0, "thoughts": 0, "output": 8, "total": 5190}
+{"t": 1787018388.315, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 58, "total": 1708}
+{"t": 1787018393.495, "model": "gemini-3.6-flash", "prompt": 5247, "cached": 0, "thoughts": 0, "output": 8, "total": 5255}
+{"t": 1787018400.252, "model": "gemini-3.6-flash", "prompt": 5312, "cached": 0, "thoughts": 0, "output": 8, "total": 5320}
+{"t": 1787018405.263, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 62, "total": 1814}
+{"t": 1787018406.449, "model": "gemini-3.6-flash", "prompt": 5377, "cached": 0, "thoughts": 0, "output": 8, "total": 5385}
+{"t": 1787018412.897, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1143, "cached": 0, "thoughts": 0, "output": 36, "total": 1431}
+{"t": 1787018413.788, "model": "gemini-3.6-flash", "prompt": 5442, "cached": 0, "thoughts": 0, "output": 8, "total": 5450}
+{"t": 1787018420.513, "model": "gemini-3.6-flash", "prompt": 5507, "cached": 0, "thoughts": 0, "output": 8, "total": 5515}
+{"t": 1787018427.363, "model": "gemini-3.6-flash", "prompt": 5572, "cached": 0, "thoughts": 0, "output": 8, "total": 5580}
+{"t": 1787018433.755, "model": "gemini-3.6-flash", "prompt": 5637, "cached": 0, "thoughts": 0, "output": 8, "total": 5645}
+{"t": 1787018439.998, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 2259, "cached": 0, "thoughts": 0, "output": 1, "total": 2426}
+{"t": 1787018440.445, "model": "gemini-3.6-flash", "prompt": 5702, "cached": 0, "thoughts": 0, "output": 8, "total": 5710}
+{"t": 1787018447.121, "model": "gemini-3.6-flash", "prompt": 5767, "cached": 0, "thoughts": 0, "output": 8, "total": 5775}
+{"t": 1787018449.868, "model": "gemini-3.6-flash", "prompt": 7060, "cached": 0, "thoughts": 0, "output": 32, "total": 7092}
+{"t": 1787018451.558, "model": "gemini-3.6-flash", "prompt": 5969, "cached": 0, "thoughts": 0, "output": 8, "total": 5977}
+{"t": 1787018457.834, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 61, "total": 1630}
+{"t": 1787018458.116, "model": "gemini-3.6-flash", "prompt": 6035, "cached": 0, "thoughts": 0, "output": 8, "total": 6043}
+{"t": 1787018466.033, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 62, "total": 1800}
+{"t": 1787018467.428, "model": "gemini-3.6-flash", "prompt": 6101, "cached": 0, "thoughts": 0, "output": 8, "total": 6109}
+{"t": 1787018473.454, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1143, "cached": 0, "thoughts": 0, "output": 36, "total": 1405}
+{"t": 1787018475.149, "model": "gemini-3.6-flash", "prompt": 6167, "cached": 0, "thoughts": 0, "output": 8, "total": 6175}
+{"t": 1787018483.198, "model": "gemini-3.6-flash", "prompt": 6233, "cached": 0, "thoughts": 0, "output": 8, "total": 6241}
+{"t": 1787018489.869, "model": "gemini-3.6-flash", "prompt": 6299, "cached": 0, "thoughts": 0, "output": 8, "total": 6307}
+{"t": 1787018498.375, "model": "gemini-3.6-flash", "prompt": 6365, "cached": 0, "thoughts": 0, "output": 8, "total": 6373}
+{"t": 1787018500.105, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 2259, "cached": 0, "thoughts": 0, "output": 1, "total": 2390}
+{"t": 1787018505.343, "model": "gemini-3.6-flash", "prompt": 6374, "cached": 0, "thoughts": 0, "output": 8, "total": 6382}
+{"t": 1787018508.679, "model": "gemini-3.6-flash", "prompt": 7547, "cached": 0, "thoughts": 0, "output": 44, "total": 7591}
+{"t": 1787018510.797, "model": "gemini-3.6-flash", "prompt": 6414, "cached": 0, "thoughts": 0, "output": 8, "total": 6422}
+{"t": 1787018513.532, "model": "gemini-3.6-flash", "prompt": 7691, "cached": 0, "thoughts": 0, "output": 19, "total": 7710}
+{"t": 1787018522.097, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1620}
+{"t": 1787018528.462, "model": "gemini-3.6-flash", "prompt": 6522, "cached": 0, "thoughts": 0, "output": 8, "total": 6530}
+{"t": 1787018532.759, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 61, "total": 1932}
+{"t": 1787018535.633, "model": "gemini-3.6-flash", "prompt": 6523, "cached": 0, "thoughts": 0, "output": 8, "total": 6531}
+{"t": 1787018539.943, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1142, "cached": 0, "thoughts": 0, "output": 36, "total": 1485}
+{"t": 1787018542.834, "model": "gemini-3.6-flash", "prompt": 6524, "cached": 0, "thoughts": 0, "output": 8, "total": 6532}
+{"t": 1787018549.714, "model": "gemini-3.6-flash", "prompt": 6525, "cached": 0, "thoughts": 0, "output": 8, "total": 6533}
+{"t": 1787018556.45, "model": "gemini-3.6-flash", "prompt": 6526, "cached": 0, "thoughts": 0, "output": 8, "total": 6534}
+{"t": 1787018563.263, "model": "gemini-3.6-flash", "prompt": 6527, "cached": 0, "thoughts": 0, "output": 8, "total": 6535}
+{"t": 1787018566.88, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 2257, "cached": 0, "thoughts": 0, "output": 1, "total": 2389}
+{"t": 1787018570.425, "model": "gemini-3.6-flash", "prompt": 6528, "cached": 0, "thoughts": 0, "output": 8, "total": 6536}
+{"t": 1787018575.325, "model": "gemini-3.6-flash", "prompt": 7756, "cached": 0, "thoughts": 0, "output": 30, "total": 7786}
+{"t": 1787018577.132, "model": "gemini-3.6-flash", "prompt": 6590, "cached": 0, "thoughts": 0, "output": 8, "total": 6598}
+{"t": 1787018579.653, "model": "gemini-3.6-flash", "prompt": 7749, "cached": 0, "thoughts": 0, "output": 20, "total": 7769}
+{"t": 1787018581.297, "model": "gemini-3.6-flash", "prompt": 6567, "cached": 0, "thoughts": 0, "output": 8, "total": 6575}
+{"t": 1787018587.264, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 62, "total": 1582}
+{"t": 1787018587.754, "model": "gemini-3.6-flash", "prompt": 6567, "cached": 0, "thoughts": 0, "output": 8, "total": 6575}
+{"t": 1787018594.531, "model": "gemini-3.6-flash", "prompt": 6567, "cached": 0, "thoughts": 0, "output": 8, "total": 6575}
+{"t": 1787018600.766, "model": "gemini-3.6-flash", "prompt": 6567, "cached": 0, "thoughts": 0, "output": 8, "total": 6575}
+{"t": 1787018601.157, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 61, "total": 1733}
+{"t": 1787018607.357, "model": "gemini-3.6-flash", "prompt": 6567, "cached": 0, "thoughts": 0, "output": 8, "total": 6575}
+{"t": 1787018608.403, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1143, "cached": 0, "thoughts": 0, "output": 36, "total": 1489}
+{"t": 1787018614.099, "model": "gemini-3.6-flash", "prompt": 6567, "cached": 0, "thoughts": 0, "output": 8, "total": 6575}
+{"t": 1787018621.097, "model": "gemini-3.6-flash", "prompt": 6567, "cached": 0, "thoughts": 0, "output": 8, "total": 6575}
+{"t": 1787018627.738, "model": "gemini-3.6-flash", "prompt": 6567, "cached": 0, "thoughts": 0, "output": 8, "total": 6575}
+{"t": 1787018634.304, "model": "gemini-3.6-flash", "prompt": 6473, "cached": 0, "thoughts": 0, "output": 8, "total": 6481}
+{"t": 1787018635.766, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 2259, "cached": 0, "thoughts": 0, "output": 1, "total": 2384}
+{"t": 1787018640.565, "model": "gemini-3.6-flash", "prompt": 6460, "cached": 0, "thoughts": 0, "output": 8, "total": 6468}
+{"t": 1787018644.193, "model": "gemini-3.6-flash", "prompt": 7595, "cached": 0, "thoughts": 0, "output": 28, "total": 7623}
+{"t": 1787018645.693, "model": "gemini-3.6-flash", "prompt": 6445, "cached": 0, "thoughts": 0, "output": 8, "total": 6453}
+{"t": 1787018647.995, "model": "gemini-3.6-flash", "prompt": 7721, "cached": 0, "thoughts": 0, "output": 19, "total": 7740}
+{"t": 1787018649.704, "model": "gemini-3.6-flash", "prompt": 6551, "cached": 0, "thoughts": 0, "output": 8, "total": 6559}
+{"t": 1787018656.44, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1725}
+{"t": 1787018656.451, "model": "gemini-3.6-flash", "prompt": 6551, "cached": 0, "thoughts": 0, "output": 8, "total": 6559}
+{"t": 1787018663.054, "model": "gemini-3.6-flash", "prompt": 6551, "cached": 0, "thoughts": 0, "output": 8, "total": 6559}
+{"t": 1787018665.647, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1827}
+{"t": 1787018669.634, "model": "gemini-3.6-flash", "prompt": 6551, "cached": 0, "thoughts": 0, "output": 8, "total": 6559}
+{"t": 1787018673.262, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1142, "cached": 0, "thoughts": 0, "output": 36, "total": 1507}
+{"t": 1787018676.49, "model": "gemini-3.6-flash", "prompt": 6551, "cached": 0, "thoughts": 0, "output": 8, "total": 6559}
+{"t": 1787018677.96, "model": "gemini-3.6-flash", "prompt": 2951, "cached": 0, "thoughts": 0, "output": 8, "total": 2959}
+{"t": 1787018680.256, "model": "gemini-3.6-flash", "prompt": 4082, "cached": 0, "thoughts": 0, "output": 8, "total": 4090}
+{"t": 1787018686.009, "model": "gemini-3.6-flash", "prompt": 5218, "cached": 0, "thoughts": 0, "output": 32, "total": 5250}
+{"t": 1787018687.799, "model": "gemini-3.6-flash", "prompt": 5177, "cached": 0, "thoughts": 0, "output": 8, "total": 5185}
+{"t": 1787018690.291, "model": "gemini-3.6-flash", "prompt": 6481, "cached": 0, "thoughts": 0, "output": 8, "total": 6489}
+{"t": 1787018712.109, "model": "gemini-3.6-flash", "prompt": 6538, "cached": 0, "thoughts": 0, "output": 8, "total": 6546}
+{"t": 1787018734.055, "model": "gemini-3.6-flash", "prompt": 6595, "cached": 0, "thoughts": 0, "output": 8, "total": 6603}
+{"t": 1787018755.481, "model": "gemini-3.6-flash", "prompt": 6652, "cached": 0, "thoughts": 0, "output": 8, "total": 6660}
+{"t": 1787018777.606, "model": "gemini-3.6-flash", "prompt": 6709, "cached": 0, "thoughts": 0, "output": 8, "total": 6717}
+{"t": 1787018799.513, "model": "gemini-3.6-flash", "prompt": 6766, "cached": 0, "thoughts": 0, "output": 8, "total": 6774}
+{"t": 1787018852.197, "model": "gemini-3.6-flash", "prompt": 6823, "cached": 0, "thoughts": 0, "output": 8, "total": 6831}
+{"t": 1787018873.51, "model": "gemini-3.6-flash", "prompt": 6880, "cached": 0, "thoughts": 0, "output": 8, "total": 6888}
+{"t": 1787018894.819, "model": "gemini-3.6-flash", "prompt": 6937, "cached": 0, "thoughts": 0, "output": 8, "total": 6945}
+{"t": 1787018916.106, "model": "gemini-3.6-flash", "prompt": 6994, "cached": 0, "thoughts": 0, "output": 8, "total": 7002}
+{"t": 1787018938.01, "model": "gemini-3.6-flash", "prompt": 7051, "cached": 0, "thoughts": 0, "output": 8, "total": 7059}
+{"t": 1787018960.048, "model": "gemini-3.6-flash", "prompt": 7108, "cached": 0, "thoughts": 0, "output": 8, "total": 7116}
+{"t": 1787018982.196, "model": "gemini-3.6-flash", "prompt": 7165, "cached": 0, "thoughts": 0, "output": 8, "total": 7173}
+{"t": 1787018984.711, "model": "gemini-3.6-flash", "prompt": 2951, "cached": 0, "thoughts": 0, "output": 8, "total": 2959}
+{"t": 1787018994.152, "model": "gemini-3.6-flash", "prompt": 4086, "cached": 0, "thoughts": 0, "output": 38, "total": 4124}
+{"t": 1787018995.338, "model": "gemini-3.6-flash", "prompt": 4083, "cached": 0, "thoughts": 0, "output": 8, "total": 4091}
+{"t": 1787019001.983, "model": "gemini-3.6-flash", "prompt": 5207, "cached": 0, "thoughts": 0, "output": 8, "total": 5215}
+{"t": 1787019004.552, "model": "gemini-3.6-flash", "prompt": 5319, "cached": 0, "thoughts": 0, "output": 8, "total": 5327}
+{"t": 1787019007.13, "model": "gemini-3.6-flash", "prompt": 6656, "cached": 0, "thoughts": 0, "output": 28, "total": 6684}
+{"t": 1787019008.34, "model": "gemini-3.6-flash", "prompt": 5585, "cached": 0, "thoughts": 0, "output": 8, "total": 5593}
+{"t": 1787019076.75, "model": "gemini-3.6-flash", "prompt": 6971, "cached": 0, "thoughts": 0, "output": 28, "total": 6999}
+{"t": 1787019078.11, "model": "gemini-3.6-flash", "prompt": 5900, "cached": 0, "thoughts": 0, "output": 8, "total": 5908}
+{"t": 1787019079.85, "model": "gemini-3.6-flash", "prompt": 6012, "cached": 0, "thoughts": 0, "output": 8, "total": 6020}
+{"t": 1787019082.358, "model": "gemini-3.6-flash", "prompt": 7353, "cached": 0, "thoughts": 0, "output": 19, "total": 7372}
+{"t": 1787019103.526, "model": "gemini-3.6-flash", "prompt": 7422, "cached": 0, "thoughts": 0, "output": 8, "total": 7430}
+{"t": 1787019125.137, "model": "gemini-3.6-flash", "prompt": 7480, "cached": 0, "thoughts": 0, "output": 8, "total": 7488}
+{"t": 1787019146.534, "model": "gemini-3.6-flash", "prompt": 7538, "cached": 0, "thoughts": 0, "output": 8, "total": 7546}
+{"t": 1787019167.741, "model": "gemini-3.6-flash", "prompt": 7596, "cached": 0, "thoughts": 0, "output": 8, "total": 7604}
+{"t": 1787019189.312, "model": "gemini-3.6-flash", "prompt": 7654, "cached": 0, "thoughts": 0, "output": 8, "total": 7662}
+{"t": 1787019211.128, "model": "gemini-3.6-flash", "prompt": 7712, "cached": 0, "thoughts": 0, "output": 8, "total": 7720}
+{"t": 1787019232.866, "model": "gemini-3.6-flash", "prompt": 7770, "cached": 0, "thoughts": 0, "output": 8, "total": 7778}
+{"t": 1787019254.874, "model": "gemini-3.6-flash", "prompt": 7828, "cached": 0, "thoughts": 0, "output": 8, "total": 7836}
+{"t": 1787019276.699, "model": "gemini-3.6-flash", "prompt": 7886, "cached": 0, "thoughts": 0, "output": 8, "total": 7894}
+{"t": 1787019292.951, "model": "gemini-3.6-flash", "prompt": 2952, "cached": 0, "thoughts": 0, "output": 8, "total": 2960}
+{"t": 1787019301.576, "model": "gemini-3.6-flash", "prompt": 4087, "cached": 0, "thoughts": 0, "output": 32, "total": 4119}
+{"t": 1787019303.526, "model": "gemini-3.6-flash", "prompt": 4054, "cached": 0, "thoughts": 0, "output": 8, "total": 4062}
+{"t": 1787019309.881, "model": "gemini-3.6-flash", "prompt": 5178, "cached": 0, "thoughts": 0, "output": 8, "total": 5186}
+{"t": 1787019311.634, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 62, "total": 2168}
+{"t": 1787019317.68, "model": "gemini-3.6-flash", "prompt": 5245, "cached": 0, "thoughts": 0, "output": 8, "total": 5253}
+{"t": 1787019324.78, "model": "gemini-3.6-flash", "prompt": 5312, "cached": 0, "thoughts": 0, "output": 8, "total": 5320}
+{"t": 1787019334.237, "model": "gemini-3.6-flash", "prompt": 5379, "cached": 0, "thoughts": 0, "output": 8, "total": 5387}
+{"t": 1787019338.705, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 62, "total": 1947}
+{"t": 1787019340.983, "model": "gemini-3.6-flash", "prompt": 5446, "cached": 0, "thoughts": 0, "output": 8, "total": 5454}
+{"t": 1787019349.245, "model": "gemini-3.6-flash", "prompt": 5537, "cached": 0, "thoughts": 0, "output": 24, "total": 5561}
+{"t": 1787019364.108, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 60, "total": 1846}
+{"t": 1787019370.029, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 60, "total": 2055}
+{"t": 1787019374.988, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 60, "total": 1827}
+{"t": 1787019381.186, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 60, "total": 1997}
+{"t": 1787019387.375, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 60, "total": 1966}
+{"t": 1787019430.398, "model": "gemini-3.6-flash", "prompt": 6850, "cached": 0, "thoughts": 0, "output": 28, "total": 6878}
+{"t": 1787019451.991, "model": "gemini-3.6-flash", "prompt": 6916, "cached": 0, "thoughts": 0, "output": 8, "total": 6924}
+{"t": 1787019473.908, "model": "gemini-3.6-flash", "prompt": 6973, "cached": 0, "thoughts": 0, "output": 8, "total": 6981}
+{"t": 1787019495.884, "model": "gemini-3.6-flash", "prompt": 7030, "cached": 0, "thoughts": 0, "output": 8, "total": 7038}
+{"t": 1787019518.009, "model": "gemini-3.6-flash", "prompt": 7087, "cached": 0, "thoughts": 0, "output": 8, "total": 7095}
+{"t": 1787019540.093, "model": "gemini-3.6-flash", "prompt": 7144, "cached": 0, "thoughts": 0, "output": 8, "total": 7152}
+{"t": 1787019562.473, "model": "gemini-3.6-flash", "prompt": 7201, "cached": 0, "thoughts": 0, "output": 8, "total": 7209}
+{"t": 1787019584.428, "model": "gemini-3.6-flash", "prompt": 7258, "cached": 0, "thoughts": 0, "output": 8, "total": 7266}
+{"t": 1787019600.928, "model": "gemini-3.6-flash", "prompt": 2951, "cached": 0, "thoughts": 0, "output": 8, "total": 2959}
+{"t": 1787019608.741, "model": "gemini-3.6-flash", "prompt": 4089, "cached": 0, "thoughts": 0, "output": 45, "total": 4134}
+{"t": 1787019612.644, "model": "gemini-3.6-flash", "prompt": 5263, "cached": 0, "thoughts": 0, "output": 20, "total": 5283}
+{"t": 1787019613.598, "model": "gemini-3.6-flash", "prompt": 5218, "cached": 0, "thoughts": 0, "output": 8, "total": 5226}
+{"t": 1787019620.623, "model": "gemini-3.6-flash", "prompt": 5284, "cached": 0, "thoughts": 0, "output": 8, "total": 5292}
+{"t": 1787019623.25, "model": "gemini-3.6-flash", "prompt": 6565, "cached": 0, "thoughts": 0, "output": 20, "total": 6585}
+{"t": 1787019624.51, "model": "gemini-3.6-flash", "prompt": 5462, "cached": 0, "thoughts": 0, "output": 8, "total": 5470}
+{"t": 1787019631.241, "model": "gemini-3.6-flash", "prompt": 5528, "cached": 0, "thoughts": 0, "output": 8, "total": 5536}
+{"t": 1787019633.594, "model": "gemini-3.6-flash", "prompt": 6809, "cached": 0, "thoughts": 0, "output": 19, "total": 6828}
+{"t": 1787019634.548, "model": "gemini-3.6-flash", "prompt": 5705, "cached": 0, "thoughts": 0, "output": 8, "total": 5713}
+{"t": 1787019640.81, "model": "gemini-3.6-flash", "prompt": 5771, "cached": 0, "thoughts": 0, "output": 8, "total": 5779}
+{"t": 1787019641.352, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 1525}
+{"t": 1787019646.943, "model": "gemini-3.6-flash", "prompt": 5837, "cached": 0, "thoughts": 0, "output": 8, "total": 5845}
+{"t": 1787019647.335, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 5, "total": 1601}
+{"t": 1787019653.572, "model": "gemini-3.6-flash", "prompt": 5904, "cached": 0, "thoughts": 0, "output": 8, "total": 5912}
+{"t": 1787019654.521, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 1651}
+{"t": 1787019659.98, "model": "gemini-3.6-flash", "prompt": 5971, "cached": 0, "thoughts": 0, "output": 8, "total": 5979}
+{"t": 1787019662.687, "model": "gemini-3.6-flash", "prompt": 7260, "cached": 0, "thoughts": 0, "output": 28, "total": 7288}
+{"t": 1787019664.001, "model": "gemini-3.6-flash", "prompt": 6190, "cached": 0, "thoughts": 0, "output": 8, "total": 6198}
+{"t": 1787019670.762, "model": "gemini-3.6-flash", "prompt": 6257, "cached": 0, "thoughts": 0, "output": 8, "total": 6265}
+{"t": 1787019673.194, "model": "gemini-3.6-flash", "prompt": 7596, "cached": 0, "thoughts": 0, "output": 19, "total": 7615}
+{"t": 1787019674.375, "model": "gemini-3.6-flash", "prompt": 6493, "cached": 0, "thoughts": 0, "output": 8, "total": 6501}
+{"t": 1787019681.049, "model": "gemini-3.6-flash", "prompt": 6560, "cached": 0, "thoughts": 0, "output": 8, "total": 6568}
+{"t": 1787019682.481, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1802}
+{"t": 1787019687.838, "model": "gemini-3.6-flash", "prompt": 6627, "cached": 0, "thoughts": 0, "output": 8, "total": 6635}
+{"t": 1787019694.793, "model": "gemini-3.6-flash", "prompt": 6636, "cached": 0, "thoughts": 0, "output": 8, "total": 6644}
+{"t": 1787019701.56, "model": "gemini-3.6-flash", "prompt": 6563, "cached": 0, "thoughts": 0, "output": 8, "total": 6571}
+{"t": 1787019707.883, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 60, "total": 1950}
+{"t": 1787019708.427, "model": "gemini-3.6-flash", "prompt": 6547, "cached": 0, "thoughts": 0, "output": 8, "total": 6555}
+{"t": 1787019712.636, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 60, "total": 1751}
+{"t": 1787019715.466, "model": "gemini-3.6-flash", "prompt": 6534, "cached": 0, "thoughts": 0, "output": 8, "total": 6542}
+{"t": 1787019722.119, "model": "gemini-3.6-flash", "prompt": 6534, "cached": 0, "thoughts": 0, "output": 8, "total": 6542}
+{"t": 1787019729.091, "model": "gemini-3.6-flash", "prompt": 6501, "cached": 0, "thoughts": 0, "output": 8, "total": 6509}
+{"t": 1787019735.949, "model": "gemini-3.6-flash", "prompt": 6488, "cached": 0, "thoughts": 0, "output": 8, "total": 6496}
+{"t": 1787019738.282, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 59, "total": 1876}
+{"t": 1787019742.892, "model": "gemini-3.6-flash", "prompt": 6488, "cached": 0, "thoughts": 0, "output": 8, "total": 6496}
+{"t": 1787019746.65, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 60, "total": 1809}
+{"t": 1787019749.405, "model": "gemini-3.6-flash", "prompt": 6456, "cached": 0, "thoughts": 0, "output": 8, "total": 6464}
+{"t": 1787019757.591, "model": "gemini-3.6-flash", "prompt": 6443, "cached": 0, "thoughts": 0, "output": 8, "total": 6451}
+{"t": 1787019764.154, "model": "gemini-3.6-flash", "prompt": 6443, "cached": 0, "thoughts": 0, "output": 8, "total": 6451}
+{"t": 1787019771.094, "model": "gemini-3.6-flash", "prompt": 6443, "cached": 0, "thoughts": 0, "output": 8, "total": 6451}
+{"t": 1787019771.671, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 60, "total": 1722}
+{"t": 1787019777.98, "model": "gemini-3.6-flash", "prompt": 6442, "cached": 0, "thoughts": 0, "output": 8, "total": 6450}
+{"t": 1787019778.158, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 60, "total": 2158}
+{"t": 1787019783.336, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 60, "total": 1695}
+{"t": 1787019784.314, "model": "gemini-3.6-flash", "prompt": 6441, "cached": 0, "thoughts": 0, "output": 8, "total": 6449}
+{"t": 1787019787.293, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 60, "total": 1641}
+{"t": 1787019791.079, "model": "gemini-3.6-flash", "prompt": 6368, "cached": 0, "thoughts": 0, "output": 8, "total": 6376}
+{"t": 1787019800.068, "model": "gemini-3.6-flash", "prompt": 6354, "cached": 0, "thoughts": 0, "output": 8, "total": 6362}
+{"t": 1787019806.888, "model": "gemini-3.6-flash", "prompt": 6353, "cached": 0, "thoughts": 0, "output": 8, "total": 6361}
+{"t": 1787019813.652, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 60, "total": 2104}
+{"t": 1787019814.736, "model": "gemini-3.6-flash", "prompt": 6263, "cached": 0, "thoughts": 0, "output": 8, "total": 6271}
+{"t": 1787019821.497, "model": "gemini-3.6-flash", "prompt": 6249, "cached": 0, "thoughts": 0, "output": 8, "total": 6257}
+{"t": 1787019827.265, "model": "gemini-3.6-flash", "prompt": 7467, "cached": 0, "thoughts": 0, "output": 22, "total": 7489}
+{"t": 1787019832.001, "model": "gemini-3.6-flash", "prompt": 7460, "cached": 0, "thoughts": 0, "output": 8, "total": 7468}
+{"t": 1787019857.777, "model": "gemini-3.6-flash", "prompt": 7451, "cached": 0, "thoughts": 0, "output": 8, "total": 7459}
+{"t": 1787019880.252, "model": "gemini-3.6-flash", "prompt": 7442, "cached": 0, "thoughts": 0, "output": 8, "total": 7450}
+{"t": 1787019902.315, "model": "gemini-3.6-flash", "prompt": 7433, "cached": 0, "thoughts": 0, "output": 8, "total": 7441}
+{"t": 1787019908.334, "model": "gemini-3.6-flash", "prompt": 2951, "cached": 0, "thoughts": 0, "output": 8, "total": 2959}
+{"t": 1787019916.36, "model": "gemini-3.6-flash", "prompt": 4107, "cached": 0, "thoughts": 0, "output": 44, "total": 4151}
+{"t": 1787019917.488, "model": "gemini-3.6-flash", "prompt": 4110, "cached": 0, "thoughts": 0, "output": 8, "total": 4118}
+{"t": 1787019924.347, "model": "gemini-3.6-flash", "prompt": 5234, "cached": 0, "thoughts": 0, "output": 8, "total": 5242}
+{"t": 1787019927.418, "model": "gemini-3.6-flash", "prompt": 6572, "cached": 0, "thoughts": 0, "output": 19, "total": 6591}
+{"t": 1787019929.283, "model": "gemini-3.6-flash", "prompt": 5469, "cached": 0, "thoughts": 0, "output": 8, "total": 5477}
+{"t": 1787019932.395, "model": "gemini-3.6-flash", "prompt": 6750, "cached": 0, "thoughts": 0, "output": 19, "total": 6769}
+{"t": 1787019934.701, "model": "gemini-3.6-flash", "prompt": 2952, "cached": 0, "thoughts": 0, "output": 8, "total": 2960}
+{"t": 1787019942.715, "model": "gemini-3.6-flash", "prompt": 4089, "cached": 0, "thoughts": 0, "output": 31, "total": 4120}
+{"t": 1787019943.751, "model": "gemini-3.6-flash", "prompt": 4055, "cached": 0, "thoughts": 0, "output": 8, "total": 4063}
+{"t": 1787019947.572, "model": "gemini-3.6-flash", "prompt": 6392, "cached": 0, "thoughts": 0, "output": 20, "total": 6412}
+{"t": 1787019948.917, "model": "gemini-3.6-flash", "prompt": 5288, "cached": 0, "thoughts": 0, "output": 8, "total": 5296}
+{"t": 1787019955.905, "model": "gemini-3.6-flash", "prompt": 5355, "cached": 0, "thoughts": 0, "output": 8, "total": 5363}
+{"t": 1787019958.382, "model": "gemini-3.6-flash", "prompt": 6637, "cached": 0, "thoughts": 0, "output": 34, "total": 6671}
+{"t": 1787019959.502, "model": "gemini-3.6-flash", "prompt": 5547, "cached": 0, "thoughts": 0, "output": 8, "total": 5555}
+{"t": 1787019961.41, "model": "gemini-3.6-flash", "prompt": 6930, "cached": 0, "thoughts": 0, "output": 16, "total": 6946}
+{"t": 1787019962.459, "model": "gemini-3.6-flash", "prompt": 5814, "cached": 0, "thoughts": 0, "output": 8, "total": 5822}
+{"t": 1787019969.235, "model": "gemini-3.6-flash", "prompt": 5879, "cached": 0, "thoughts": 0, "output": 8, "total": 5887}
+{"t": 1787019971.149, "model": "gemini-3.6-flash", "prompt": 7162, "cached": 0, "thoughts": 0, "output": 23, "total": 7185}
+{"t": 1787019972.419, "model": "gemini-3.6-flash", "prompt": 6063, "cached": 0, "thoughts": 0, "output": 8, "total": 6071}
+{"t": 1787019979.284, "model": "gemini-3.6-flash", "prompt": 6130, "cached": 0, "thoughts": 0, "output": 8, "total": 6138}
+{"t": 1787019980.373, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 62, "total": 1777}
+{"t": 1787019986.282, "model": "gemini-3.6-flash", "prompt": 6197, "cached": 0, "thoughts": 0, "output": 8, "total": 6205}
+{"t": 1787019988.461, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 62, "total": 2054}
+{"t": 1787019993.281, "model": "gemini-3.6-flash", "prompt": 6264, "cached": 0, "thoughts": 0, "output": 8, "total": 6272}
+{"t": 1787019999.731, "model": "gemini-3.6-flash", "prompt": 6331, "cached": 0, "thoughts": 0, "output": 8, "total": 6339}
+{"t": 1787020006.265, "model": "gemini-3.6-flash", "prompt": 6398, "cached": 0, "thoughts": 0, "output": 8, "total": 6406}
+{"t": 1787020013.035, "model": "gemini-3.6-flash", "prompt": 6465, "cached": 0, "thoughts": 0, "output": 8, "total": 6473}
+{"t": 1787020013.079, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 6, "total": 1622}
+{"t": 1787020016.926, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 6, "total": 1541}
+{"t": 1787020019.861, "model": "gemini-3.6-flash", "prompt": 6532, "cached": 0, "thoughts": 0, "output": 8, "total": 6540}
+{"t": 1787020025.093, "model": "gemini-3.6-flash", "prompt": 7822, "cached": 0, "thoughts": 0, "output": 16, "total": 7838}
+{"t": 1787020026.539, "model": "gemini-3.6-flash", "prompt": 6650, "cached": 0, "thoughts": 0, "output": 8, "total": 6658}
+{"t": 1787020031.015, "model": "gemini-3.6-flash", "prompt": 7818, "cached": 0, "thoughts": 0, "output": 23, "total": 7841}
+{"t": 1787020032.426, "model": "gemini-3.6-flash", "prompt": 6640, "cached": 0, "thoughts": 0, "output": 8, "total": 6648}
+{"t": 1787020038.86, "model": "gemini-3.6-flash", "prompt": 6610, "cached": 0, "thoughts": 0, "output": 8, "total": 6618}
+{"t": 1787020039.27, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 62, "total": 1655}
+{"t": 1787020045.611, "model": "gemini-3.6-flash", "prompt": 6599, "cached": 0, "thoughts": 0, "output": 8, "total": 6607}
+{"t": 1787020052.283, "model": "gemini-3.6-flash", "prompt": 6599, "cached": 0, "thoughts": 0, "output": 8, "total": 6607}
+{"t": 1787020058.616, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 62, "total": 1954}
+{"t": 1787020059.154, "model": "gemini-3.6-flash", "prompt": 6554, "cached": 0, "thoughts": 0, "output": 8, "total": 6562}
+{"t": 1787020065.907, "model": "gemini-3.6-flash", "prompt": 6541, "cached": 0, "thoughts": 0, "output": 8, "total": 6549}
+{"t": 1787020072.628, "model": "gemini-3.6-flash", "prompt": 6415, "cached": 0, "thoughts": 0, "output": 8, "total": 6423}
+{"t": 1787020079.105, "model": "gemini-3.6-flash", "prompt": 6406, "cached": 0, "thoughts": 0, "output": 8, "total": 6414}
+{"t": 1787020082.952, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 6, "total": 1584}
+{"t": 1787020085.357, "model": "gemini-3.6-flash", "prompt": 6408, "cached": 0, "thoughts": 0, "output": 8, "total": 6416}
+{"t": 1787020087.424, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 62, "total": 1841}
+{"t": 1787020092.175, "model": "gemini-3.6-flash", "prompt": 6372, "cached": 0, "thoughts": 0, "output": 8, "total": 6380}
+{"t": 1787020098.789, "model": "gemini-3.6-flash", "prompt": 6358, "cached": 0, "thoughts": 0, "output": 8, "total": 6366}
+{"t": 1787020107.123, "model": "gemini-3.6-flash", "prompt": 6358, "cached": 0, "thoughts": 0, "output": 8, "total": 6366}
+{"t": 1787020111.386, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 6, "total": 1507}
+{"t": 1787020114.769, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 6, "total": 1435}
+{"t": 1787020123.178, "model": "gemini-3.6-flash", "prompt": 7581, "cached": 0, "thoughts": 0, "output": 20, "total": 7601}
+{"t": 1787020124.659, "model": "gemini-3.6-flash", "prompt": 6412, "cached": 0, "thoughts": 0, "output": 8, "total": 6420}
+{"t": 1787020131.579, "model": "gemini-3.6-flash", "prompt": 6411, "cached": 0, "thoughts": 0, "output": 8, "total": 6419}
+{"t": 1787020138.463, "model": "gemini-3.6-flash", "prompt": 6410, "cached": 0, "thoughts": 0, "output": 8, "total": 6418}
+{"t": 1787020145.218, "model": "gemini-3.6-flash", "prompt": 6409, "cached": 0, "thoughts": 0, "output": 8, "total": 6417}
+{"t": 1787020147.837, "model": "gemini-3.6-flash", "prompt": 7629, "cached": 0, "thoughts": 0, "output": 16, "total": 7645}
+{"t": 1787020149.709, "model": "gemini-3.6-flash", "prompt": 6412, "cached": 0, "thoughts": 0, "output": 8, "total": 6420}
+{"t": 1787020156.583, "model": "gemini-3.6-flash", "prompt": 6401, "cached": 0, "thoughts": 0, "output": 8, "total": 6409}
+{"t": 1787020159.002, "model": "gemini-3.6-flash", "prompt": 7591, "cached": 0, "thoughts": 0, "output": 16, "total": 7607}
+{"t": 1787020160.644, "model": "gemini-3.6-flash", "prompt": 6397, "cached": 0, "thoughts": 0, "output": 8, "total": 6405}
+{"t": 1787020168.041, "model": "gemini-3.6-flash", "prompt": 6395, "cached": 0, "thoughts": 0, "output": 8, "total": 6403}
+{"t": 1787020172.522, "model": "gemini-3.6-flash", "prompt": 7620, "cached": 0, "thoughts": 0, "output": 16, "total": 7636}
+{"t": 1787020174.154, "model": "gemini-3.6-flash", "prompt": 6439, "cached": 0, "thoughts": 0, "output": 8, "total": 6447}
+{"t": 1787020176.763, "model": "gemini-3.6-flash", "prompt": 7655, "cached": 0, "thoughts": 0, "output": 19, "total": 7674}
+{"t": 1787020178.359, "model": "gemini-3.6-flash", "prompt": 6485, "cached": 0, "thoughts": 0, "output": 8, "total": 6493}
+{"t": 1787020183.624, "model": "gemini-3.6-flash", "prompt": 7698, "cached": 0, "thoughts": 0, "output": 23, "total": 7721}
+{"t": 1787020185.157, "model": "gemini-3.6-flash", "prompt": 6531, "cached": 0, "thoughts": 0, "output": 8, "total": 6539}
+{"t": 1787020191.632, "model": "gemini-3.6-flash", "prompt": 6530, "cached": 0, "thoughts": 0, "output": 8, "total": 6538}
+{"t": 1787020194.305, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 5, "total": 2034}
+{"t": 1787020198.519, "model": "gemini-3.6-flash", "prompt": 6530, "cached": 0, "thoughts": 0, "output": 8, "total": 6538}
+{"t": 1787020201.595, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 6, "total": 1929}
+{"t": 1787020205.193, "model": "gemini-3.6-flash", "prompt": 6531, "cached": 0, "thoughts": 0, "output": 8, "total": 6539}
+{"t": 1787020209.05, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 6, "total": 1760}
+{"t": 1787020211.765, "model": "gemini-3.6-flash", "prompt": 6531, "cached": 0, "thoughts": 0, "output": 8, "total": 6539}
+{"t": 1787020217.042, "model": "gemini-3.6-flash", "prompt": 7716, "cached": 0, "thoughts": 0, "output": 20, "total": 7736}
+{"t": 1787020218.245, "model": "gemini-3.6-flash", "prompt": 6534, "cached": 0, "thoughts": 0, "output": 8, "total": 6542}
+{"t": 1787020225.033, "model": "gemini-3.6-flash", "prompt": 6534, "cached": 0, "thoughts": 0, "output": 8, "total": 6542}
+{"t": 1787020227.489, "model": "gemini-3.6-flash", "prompt": 7749, "cached": 0, "thoughts": 0, "output": 19, "total": 7768}
+{"t": 1787020228.606, "model": "gemini-3.6-flash", "prompt": 6579, "cached": 0, "thoughts": 0, "output": 8, "total": 6587}
+{"t": 1787020232.315, "model": "gemini-3.6-flash", "prompt": 7760, "cached": 0, "thoughts": 0, "output": 28, "total": 7788}
+{"t": 1787020233.606, "model": "gemini-3.6-flash", "prompt": 6614, "cached": 0, "thoughts": 0, "output": 8, "total": 6622}
+{"t": 1787020235.611, "model": "gemini-3.6-flash", "prompt": 7927, "cached": 0, "thoughts": 0, "output": 16, "total": 7943}
+{"t": 1787020237.013, "model": "gemini-3.6-flash", "prompt": 6708, "cached": 0, "thoughts": 0, "output": 8, "total": 6716}
+{"t": 1787020243.494, "model": "gemini-3.6-flash", "prompt": 6696, "cached": 0, "thoughts": 0, "output": 8, "total": 6704}
+{"t": 1787020245.177, "model": "gemini-3.6-flash", "prompt": 7913, "cached": 0, "thoughts": 0, "output": 28, "total": 7941}
+{"t": 1787020246.634, "model": "gemini-3.6-flash", "prompt": 2951, "cached": 0, "thoughts": 0, "output": 8, "total": 2959}
+{"t": 1787020247.108, "model": "gemini-3.6-flash", "prompt": 6740, "cached": 0, "thoughts": 0, "output": 8, "total": 6748}
+{"t": 1787020255.497, "model": "gemini-3.6-flash", "prompt": 4110, "cached": 0, "thoughts": 0, "output": 37, "total": 4147}
+{"t": 1787020257.691, "model": "gemini-3.6-flash", "prompt": 4082, "cached": 0, "thoughts": 0, "output": 8, "total": 4090}
+{"t": 1787020263.778, "model": "gemini-3.6-flash", "prompt": 5206, "cached": 0, "thoughts": 0, "output": 8, "total": 5214}
+{"t": 1787020266.881, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 62, "total": 2276}
+{"t": 1787020270.3, "model": "gemini-3.6-flash", "prompt": 5273, "cached": 0, "thoughts": 0, "output": 8, "total": 5281}
+{"t": 1787020277.021, "model": "gemini-3.6-flash", "prompt": 5340, "cached": 0, "thoughts": 0, "output": 8, "total": 5348}
+{"t": 1787020285.169, "model": "gemini-3.6-flash", "prompt": 5407, "cached": 0, "thoughts": 0, "output": 8, "total": 5415}
+{"t": 1787020291.284, "model": "gemini-3.6-flash", "prompt": 5474, "cached": 0, "thoughts": 0, "output": 8, "total": 5482}
+{"t": 1787020292.18, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 62, "total": 1884}
+{"t": 1787020303.583, "model": "gemini-3.6-flash", "prompt": 5561, "cached": 0, "thoughts": 0, "output": 24, "total": 5585}
+{"t": 1787020311.379, "model": "gemini-3.6-flash", "prompt": 5654, "cached": 0, "thoughts": 0, "output": 8, "total": 5662}
+{"t": 1787020314.524, "model": "gemini-3.6-flash", "prompt": 5540, "cached": 0, "thoughts": 0, "output": 8, "total": 5548}
+{"t": 1787020318.393, "model": "gemini-3.6-flash", "prompt": 5720, "cached": 0, "thoughts": 0, "output": 8, "total": 5728}
+{"t": 1787020319.506, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 60, "total": 2251}
+{"t": 1787020325.769, "model": "gemini-3.6-flash", "prompt": 5786, "cached": 0, "thoughts": 0, "output": 8, "total": 5794}
+{"t": 1787020332.821, "model": "gemini-3.6-flash", "prompt": 5852, "cached": 0, "thoughts": 0, "output": 8, "total": 5860}
+{"t": 1787020338.412, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 60, "total": 1699}
+{"t": 1787020340.847, "model": "gemini-3.6-flash", "prompt": 5918, "cached": 0, "thoughts": 0, "output": 8, "total": 5926}
+{"t": 1787020343.998, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 59, "total": 1905}
+{"t": 1787020348.37, "model": "gemini-3.6-flash", "prompt": 5984, "cached": 0, "thoughts": 0, "output": 8, "total": 5992}
+{"t": 1787020349.017, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 60, "total": 1864}
+{"t": 1787020352.948, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 60, "total": 1777}
+{"t": 1787020355.533, "model": "gemini-3.6-flash", "prompt": 6050, "cached": 0, "thoughts": 0, "output": 8, "total": 6058}
+{"t": 1787020361.127, "model": "gemini-3.6-flash", "prompt": 7336, "cached": 0, "thoughts": 0, "output": 23, "total": 7359}
+{"t": 1787020363.308, "model": "gemini-3.6-flash", "prompt": 6236, "cached": 0, "thoughts": 0, "output": 8, "total": 6244}
+{"t": 1787020370.477, "model": "gemini-3.6-flash", "prompt": 6302, "cached": 0, "thoughts": 0, "output": 8, "total": 6310}
+{"t": 1787020370.513, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 60, "total": 1743}
+{"t": 1787020377.322, "model": "gemini-3.6-flash", "prompt": 6368, "cached": 0, "thoughts": 0, "output": 8, "total": 6376}
+{"t": 1787020378.071, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 60, "total": 1845}
+{"t": 1787020384.11, "model": "gemini-3.6-flash", "prompt": 6435, "cached": 0, "thoughts": 0, "output": 8, "total": 6443}
+{"t": 1787020389.873, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 60, "total": 1996}
+{"t": 1787020391.07, "model": "gemini-3.6-flash", "prompt": 6445, "cached": 0, "thoughts": 0, "output": 8, "total": 6453}
+{"t": 1787020398.005, "model": "gemini-3.6-flash", "prompt": 6369, "cached": 0, "thoughts": 0, "output": 8, "total": 6377}
+{"t": 1787020400.703, "model": "gemini-3.6-flash", "prompt": 7583, "cached": 0, "thoughts": 0, "output": 19, "total": 7602}
+{"t": 1787020406.222, "model": "gemini-3.6-flash", "prompt": 7575, "cached": 0, "thoughts": 0, "output": 8, "total": 7583}
+{"t": 1787020427.931, "model": "gemini-3.6-flash", "prompt": 7566, "cached": 0, "thoughts": 0, "output": 8, "total": 7574}
+{"t": 1787020449.812, "model": "gemini-3.6-flash", "prompt": 7557, "cached": 0, "thoughts": 0, "output": 8, "total": 7565}
+{"t": 1787020471.556, "model": "gemini-3.6-flash", "prompt": 7548, "cached": 0, "thoughts": 0, "output": 8, "total": 7556}
+{"t": 1787020493.648, "model": "gemini-3.6-flash", "prompt": 7539, "cached": 0, "thoughts": 0, "output": 8, "total": 7547}
+{"t": 1787020516.406, "model": "gemini-3.6-flash", "prompt": 7483, "cached": 0, "thoughts": 0, "output": 8, "total": 7491}
+{"t": 1787020537.979, "model": "gemini-3.6-flash", "prompt": 7475, "cached": 0, "thoughts": 0, "output": 8, "total": 7483}
+{"t": 1787020560.16, "model": "gemini-3.6-flash", "prompt": 7467, "cached": 0, "thoughts": 0, "output": 8, "total": 7475}
+{"t": 1787020582.198, "model": "gemini-3.6-flash", "prompt": 7459, "cached": 0, "thoughts": 0, "output": 8, "total": 7467}
+{"t": 1787020604.19, "model": "gemini-3.6-flash", "prompt": 7451, "cached": 0, "thoughts": 0, "output": 8, "total": 7459}
+{"t": 1787020626.374, "model": "gemini-3.6-flash", "prompt": 7443, "cached": 0, "thoughts": 0, "output": 8, "total": 7451}
+{"t": 1787020649.554, "model": "gemini-3.6-flash", "prompt": 7435, "cached": 0, "thoughts": 0, "output": 8, "total": 7443}
+{"t": 1787020671.643, "model": "gemini-3.6-flash", "prompt": 7427, "cached": 0, "thoughts": 0, "output": 8, "total": 7435}
+{"t": 1787020693.489, "model": "gemini-3.6-flash", "prompt": 7378, "cached": 0, "thoughts": 0, "output": 8, "total": 7386}
+{"t": 1787020715.723, "model": "gemini-3.6-flash", "prompt": 7357, "cached": 0, "thoughts": 0, "output": 8, "total": 7365}
+{"t": 1787020735.27, "model": "gemini-3.6-flash", "prompt": 2952, "cached": 0, "thoughts": 0, "output": 8, "total": 2960}
+{"t": 1787020743.4, "model": "gemini-3.6-flash", "prompt": 4134, "cached": 0, "thoughts": 0, "output": 32, "total": 4166}
+{"t": 1787020745.092, "model": "gemini-3.6-flash", "prompt": 4125, "cached": 0, "thoughts": 0, "output": 8, "total": 4133}
+{"t": 1787020751.939, "model": "gemini-3.6-flash", "prompt": 5250, "cached": 0, "thoughts": 0, "output": 8, "total": 5258}
+{"t": 1787020753.676, "model": "gemini-3.6-flash", "prompt": 5363, "cached": 0, "thoughts": 0, "output": 8, "total": 5371}
+{"t": 1787020756.64, "model": "gemini-3.6-flash", "prompt": 6700, "cached": 0, "thoughts": 0, "output": 20, "total": 6720}
+{"t": 1787020757.763, "model": "gemini-3.6-flash", "prompt": 5598, "cached": 0, "thoughts": 0, "output": 8, "total": 5606}
+{"t": 1787020764.029, "model": "gemini-3.6-flash", "prompt": 6878, "cached": 0, "thoughts": 0, "output": 28, "total": 6906}
+{"t": 1787020765.584, "model": "gemini-3.6-flash", "prompt": 5806, "cached": 0, "thoughts": 0, "output": 8, "total": 5814}
+{"t": 1787020768.525, "model": "gemini-3.6-flash", "prompt": 7189, "cached": 0, "thoughts": 0, "output": 28, "total": 7217}
+{"t": 1787020770.062, "model": "gemini-3.6-flash", "prompt": 6118, "cached": 0, "thoughts": 0, "output": 8, "total": 6126}
+{"t": 1787020772.192, "model": "gemini-3.6-flash", "prompt": 7459, "cached": 0, "thoughts": 0, "output": 28, "total": 7487}
+{"t": 1787020773.263, "model": "gemini-3.6-flash", "prompt": 6388, "cached": 0, "thoughts": 0, "output": 8, "total": 6396}
+{"t": 1787020802.371, "model": "gemini-3.6-flash", "prompt": 7774, "cached": 0, "thoughts": 0, "output": 28, "total": 7802}
+{"t": 1787020803.886, "model": "gemini-3.6-flash", "prompt": 6703, "cached": 0, "thoughts": 0, "output": 8, "total": 6711}
+{"t": 1787020806.271, "model": "gemini-3.6-flash", "prompt": 8044, "cached": 0, "thoughts": 0, "output": 37, "total": 8081}
+{"t": 1787020807.378, "model": "gemini-3.6-flash", "prompt": 6956, "cached": 0, "thoughts": 0, "output": 8, "total": 6964}
+{"t": 1787020812.866, "model": "gemini-3.6-flash", "prompt": 7068, "cached": 0, "thoughts": 0, "output": 8, "total": 7076}
+{"t": 1787020815.565, "model": "gemini-3.6-flash", "prompt": 8406, "cached": 0, "thoughts": 0, "output": 38, "total": 8444}
+{"t": 1787020816.754, "model": "gemini-3.6-flash", "prompt": 7321, "cached": 0, "thoughts": 0, "output": 8, "total": 7329}
+{"t": 1787020823.343, "model": "gemini-3.6-flash", "prompt": 7388, "cached": 0, "thoughts": 0, "output": 8, "total": 7396}
+{"t": 1787020827.075, "model": "gemini-3.6-flash", "prompt": 7443, "cached": 0, "thoughts": 0, "output": 8, "total": 7451}
+{"t": 1787020830.03, "model": "gemini-3.6-flash", "prompt": 8597, "cached": 0, "thoughts": 0, "output": 8, "total": 8605}
+{"t": 1787020851.799, "model": "gemini-3.6-flash", "prompt": 8576, "cached": 0, "thoughts": 0, "output": 8, "total": 8584}
+{"t": 1787020873.99, "model": "gemini-3.6-flash", "prompt": 8567, "cached": 0, "thoughts": 0, "output": 8, "total": 8575}
+{"t": 1787020895.567, "model": "gemini-3.6-flash", "prompt": 8512, "cached": 0, "thoughts": 0, "output": 8, "total": 8520}
+{"t": 1787020917.398, "model": "gemini-3.6-flash", "prompt": 8415, "cached": 0, "thoughts": 0, "output": 8, "total": 8423}
+{"t": 1787020938.927, "model": "gemini-3.6-flash", "prompt": 8393, "cached": 0, "thoughts": 0, "output": 8, "total": 8401}
+{"t": 1787020960.87, "model": "gemini-3.6-flash", "prompt": 8321, "cached": 0, "thoughts": 0, "output": 8, "total": 8329}
+{"t": 1787020982.612, "model": "gemini-3.6-flash", "prompt": 8301, "cached": 0, "thoughts": 0, "output": 8, "total": 8309}
+{"t": 1787021004.079, "model": "gemini-3.6-flash", "prompt": 8126, "cached": 0, "thoughts": 0, "output": 8, "total": 8134}
+{"t": 1787021025.703, "model": "gemini-3.6-flash", "prompt": 8105, "cached": 0, "thoughts": 0, "output": 8, "total": 8113}
+{"t": 1787021047.588, "model": "gemini-3.6-flash", "prompt": 7972, "cached": 0, "thoughts": 0, "output": 8, "total": 7980}
+{"t": 1787021070.347, "model": "gemini-3.6-flash", "prompt": 7951, "cached": 0, "thoughts": 0, "output": 8, "total": 7959}
+{"t": 1787021091.939, "model": "gemini-3.6-flash", "prompt": 7773, "cached": 0, "thoughts": 0, "output": 8, "total": 7781}
+{"t": 1787021116.165, "model": "gemini-3.6-flash", "prompt": 7752, "cached": 0, "thoughts": 0, "output": 8, "total": 7760}
+{"t": 1787021138.028, "model": "gemini-3.6-flash", "prompt": 7636, "cached": 0, "thoughts": 0, "output": 8, "total": 7644}
+{"t": 1787021162.669, "model": "gemini-3.6-flash", "prompt": 7615, "cached": 0, "thoughts": 0, "output": 8, "total": 7623}
+{"t": 1787021184.593, "model": "gemini-3.6-flash", "prompt": 7561, "cached": 0, "thoughts": 0, "output": 8, "total": 7569}
+{"t": 1787021207.298, "model": "gemini-3.6-flash", "prompt": 7445, "cached": 0, "thoughts": 0, "output": 8, "total": 7453}
+{"t": 1787021222.32, "model": "gemini-3.6-flash", "prompt": 2952, "cached": 0, "thoughts": 0, "output": 8, "total": 2960}
+{"t": 1787021231.208, "model": "gemini-3.6-flash", "prompt": 4099, "cached": 0, "thoughts": 0, "output": 40, "total": 4139}
+{"t": 1787021232.727, "model": "gemini-3.6-flash", "prompt": 4074, "cached": 0, "thoughts": 0, "output": 8, "total": 4082}
+{"t": 1787021239.555, "model": "gemini-3.6-flash", "prompt": 5198, "cached": 0, "thoughts": 0, "output": 8, "total": 5206}
+{"t": 1787021240.202, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1838}
+{"t": 1787021246.602, "model": "gemini-3.6-flash", "prompt": 5264, "cached": 0, "thoughts": 0, "output": 8, "total": 5272}
+{"t": 1787021253.844, "model": "gemini-3.6-flash", "prompt": 5330, "cached": 0, "thoughts": 0, "output": 8, "total": 5338}
+{"t": 1787021254.266, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 61, "total": 1763}
+{"t": 1787021261.26, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1142, "cached": 0, "thoughts": 0, "output": 36, "total": 1440}
+{"t": 1787021261.333, "model": "gemini-3.6-flash", "prompt": 5396, "cached": 0, "thoughts": 0, "output": 8, "total": 5404}
+{"t": 1787021268.515, "model": "gemini-3.6-flash", "prompt": 5462, "cached": 0, "thoughts": 0, "output": 8, "total": 5470}
+{"t": 1787021276.493, "model": "gemini-3.6-flash", "prompt": 5528, "cached": 0, "thoughts": 0, "output": 8, "total": 5536}
+{"t": 1787021283.81, "model": "gemini-3.6-flash", "prompt": 5594, "cached": 0, "thoughts": 0, "output": 8, "total": 5602}
+{"t": 1787021288.725, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 2257, "cached": 0, "thoughts": 0, "output": 1, "total": 2377}
+{"t": 1787021291.359, "model": "gemini-3.6-flash", "prompt": 5660, "cached": 0, "thoughts": 0, "output": 8, "total": 5668}
+{"t": 1787021297.281, "model": "gemini-3.6-flash", "prompt": 6953, "cached": 0, "thoughts": 0, "output": 19, "total": 6972}
+{"t": 1787021299.283, "model": "gemini-3.6-flash", "prompt": 5849, "cached": 0, "thoughts": 0, "output": 8, "total": 5857}
+{"t": 1787021304.898, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1697}
+{"t": 1787021305.804, "model": "gemini-3.6-flash", "prompt": 5915, "cached": 0, "thoughts": 0, "output": 8, "total": 5923}
+{"t": 1787021312.185, "model": "gemini-3.6-flash", "prompt": 5981, "cached": 0, "thoughts": 0, "output": 8, "total": 5989}
+{"t": 1787021313.906, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1856}
+{"t": 1787021318.85, "model": "gemini-3.6-flash", "prompt": 6047, "cached": 0, "thoughts": 0, "output": 8, "total": 6055}
+{"t": 1787021320.735, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1142, "cached": 0, "thoughts": 0, "output": 36, "total": 1451}
+{"t": 1787021325.365, "model": "gemini-3.6-flash", "prompt": 6113, "cached": 0, "thoughts": 0, "output": 8, "total": 6121}
+{"t": 1787021331.771, "model": "gemini-3.6-flash", "prompt": 6179, "cached": 0, "thoughts": 0, "output": 8, "total": 6187}
+{"t": 1787021338.337, "model": "gemini-3.6-flash", "prompt": 6245, "cached": 0, "thoughts": 0, "output": 8, "total": 6253}
+{"t": 1787021345.291, "model": "gemini-3.6-flash", "prompt": 6311, "cached": 0, "thoughts": 0, "output": 8, "total": 6319}
+{"t": 1787021347.151, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 2257, "cached": 0, "thoughts": 0, "output": 1, "total": 2375}
+{"t": 1787021352.289, "model": "gemini-3.6-flash", "prompt": 6377, "cached": 0, "thoughts": 0, "output": 8, "total": 6385}
+{"t": 1787021355.252, "model": "gemini-3.6-flash", "prompt": 7612, "cached": 0, "thoughts": 0, "output": 20, "total": 7632}
+{"t": 1787021356.626, "model": "gemini-3.6-flash", "prompt": 6375, "cached": 0, "thoughts": 0, "output": 8, "total": 6383}
+{"t": 1787021362.445, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 62, "total": 1572}
+{"t": 1787021362.859, "model": "gemini-3.6-flash", "prompt": 6362, "cached": 0, "thoughts": 0, "output": 8, "total": 6370}
+{"t": 1787021369.364, "model": "gemini-3.6-flash", "prompt": 6362, "cached": 0, "thoughts": 0, "output": 8, "total": 6370}
+{"t": 1787021371.241, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 62, "total": 1793}
+{"t": 1787021376.02, "model": "gemini-3.6-flash", "prompt": 6362, "cached": 0, "thoughts": 0, "output": 8, "total": 6370}
+{"t": 1787021378.036, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1143, "cached": 0, "thoughts": 0, "output": 36, "total": 1429}
+{"t": 1787021382.473, "model": "gemini-3.6-flash", "prompt": 6362, "cached": 0, "thoughts": 0, "output": 8, "total": 6370}
+{"t": 1787021389.052, "model": "gemini-3.6-flash", "prompt": 6362, "cached": 0, "thoughts": 0, "output": 8, "total": 6370}
+{"t": 1787021395.501, "model": "gemini-3.6-flash", "prompt": 6362, "cached": 0, "thoughts": 0, "output": 8, "total": 6370}
+{"t": 1787021403.315, "model": "gemini-3.6-flash", "prompt": 6362, "cached": 0, "thoughts": 0, "output": 8, "total": 6370}
+{"t": 1787021405.174, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 2259, "cached": 0, "thoughts": 0, "output": 1, "total": 2400}
+{"t": 1787021409.811, "model": "gemini-3.6-flash", "prompt": 6362, "cached": 0, "thoughts": 0, "output": 8, "total": 6370}
+{"t": 1787021413.459, "model": "gemini-3.6-flash", "prompt": 7590, "cached": 0, "thoughts": 0, "output": 28, "total": 7618}
+{"t": 1787021415.038, "model": "gemini-3.6-flash", "prompt": 6409, "cached": 0, "thoughts": 0, "output": 8, "total": 6417}
+{"t": 1787021417.514, "model": "gemini-3.6-flash", "prompt": 7673, "cached": 0, "thoughts": 0, "output": 19, "total": 7692}
+{"t": 1787021418.822, "model": "gemini-3.6-flash", "prompt": 6503, "cached": 0, "thoughts": 0, "output": 8, "total": 6511}
+{"t": 1787021425.292, "model": "gemini-3.6-flash", "prompt": 6503, "cached": 0, "thoughts": 0, "output": 8, "total": 6511}
+{"t": 1787021425.612, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1585}
+{"t": 1787021432.456, "model": "gemini-3.6-flash", "prompt": 6503, "cached": 0, "thoughts": 0, "output": 8, "total": 6511}
+{"t": 1787021434.538, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1718}
+{"t": 1787021439.175, "model": "gemini-3.6-flash", "prompt": 6503, "cached": 0, "thoughts": 0, "output": 8, "total": 6511}
+{"t": 1787021441.412, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1142, "cached": 0, "thoughts": 0, "output": 36, "total": 1450}
+{"t": 1787021446.01, "model": "gemini-3.6-flash", "prompt": 6503, "cached": 0, "thoughts": 0, "output": 8, "total": 6511}
+{"t": 1787021453.884, "model": "gemini-3.6-flash", "prompt": 6503, "cached": 0, "thoughts": 0, "output": 8, "total": 6511}
+{"t": 1787021460.349, "model": "gemini-3.6-flash", "prompt": 6503, "cached": 0, "thoughts": 0, "output": 8, "total": 6511}
+{"t": 1787021467.357, "model": "gemini-3.6-flash", "prompt": 6503, "cached": 0, "thoughts": 0, "output": 8, "total": 6511}
+{"t": 1787021468.0, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 2257, "cached": 0, "thoughts": 0, "output": 1, "total": 2402}
+{"t": 1787021475.482, "model": "gemini-3.6-flash", "prompt": 6458, "cached": 0, "thoughts": 0, "output": 8, "total": 6466}
+{"t": 1787021479.791, "model": "gemini-3.6-flash", "prompt": 7672, "cached": 0, "thoughts": 0, "output": 19, "total": 7691}
+{"t": 1787021481.476, "model": "gemini-3.6-flash", "prompt": 6502, "cached": 0, "thoughts": 0, "output": 8, "total": 6510}
+{"t": 1787021487.97, "model": "gemini-3.6-flash", "prompt": 6502, "cached": 0, "thoughts": 0, "output": 8, "total": 6510}
+{"t": 1787021488.137, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 67, "total": 1694}
+{"t": 1787021495.459, "model": "gemini-3.6-flash", "prompt": 6502, "cached": 0, "thoughts": 0, "output": 8, "total": 6510}
+{"t": 1787021497.388, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1792}
+{"t": 1787021502.725, "model": "gemini-3.6-flash", "prompt": 6502, "cached": 0, "thoughts": 0, "output": 8, "total": 6510}
+{"t": 1787021504.405, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1142, "cached": 0, "thoughts": 0, "output": 36, "total": 1450}
+{"t": 1787021509.746, "model": "gemini-3.6-flash", "prompt": 6502, "cached": 0, "thoughts": 0, "output": 8, "total": 6510}
+{"t": 1787021516.959, "model": "gemini-3.6-flash", "prompt": 6502, "cached": 0, "thoughts": 0, "output": 8, "total": 6510}
+{"t": 1787021523.931, "model": "gemini-3.6-flash", "prompt": 6502, "cached": 0, "thoughts": 0, "output": 8, "total": 6510}
+{"t": 1787021530.768, "model": "gemini-3.6-flash", "prompt": 6502, "cached": 0, "thoughts": 0, "output": 8, "total": 6510}
+{"t": 1787021531.006, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 2257, "cached": 0, "thoughts": 0, "output": 1, "total": 2402}
+{"t": 1787021537.586, "model": "gemini-3.6-flash", "prompt": 6424, "cached": 0, "thoughts": 0, "output": 8, "total": 6432}
+{"t": 1787021539.535, "model": "gemini-3.6-flash", "prompt": 7638, "cached": 0, "thoughts": 0, "output": 28, "total": 7666}
+{"t": 1787021541.266, "model": "gemini-3.6-flash", "prompt": 6407, "cached": 0, "thoughts": 0, "output": 8, "total": 6415}
+{"t": 1787021543.86, "model": "gemini-3.6-flash", "prompt": 7670, "cached": 0, "thoughts": 0, "output": 19, "total": 7689}
+{"t": 1787021545.566, "model": "gemini-3.6-flash", "prompt": 6500, "cached": 0, "thoughts": 0, "output": 8, "total": 6508}
+{"t": 1787021552.143, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1643}
+{"t": 1787021552.23, "model": "gemini-3.6-flash", "prompt": 6500, "cached": 0, "thoughts": 0, "output": 8, "total": 6508}
+{"t": 1787021558.867, "model": "gemini-3.6-flash", "prompt": 6500, "cached": 0, "thoughts": 0, "output": 8, "total": 6508}
+{"t": 1787021562.711, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 2291}
+{"t": 1787021565.515, "model": "gemini-3.6-flash", "prompt": 6500, "cached": 0, "thoughts": 0, "output": 8, "total": 6508}
+{"t": 1787021569.91, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1142, "cached": 0, "thoughts": 0, "output": 36, "total": 1577}
+{"t": 1787021572.49, "model": "gemini-3.6-flash", "prompt": 6500, "cached": 0, "thoughts": 0, "output": 8, "total": 6508}
+{"t": 1787021579.667, "model": "gemini-3.6-flash", "prompt": 6500, "cached": 0, "thoughts": 0, "output": 8, "total": 6508}
+{"t": 1787021586.593, "model": "gemini-3.6-flash", "prompt": 6500, "cached": 0, "thoughts": 0, "output": 8, "total": 6508}
+{"t": 1787021593.719, "model": "gemini-3.6-flash", "prompt": 6500, "cached": 0, "thoughts": 0, "output": 8, "total": 6508}
+{"t": 1787021596.545, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 2257, "cached": 0, "thoughts": 0, "output": 1, "total": 2373}
+{"t": 1787021600.386, "model": "gemini-3.6-flash", "prompt": 6456, "cached": 0, "thoughts": 0, "output": 8, "total": 6464}
+{"t": 1787021605.018, "model": "gemini-3.6-flash", "prompt": 7670, "cached": 0, "thoughts": 0, "output": 39, "total": 7709}
+{"t": 1787021606.763, "model": "gemini-3.6-flash", "prompt": 6544, "cached": 0, "thoughts": 0, "output": 8, "total": 6552}
+{"t": 1787021609.247, "model": "gemini-3.6-flash", "prompt": 7822, "cached": 0, "thoughts": 0, "output": 19, "total": 7841}
+{"t": 1787021610.626, "model": "gemini-3.6-flash", "prompt": 6652, "cached": 0, "thoughts": 0, "output": 8, "total": 6660}
+{"t": 1787021617.394, "model": "gemini-3.6-flash", "prompt": 6652, "cached": 0, "thoughts": 0, "output": 8, "total": 6660}
+{"t": 1787021617.827, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 83, "total": 1655}
+{"t": 1787021623.968, "model": "gemini-3.6-flash", "prompt": 6652, "cached": 0, "thoughts": 0, "output": 8, "total": 6660}
+{"t": 1787021626.34, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1823}
+{"t": 1787021630.647, "model": "gemini-3.6-flash", "prompt": 6652, "cached": 0, "thoughts": 0, "output": 8, "total": 6660}
+{"t": 1787021633.349, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1142, "cached": 0, "thoughts": 0, "output": 36, "total": 1447}
+{"t": 1787021637.208, "model": "gemini-3.6-flash", "prompt": 6652, "cached": 0, "thoughts": 0, "output": 8, "total": 6660}
+{"t": 1787021644.033, "model": "gemini-3.6-flash", "prompt": 6652, "cached": 0, "thoughts": 0, "output": 8, "total": 6660}
+{"t": 1787021650.652, "model": "gemini-3.6-flash", "prompt": 6575, "cached": 0, "thoughts": 0, "output": 8, "total": 6583}
+{"t": 1787021657.179, "model": "gemini-3.6-flash", "prompt": 6562, "cached": 0, "thoughts": 0, "output": 8, "total": 6570}
+{"t": 1787021659.889, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 2257, "cached": 0, "thoughts": 0, "output": 1, "total": 2394}
+{"t": 1787021663.613, "model": "gemini-3.6-flash", "prompt": 6469, "cached": 0, "thoughts": 0, "output": 8, "total": 6477}
+{"t": 1787021668.135, "model": "gemini-3.6-flash", "prompt": 7683, "cached": 0, "thoughts": 0, "output": 16, "total": 7699}
+{"t": 1787021669.478, "model": "gemini-3.6-flash", "prompt": 6502, "cached": 0, "thoughts": 0, "output": 8, "total": 6510}
+{"t": 1787021671.783, "model": "gemini-3.6-flash", "prompt": 7718, "cached": 0, "thoughts": 0, "output": 19, "total": 7737}
+{"t": 1787021672.951, "model": "gemini-3.6-flash", "prompt": 6548, "cached": 0, "thoughts": 0, "output": 8, "total": 6556}
+{"t": 1787021679.737, "model": "gemini-3.6-flash", "prompt": 6548, "cached": 0, "thoughts": 0, "output": 8, "total": 6556}
+{"t": 1787021681.852, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 2063}
+{"t": 1787021686.021, "model": "gemini-3.6-flash", "prompt": 6548, "cached": 0, "thoughts": 0, "output": 8, "total": 6556}
+{"t": 1787021687.103, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1966}
+{"t": 1787021692.883, "model": "gemini-3.6-flash", "prompt": 6548, "cached": 0, "thoughts": 0, "output": 8, "total": 6556}
+{"t": 1787021693.619, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1142, "cached": 0, "thoughts": 0, "output": 36, "total": 1378}
+{"t": 1787021699.98, "model": "gemini-3.6-flash", "prompt": 6548, "cached": 0, "thoughts": 0, "output": 8, "total": 6556}
+{"t": 1787021707.257, "model": "gemini-3.6-flash", "prompt": 6548, "cached": 0, "thoughts": 0, "output": 8, "total": 6556}
+{"t": 1787021709.95, "model": "gemini-3.6-flash", "prompt": 2951, "cached": 0, "thoughts": 0, "output": 8, "total": 2959}
+{"t": 1787021713.689, "model": "gemini-3.6-flash", "prompt": 4082, "cached": 0, "thoughts": 0, "output": 8, "total": 4090}
+{"t": 1787021718.745, "model": "gemini-3.6-flash", "prompt": 5237, "cached": 0, "thoughts": 0, "output": 33, "total": 5270}
+{"t": 1787021721.697, "model": "gemini-3.6-flash", "prompt": 5197, "cached": 0, "thoughts": 0, "output": 8, "total": 5205}
+{"t": 1787021724.054, "model": "gemini-3.6-flash", "prompt": 5275, "cached": 0, "thoughts": 0, "output": 8, "total": 5283}
+{"t": 1787021726.573, "model": "gemini-3.6-flash", "prompt": 6560, "cached": 0, "thoughts": 0, "output": 8, "total": 6568}
+{"t": 1787021748.551, "model": "gemini-3.6-flash", "prompt": 6617, "cached": 0, "thoughts": 0, "output": 8, "total": 6625}
+{"t": 1787021770.117, "model": "gemini-3.6-flash", "prompt": 6674, "cached": 0, "thoughts": 0, "output": 8, "total": 6682}
+{"t": 1787021791.191, "model": "gemini-3.6-flash", "prompt": 6731, "cached": 0, "thoughts": 0, "output": 8, "total": 6739}
+{"t": 1787021812.628, "model": "gemini-3.6-flash", "prompt": 6788, "cached": 0, "thoughts": 0, "output": 8, "total": 6796}
+{"t": 1787021834.286, "model": "gemini-3.6-flash", "prompt": 6845, "cached": 0, "thoughts": 0, "output": 8, "total": 6853}
+{"t": 1787021856.054, "model": "gemini-3.6-flash", "prompt": 6902, "cached": 0, "thoughts": 0, "output": 8, "total": 6910}
+{"t": 1787021877.78, "model": "gemini-3.6-flash", "prompt": 6959, "cached": 0, "thoughts": 0, "output": 8, "total": 6967}
+{"t": 1787021899.481, "model": "gemini-3.6-flash", "prompt": 7016, "cached": 0, "thoughts": 0, "output": 8, "total": 7024}
+{"t": 1787021921.399, "model": "gemini-3.6-flash", "prompt": 7073, "cached": 0, "thoughts": 0, "output": 8, "total": 7081}
+{"t": 1787021942.567, "model": "gemini-3.6-flash", "prompt": 7130, "cached": 0, "thoughts": 0, "output": 8, "total": 7138}
+{"t": 1787021963.988, "model": "gemini-3.6-flash", "prompt": 7187, "cached": 0, "thoughts": 0, "output": 8, "total": 7195}
+{"t": 1787021985.926, "model": "gemini-3.6-flash", "prompt": 7244, "cached": 0, "thoughts": 0, "output": 8, "total": 7252}
+{"t": 1787022007.876, "model": "gemini-3.6-flash", "prompt": 7301, "cached": 0, "thoughts": 0, "output": 8, "total": 7309}
+{"t": 1787022035.769, "model": "gemini-3.6-flash", "prompt": 7358, "cached": 0, "thoughts": 0, "output": 8, "total": 7366}
+{"t": 1787022058.223, "model": "gemini-3.6-flash", "prompt": 7415, "cached": 0, "thoughts": 0, "output": 8, "total": 7423}
+{"t": 1787022079.236, "model": "gemini-3.6-flash", "prompt": 7415, "cached": 0, "thoughts": 0, "output": 8, "total": 7423}
+{"t": 1787022101.031, "model": "gemini-3.6-flash", "prompt": 7399, "cached": 0, "thoughts": 0, "output": 8, "total": 7407}
+{"t": 1787022122.865, "model": "gemini-3.6-flash", "prompt": 7323, "cached": 0, "thoughts": 0, "output": 8, "total": 7331}
+{"t": 1787022144.359, "model": "gemini-3.6-flash", "prompt": 7305, "cached": 0, "thoughts": 0, "output": 8, "total": 7313}
+{"t": 1787022165.706, "model": "gemini-3.6-flash", "prompt": 7284, "cached": 0, "thoughts": 0, "output": 8, "total": 7292}
+{"t": 1787022187.289, "model": "gemini-3.6-flash", "prompt": 7265, "cached": 0, "thoughts": 0, "output": 8, "total": 7273}
+{"t": 1787022229.608, "model": "gemini-3.6-flash", "prompt": 1673, "cached": 0, "thoughts": 0, "output": 8, "total": 1681}
+{"t": 1787022233.001, "model": "gemini-3.6-flash", "prompt": 2927, "cached": 0, "thoughts": 0, "output": 8, "total": 2935}
+{"t": 1787022241.883, "model": "gemini-3.6-flash", "prompt": 4064, "cached": 0, "thoughts": 0, "output": 31, "total": 4095}
+{"t": 1787022243.327, "model": "gemini-3.6-flash", "prompt": 4028, "cached": 0, "thoughts": 0, "output": 8, "total": 4036}
+{"t": 1787022247.15, "model": "gemini-3.6-flash", "prompt": 6365, "cached": 0, "thoughts": 0, "output": 19, "total": 6384}
+{"t": 1787022248.577, "model": "gemini-3.6-flash", "prompt": 5260, "cached": 0, "thoughts": 0, "output": 8, "total": 5268}
+{"t": 1787022251.905, "model": "gemini-3.6-flash", "prompt": 6538, "cached": 0, "thoughts": 0, "output": 19, "total": 6557}
+{"t": 1787022253.442, "model": "gemini-3.6-flash", "prompt": 5432, "cached": 0, "thoughts": 0, "output": 8, "total": 5440}
+{"t": 1787022256.823, "model": "gemini-3.6-flash", "prompt": 6709, "cached": 0, "thoughts": 0, "output": 19, "total": 6728}
+{"t": 1787022258.531, "model": "gemini-3.6-flash", "prompt": 5602, "cached": 0, "thoughts": 0, "output": 8, "total": 5610}
+{"t": 1787022261.842, "model": "gemini-3.6-flash", "prompt": 6880, "cached": 0, "thoughts": 0, "output": 16, "total": 6896}
+{"t": 1787022263.032, "model": "gemini-3.6-flash", "prompt": 5761, "cached": 0, "thoughts": 0, "output": 8, "total": 5769}
+{"t": 1787022269.33, "model": "gemini-3.6-flash", "prompt": 5823, "cached": 0, "thoughts": 0, "output": 8, "total": 5831}
+{"t": 1787022271.711, "model": "gemini-3.6-flash", "prompt": 7103, "cached": 0, "thoughts": 0, "output": 15, "total": 7118}
+{"t": 1787022275.678, "model": "gemini-3.6-flash", "prompt": 7154, "cached": 0, "thoughts": 0, "output": 8, "total": 7162}
+{"t": 1787022296.977, "model": "gemini-3.6-flash", "prompt": 7209, "cached": 0, "thoughts": 0, "output": 8, "total": 7217}
+{"t": 1787022318.251, "model": "gemini-3.6-flash", "prompt": 7264, "cached": 0, "thoughts": 0, "output": 8, "total": 7272}
+{"t": 1787022339.573, "model": "gemini-3.6-flash", "prompt": 7320, "cached": 0, "thoughts": 0, "output": 8, "total": 7328}
+{"t": 1787022360.728, "model": "gemini-3.6-flash", "prompt": 7376, "cached": 0, "thoughts": 0, "output": 8, "total": 7384}
+{"t": 1787022382.076, "model": "gemini-3.6-flash", "prompt": 7432, "cached": 0, "thoughts": 0, "output": 8, "total": 7440}
+{"t": 1787022403.48, "model": "gemini-3.6-flash", "prompt": 7488, "cached": 0, "thoughts": 0, "output": 8, "total": 7496}
+{"t": 1787022424.699, "model": "gemini-3.6-flash", "prompt": 7544, "cached": 0, "thoughts": 0, "output": 8, "total": 7552}
+{"t": 1787022425.233, "model": "gemini-3.6-flash", "prompt": 2950, "cached": 0, "thoughts": 0, "output": 8, "total": 2958}
+{"t": 1787022433.949, "model": "gemini-3.6-flash", "prompt": 4094, "cached": 0, "thoughts": 0, "output": 16, "total": 4110}
+{"t": 1787022434.877, "model": "gemini-3.6-flash", "prompt": 4034, "cached": 0, "thoughts": 0, "output": 8, "total": 4042}
+{"t": 1787022441.32, "model": "gemini-3.6-flash", "prompt": 5155, "cached": 0, "thoughts": 0, "output": 8, "total": 5163}
+{"t": 1787022443.836, "model": "gemini-3.6-flash", "prompt": 6436, "cached": 0, "thoughts": 0, "output": 16, "total": 6452}
+{"t": 1787022445.189, "model": "gemini-3.6-flash", "prompt": 5320, "cached": 0, "thoughts": 0, "output": 8, "total": 5328}
+{"t": 1787022451.125, "model": "gemini-3.6-flash", "prompt": 6601, "cached": 0, "thoughts": 0, "output": 19, "total": 6620}
+{"t": 1787022452.711, "model": "gemini-3.6-flash", "prompt": 5496, "cached": 0, "thoughts": 0, "output": 28, "total": 5524}
+{"t": 1787022459.329, "model": "gemini-3.6-flash", "prompt": 5581, "cached": 0, "thoughts": 0, "output": 8, "total": 5589}
+{"t": 1787022461.047, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 2158}
+{"t": 1787022465.803, "model": "gemini-3.6-flash", "prompt": 5646, "cached": 0, "thoughts": 0, "output": 8, "total": 5654}
+{"t": 1787022472.45, "model": "gemini-3.6-flash", "prompt": 5711, "cached": 0, "thoughts": 0, "output": 8, "total": 5719}
+{"t": 1787022479.402, "model": "gemini-3.6-flash", "prompt": 5776, "cached": 0, "thoughts": 0, "output": 8, "total": 5784}
+{"t": 1787022485.191, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1751}
+{"t": 1787022486.074, "model": "gemini-3.6-flash", "prompt": 5841, "cached": 0, "thoughts": 0, "output": 8, "total": 5849}
+{"t": 1787022492.66, "model": "gemini-3.6-flash", "prompt": 5906, "cached": 0, "thoughts": 0, "output": 8, "total": 5914}
+{"t": 1787022499.362, "model": "gemini-3.6-flash", "prompt": 5971, "cached": 0, "thoughts": 0, "output": 8, "total": 5979}
+{"t": 1787022505.728, "model": "gemini-3.6-flash", "prompt": 6036, "cached": 0, "thoughts": 0, "output": 8, "total": 6044}
+{"t": 1787022509.831, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1750}
+{"t": 1787022512.179, "model": "gemini-3.6-flash", "prompt": 6101, "cached": 0, "thoughts": 0, "output": 8, "total": 6109}
+{"t": 1787022519.069, "model": "gemini-3.6-flash", "prompt": 6166, "cached": 0, "thoughts": 0, "output": 8, "total": 6174}
+{"t": 1787022525.708, "model": "gemini-3.6-flash", "prompt": 6231, "cached": 0, "thoughts": 0, "output": 8, "total": 6239}
+{"t": 1787022532.23, "model": "gemini-3.6-flash", "prompt": 6296, "cached": 0, "thoughts": 0, "output": 8, "total": 6304}
+{"t": 1787022534.612, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1792}
+{"t": 1787022538.763, "model": "gemini-3.6-flash", "prompt": 6361, "cached": 0, "thoughts": 0, "output": 8, "total": 6369}
+{"t": 1787022545.321, "model": "gemini-3.6-flash", "prompt": 6370, "cached": 0, "thoughts": 0, "output": 8, "total": 6378}
+{"t": 1787022552.362, "model": "gemini-3.6-flash", "prompt": 6332, "cached": 0, "thoughts": 0, "output": 8, "total": 6340}
+{"t": 1787022559.01, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1670}
+{"t": 1787022559.175, "model": "gemini-3.6-flash", "prompt": 6323, "cached": 0, "thoughts": 0, "output": 8, "total": 6331}
+{"t": 1787022566.377, "model": "gemini-3.6-flash", "prompt": 6325, "cached": 0, "thoughts": 0, "output": 8, "total": 6333}
+{"t": 1787022573.23, "model": "gemini-3.6-flash", "prompt": 6299, "cached": 0, "thoughts": 0, "output": 8, "total": 6307}
+{"t": 1787022579.901, "model": "gemini-3.6-flash", "prompt": 6290, "cached": 0, "thoughts": 0, "output": 8, "total": 6298}
+{"t": 1787022583.563, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1693}
+{"t": 1787022586.635, "model": "gemini-3.6-flash", "prompt": 6259, "cached": 0, "thoughts": 0, "output": 8, "total": 6267}
+{"t": 1787022593.109, "model": "gemini-3.6-flash", "prompt": 6226, "cached": 0, "thoughts": 0, "output": 8, "total": 6234}
+{"t": 1787022599.898, "model": "gemini-3.6-flash", "prompt": 6226, "cached": 0, "thoughts": 0, "output": 8, "total": 6234}
+{"t": 1787022606.653, "model": "gemini-3.6-flash", "prompt": 6226, "cached": 0, "thoughts": 0, "output": 8, "total": 6234}
+{"t": 1787022608.002, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1843}
+{"t": 1787022613.293, "model": "gemini-3.6-flash", "prompt": 6226, "cached": 0, "thoughts": 0, "output": 8, "total": 6234}
+{"t": 1787022616.019, "model": "gemini-3.6-flash", "prompt": 7445, "cached": 0, "thoughts": 0, "output": 16, "total": 7461}
+{"t": 1787022617.289, "model": "gemini-3.6-flash", "prompt": 6264, "cached": 0, "thoughts": 0, "output": 8, "total": 6272}
+{"t": 1787022619.759, "model": "gemini-3.6-flash", "prompt": 7480, "cached": 0, "thoughts": 0, "output": 19, "total": 7499}
+{"t": 1787022621.166, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787022627.571, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1689}
+{"t": 1787022627.764, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787022634.241, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787022641.072, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787022647.602, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787022652.09, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1713}
+{"t": 1787022654.159, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787022660.849, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787022667.361, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787022674.348, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787022676.749, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1790}
+{"t": 1787022681.246, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787022687.74, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787022694.811, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787022701.289, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 61, "total": 1757}
+{"t": 1787022701.72, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787022708.282, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787022714.904, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787022721.416, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787022725.357, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 61, "total": 1674}
+{"t": 1787022728.546, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787022733.655, "model": "gemini-3.6-flash", "prompt": 2950, "cached": 0, "thoughts": 0, "output": 8, "total": 2958}
+{"t": 1787022741.634, "model": "gemini-3.6-flash", "prompt": 4099, "cached": 0, "thoughts": 0, "output": 21, "total": 4120}
+{"t": 1787022746.132, "model": "gemini-3.6-flash", "prompt": 5215, "cached": 0, "thoughts": 0, "output": 8, "total": 5223}
+{"t": 1787022767.447, "model": "gemini-3.6-flash", "prompt": 6329, "cached": 0, "thoughts": 0, "output": 8, "total": 6337}
+{"t": 1787022788.776, "model": "gemini-3.6-flash", "prompt": 6385, "cached": 0, "thoughts": 0, "output": 8, "total": 6393}
+{"t": 1787022810.178, "model": "gemini-3.6-flash", "prompt": 6441, "cached": 0, "thoughts": 0, "output": 8, "total": 6449}
+{"t": 1787022832.077, "model": "gemini-3.6-flash", "prompt": 6497, "cached": 0, "thoughts": 0, "output": 8, "total": 6505}
+{"t": 1787022853.485, "model": "gemini-3.6-flash", "prompt": 6553, "cached": 0, "thoughts": 0, "output": 8, "total": 6561}
+{"t": 1787022874.687, "model": "gemini-3.6-flash", "prompt": 6609, "cached": 0, "thoughts": 0, "output": 8, "total": 6617}
+{"t": 1787022896.063, "model": "gemini-3.6-flash", "prompt": 6665, "cached": 0, "thoughts": 0, "output": 8, "total": 6673}
+{"t": 1787022917.293, "model": "gemini-3.6-flash", "prompt": 6721, "cached": 0, "thoughts": 0, "output": 8, "total": 6729}
+{"t": 1787022938.413, "model": "gemini-3.6-flash", "prompt": 6777, "cached": 0, "thoughts": 0, "output": 8, "total": 6785}
+{"t": 1787022959.72, "model": "gemini-3.6-flash", "prompt": 6833, "cached": 0, "thoughts": 0, "output": 8, "total": 6841}
+{"t": 1787022981.053, "model": "gemini-3.6-flash", "prompt": 6889, "cached": 0, "thoughts": 0, "output": 8, "total": 6897}
+{"t": 1787023002.381, "model": "gemini-3.6-flash", "prompt": 6945, "cached": 0, "thoughts": 0, "output": 8, "total": 6953}
+{"t": 1787023023.519, "model": "gemini-3.6-flash", "prompt": 7001, "cached": 0, "thoughts": 0, "output": 8, "total": 7009}
+{"t": 1787023044.922, "model": "gemini-3.6-flash", "prompt": 7057, "cached": 0, "thoughts": 0, "output": 8, "total": 7065}
+{"t": 1787023045.059, "model": "gemini-3.6-flash", "prompt": 2950, "cached": 0, "thoughts": 0, "output": 8, "total": 2958}
+{"t": 1787023053.679, "model": "gemini-3.6-flash", "prompt": 4128, "cached": 0, "thoughts": 0, "output": 41, "total": 4169}
+{"t": 1787023055.223, "model": "gemini-3.6-flash", "prompt": 4127, "cached": 0, "thoughts": 0, "output": 8, "total": 4135}
+{"t": 1787023058.544, "model": "gemini-3.6-flash", "prompt": 5296, "cached": 0, "thoughts": 0, "output": 8, "total": 5304}
+{"t": 1787023065.334, "model": "gemini-3.6-flash", "prompt": 5361, "cached": 0, "thoughts": 0, "output": 8, "total": 5369}
+{"t": 1787023067.713, "model": "gemini-3.6-flash", "prompt": 6698, "cached": 0, "thoughts": 0, "output": 16, "total": 6714}
+{"t": 1787023068.626, "model": "gemini-3.6-flash", "prompt": 5582, "cached": 0, "thoughts": 0, "output": 8, "total": 5590}
+{"t": 1787023075.412, "model": "gemini-3.6-flash", "prompt": 5645, "cached": 0, "thoughts": 0, "output": 8, "total": 5653}
+{"t": 1787023077.873, "model": "gemini-3.6-flash", "prompt": 6926, "cached": 0, "thoughts": 0, "output": 19, "total": 6945}
+{"t": 1787023079.411, "model": "gemini-3.6-flash", "prompt": 5821, "cached": 0, "thoughts": 0, "output": 8, "total": 5829}
+{"t": 1787023082.569, "model": "gemini-3.6-flash", "prompt": 7101, "cached": 0, "thoughts": 0, "output": 19, "total": 7120}
+{"t": 1787023084.17, "model": "gemini-3.6-flash", "prompt": 5997, "cached": 0, "thoughts": 0, "output": 8, "total": 6005}
+{"t": 1787023087.503, "model": "gemini-3.6-flash", "prompt": 7276, "cached": 0, "thoughts": 0, "output": 19, "total": 7295}
+{"t": 1787023089.02, "model": "gemini-3.6-flash", "prompt": 6171, "cached": 0, "thoughts": 0, "output": 8, "total": 6179}
+{"t": 1787023092.729, "model": "gemini-3.6-flash", "prompt": 7449, "cached": 0, "thoughts": 0, "output": 36, "total": 7485}
+{"t": 1787023094.668, "model": "gemini-3.6-flash", "prompt": 6360, "cached": 0, "thoughts": 0, "output": 8, "total": 6368}
+{"t": 1787023101.136, "model": "gemini-3.6-flash", "prompt": 6424, "cached": 0, "thoughts": 0, "output": 8, "total": 6432}
+{"t": 1787023101.492, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1267, "cached": 0, "thoughts": 0, "output": 61, "total": 1980}
+{"t": 1787023107.966, "model": "gemini-3.6-flash", "prompt": 6489, "cached": 0, "thoughts": 0, "output": 8, "total": 6497}
+{"t": 1787023115.047, "model": "gemini-3.6-flash", "prompt": 6554, "cached": 0, "thoughts": 0, "output": 8, "total": 6562}
+{"t": 1787023122.391, "model": "gemini-3.6-flash", "prompt": 6619, "cached": 0, "thoughts": 0, "output": 8, "total": 6627}
+{"t": 1787023126.604, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1267, "cached": 0, "thoughts": 0, "output": 59, "total": 1851}
+{"t": 1787023128.921, "model": "gemini-3.6-flash", "prompt": 6684, "cached": 0, "thoughts": 0, "output": 8, "total": 6692}
+{"t": 1787023135.707, "model": "gemini-3.6-flash", "prompt": 6693, "cached": 0, "thoughts": 0, "output": 8, "total": 6701}
+{"t": 1787023142.227, "model": "gemini-3.6-flash", "prompt": 6568, "cached": 0, "thoughts": 0, "output": 8, "total": 6576}
+{"t": 1787023148.808, "model": "gemini-3.6-flash", "prompt": 6555, "cached": 0, "thoughts": 0, "output": 8, "total": 6563}
+{"t": 1787023155.278, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1267, "cached": 0, "thoughts": 0, "output": 58, "total": 2823}
+{"t": 1787023155.64, "model": "gemini-3.6-flash", "prompt": 6509, "cached": 0, "thoughts": 0, "output": 8, "total": 6517}
+{"t": 1787023160.145, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1267, "cached": 0, "thoughts": 0, "output": 57, "total": 1817}
+{"t": 1787023162.117, "model": "gemini-3.6-flash", "prompt": 6509, "cached": 0, "thoughts": 0, "output": 8, "total": 6517}
+{"t": 1787023164.79, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1267, "cached": 0, "thoughts": 0, "output": 57, "total": 1799}
+{"t": 1787023168.413, "model": "gemini-3.6-flash", "prompt": 6425, "cached": 0, "thoughts": 0, "output": 8, "total": 6433}
+{"t": 1787023169.021, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1267, "cached": 0, "thoughts": 0, "output": 57, "total": 1813}
+{"t": 1787023174.558, "model": "gemini-3.6-flash", "prompt": 6416, "cached": 0, "thoughts": 0, "output": 8, "total": 6424}
+{"t": 1787023176.891, "model": "gemini-3.6-flash", "prompt": 7642, "cached": 0, "thoughts": 0, "output": 16, "total": 7658}
+{"t": 1787023178.322, "model": "gemini-3.6-flash", "prompt": 6430, "cached": 0, "thoughts": 0, "output": 8, "total": 6438}
+{"t": 1787023182.433, "model": "gemini-3.6-flash", "prompt": 7633, "cached": 0, "thoughts": 0, "output": 23, "total": 7656}
+{"t": 1787023183.809, "model": "gemini-3.6-flash", "prompt": 6435, "cached": 0, "thoughts": 0, "output": 8, "total": 6443}
+{"t": 1787023190.19, "model": "gemini-3.6-flash", "prompt": 6421, "cached": 0, "thoughts": 0, "output": 8, "total": 6429}
+{"t": 1787023196.308, "model": "gemini-3.6-flash", "prompt": 6390, "cached": 0, "thoughts": 0, "output": 8, "total": 6398}
+{"t": 1787023202.833, "model": "gemini-3.6-flash", "prompt": 6377, "cached": 0, "thoughts": 0, "output": 8, "total": 6385}
+{"t": 1787023208.971, "model": "gemini-3.6-flash", "prompt": 6330, "cached": 0, "thoughts": 0, "output": 8, "total": 6338}
+{"t": 1787023215.372, "model": "gemini-3.6-flash", "prompt": 6318, "cached": 0, "thoughts": 0, "output": 8, "total": 6326}
+{"t": 1787023221.44, "model": "gemini-3.6-flash", "prompt": 6319, "cached": 0, "thoughts": 0, "output": 8, "total": 6327}
+{"t": 1787023227.634, "model": "gemini-3.6-flash", "prompt": 6319, "cached": 0, "thoughts": 0, "output": 8, "total": 6327}
+{"t": 1787023233.843, "model": "gemini-3.6-flash", "prompt": 6319, "cached": 0, "thoughts": 0, "output": 8, "total": 6327}
+{"t": 1787023239.879, "model": "gemini-3.6-flash", "prompt": 6320, "cached": 0, "thoughts": 0, "output": 8, "total": 6328}
+{"t": 1787023246.192, "model": "gemini-3.6-flash", "prompt": 6321, "cached": 0, "thoughts": 0, "output": 8, "total": 6329}
+{"t": 1787023252.309, "model": "gemini-3.6-flash", "prompt": 6322, "cached": 0, "thoughts": 0, "output": 8, "total": 6330}
+{"t": 1787023253.095, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 60, "total": 1944}
+{"t": 1787023258.729, "model": "gemini-3.6-flash", "prompt": 6323, "cached": 0, "thoughts": 0, "output": 8, "total": 6331}
+{"t": 1787023260.077, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 56, "total": 1978}
+{"t": 1787023265.268, "model": "gemini-3.6-flash", "prompt": 6324, "cached": 0, "thoughts": 0, "output": 8, "total": 6332}
+{"t": 1787023268.395, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 60, "total": 2132}
+{"t": 1787023271.729, "model": "gemini-3.6-flash", "prompt": 6325, "cached": 0, "thoughts": 0, "output": 8, "total": 6333}
+{"t": 1787023276.35, "model": "gemini-3.6-flash", "prompt": 7552, "cached": 0, "thoughts": 0, "output": 19, "total": 7571}
+{"t": 1787023278.061, "model": "gemini-3.6-flash", "prompt": 6383, "cached": 0, "thoughts": 0, "output": 8, "total": 6391}
+{"t": 1787023284.018, "model": "gemini-3.6-flash", "prompt": 6384, "cached": 0, "thoughts": 0, "output": 8, "total": 6392}
+{"t": 1787023284.536, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 61, "total": 1796}
+{"t": 1787023290.549, "model": "gemini-3.6-flash", "prompt": 6349, "cached": 0, "thoughts": 0, "output": 8, "total": 6357}
+{"t": 1787023291.015, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 61, "total": 1808}
+{"t": 1787023296.822, "model": "gemini-3.6-flash", "prompt": 6342, "cached": 0, "thoughts": 0, "output": 8, "total": 6350}
+{"t": 1787023297.48, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 1617}
+{"t": 1787023302.978, "model": "gemini-3.6-flash", "prompt": 6309, "cached": 0, "thoughts": 0, "output": 8, "total": 6317}
+{"t": 1787023305.477, "model": "gemini-3.6-flash", "prompt": 7520, "cached": 0, "thoughts": 0, "output": 19, "total": 7539}
+{"t": 1787023306.938, "model": "gemini-3.6-flash", "prompt": 6352, "cached": 0, "thoughts": 0, "output": 8, "total": 6360}
+{"t": 1787023309.389, "model": "gemini-3.6-flash", "prompt": 7567, "cached": 0, "thoughts": 0, "output": 24, "total": 7591}
+{"t": 1787023313.842, "model": "gemini-3.6-flash", "prompt": 7564, "cached": 0, "thoughts": 0, "output": 8, "total": 7572}
+{"t": 1787023335.892, "model": "gemini-3.6-flash", "prompt": 7556, "cached": 0, "thoughts": 0, "output": 8, "total": 7564}
+{"t": 1787023357.573, "model": "gemini-3.6-flash", "prompt": 7548, "cached": 0, "thoughts": 0, "output": 8, "total": 7556}
+{"t": 1787023379.217, "model": "gemini-3.6-flash", "prompt": 7540, "cached": 0, "thoughts": 0, "output": 8, "total": 7548}
+{"t": 1787023400.87, "model": "gemini-3.6-flash", "prompt": 7532, "cached": 0, "thoughts": 0, "output": 8, "total": 7540}
+{"t": 1787023422.798, "model": "gemini-3.6-flash", "prompt": 7524, "cached": 0, "thoughts": 0, "output": 8, "total": 7532}
+{"t": 1787023445.047, "model": "gemini-3.6-flash", "prompt": 7515, "cached": 0, "thoughts": 0, "output": 8, "total": 7523}
+{"t": 1787023466.745, "model": "gemini-3.6-flash", "prompt": 7506, "cached": 0, "thoughts": 0, "output": 8, "total": 7514}
+{"t": 1787023488.522, "model": "gemini-3.6-flash", "prompt": 7497, "cached": 0, "thoughts": 0, "output": 8, "total": 7505}
+{"t": 1787023510.289, "model": "gemini-3.6-flash", "prompt": 7488, "cached": 0, "thoughts": 0, "output": 8, "total": 7496}
+{"t": 1787023532.051, "model": "gemini-3.6-flash", "prompt": 7479, "cached": 0, "thoughts": 0, "output": 8, "total": 7487}
+{"t": 1787023630.579, "model": "gemini-3.6-flash", "prompt": 1694, "cached": 0, "thoughts": 0, "output": 8, "total": 1702}
+{"t": 1787023653.374, "model": "gemini-3.6-flash", "prompt": 4061, "cached": 0, "thoughts": 0, "output": 8, "total": 4069}
+{"t": 1787023655.253, "model": "gemini-3.6-flash", "prompt": 2949, "cached": 0, "thoughts": 0, "output": 8, "total": 2957}
+{"t": 1787023676.864, "model": "gemini-3.6-flash", "prompt": 4062, "cached": 0, "thoughts": 0, "output": 8, "total": 4070}
+{"t": 1787023694.521, "model": "gemini-3.6-flash", "prompt": 5208, "cached": 0, "thoughts": 0, "output": 40, "total": 5248}
+{"t": 1787023695.794, "model": "gemini-3.6-flash", "prompt": 5205, "cached": 0, "thoughts": 0, "output": 8, "total": 5213}
+{"t": 1787023702.604, "model": "gemini-3.6-flash", "prompt": 5269, "cached": 0, "thoughts": 0, "output": 8, "total": 5277}
+{"t": 1787023708.955, "model": "gemini-3.6-flash", "prompt": 5333, "cached": 0, "thoughts": 0, "output": 8, "total": 5341}
+{"t": 1787023715.239, "model": "gemini-3.6-flash", "prompt": 5397, "cached": 0, "thoughts": 0, "output": 8, "total": 5405}
+{"t": 1787023721.645, "model": "gemini-3.6-flash", "prompt": 5461, "cached": 0, "thoughts": 0, "output": 8, "total": 5469}
+{"t": 1787023728.26, "model": "gemini-3.6-flash", "prompt": 5525, "cached": 0, "thoughts": 0, "output": 8, "total": 5533}
+{"t": 1787023734.504, "model": "gemini-3.6-flash", "prompt": 5590, "cached": 0, "thoughts": 0, "output": 8, "total": 5598}
+{"t": 1787023740.5, "model": "gemini-3.6-flash", "prompt": 5655, "cached": 0, "thoughts": 0, "output": 8, "total": 5663}
+{"t": 1787023746.561, "model": "gemini-3.6-flash", "prompt": 5720, "cached": 0, "thoughts": 0, "output": 8, "total": 5728}
+{"t": 1787023752.478, "model": "gemini-3.6-flash", "prompt": 5785, "cached": 0, "thoughts": 0, "output": 8, "total": 5793}
+{"t": 1787023758.949, "model": "gemini-3.6-flash", "prompt": 5850, "cached": 0, "thoughts": 0, "output": 8, "total": 5858}
+{"t": 1787023765.238, "model": "gemini-3.6-flash", "prompt": 5915, "cached": 0, "thoughts": 0, "output": 8, "total": 5923}
+{"t": 1787023771.605, "model": "gemini-3.6-flash", "prompt": 5980, "cached": 0, "thoughts": 0, "output": 8, "total": 5988}
+{"t": 1787023778.008, "model": "gemini-3.6-flash", "prompt": 6045, "cached": 0, "thoughts": 0, "output": 8, "total": 6053}
+{"t": 1787023784.152, "model": "gemini-3.6-flash", "prompt": 6110, "cached": 0, "thoughts": 0, "output": 8, "total": 6118}
+{"t": 1787023790.365, "model": "gemini-3.6-flash", "prompt": 6175, "cached": 0, "thoughts": 0, "output": 8, "total": 6183}
+{"t": 1787023796.463, "model": "gemini-3.6-flash", "prompt": 6240, "cached": 0, "thoughts": 0, "output": 8, "total": 6248}
+{"t": 1787023802.438, "model": "gemini-3.6-flash", "prompt": 6305, "cached": 0, "thoughts": 0, "output": 8, "total": 6313}
+{"t": 1787023808.533, "model": "gemini-3.6-flash", "prompt": 6315, "cached": 0, "thoughts": 0, "output": 8, "total": 6323}
+{"t": 1787023810.808, "model": "gemini-3.6-flash", "prompt": 7641, "cached": 0, "thoughts": 0, "output": 10, "total": 7651}
+{"t": 1787023814.842, "model": "gemini-3.6-flash", "prompt": 7531, "cached": 0, "thoughts": 0, "output": 8, "total": 7539}
+{"t": 1787023836.007, "model": "gemini-3.6-flash", "prompt": 7510, "cached": 0, "thoughts": 0, "output": 8, "total": 7518}
+{"t": 1787023857.42, "model": "gemini-3.6-flash", "prompt": 7502, "cached": 0, "thoughts": 0, "output": 8, "total": 7510}
+{"t": 1787023873.826, "model": "gemini-3.6-flash", "prompt": 2950, "cached": 0, "thoughts": 0, "output": 8, "total": 2958}
+{"t": 1787023892.822, "model": "gemini-3.6-flash", "prompt": 4090, "cached": 0, "thoughts": 0, "output": 31, "total": 4121}
+{"t": 1787023894.159, "model": "gemini-3.6-flash", "prompt": 4055, "cached": 0, "thoughts": 0, "output": 8, "total": 4063}
+{"t": 1787023897.768, "model": "gemini-3.6-flash", "prompt": 6393, "cached": 0, "thoughts": 0, "output": 19, "total": 6412}
+{"t": 1787023899.296, "model": "gemini-3.6-flash", "prompt": 5289, "cached": 0, "thoughts": 0, "output": 8, "total": 5297}
+{"t": 1787023902.362, "model": "gemini-3.6-flash", "prompt": 6568, "cached": 0, "thoughts": 0, "output": 28, "total": 6596}
+{"t": 1787023903.737, "model": "gemini-3.6-flash", "prompt": 5496, "cached": 0, "thoughts": 0, "output": 8, "total": 5504}
+{"t": 1787023910.03, "model": "gemini-3.6-flash", "prompt": 5561, "cached": 0, "thoughts": 0, "output": 8, "total": 5569}
+{"t": 1787023916.333, "model": "gemini-3.6-flash", "prompt": 5626, "cached": 0, "thoughts": 0, "output": 8, "total": 5634}
+{"t": 1787023922.389, "model": "gemini-3.6-flash", "prompt": 5691, "cached": 0, "thoughts": 0, "output": 8, "total": 5699}
+{"t": 1787023928.695, "model": "gemini-3.6-flash", "prompt": 5756, "cached": 0, "thoughts": 0, "output": 8, "total": 5764}
+{"t": 1787023934.605, "model": "gemini-3.6-flash", "prompt": 5821, "cached": 0, "thoughts": 0, "output": 8, "total": 5829}
+{"t": 1787023940.926, "model": "gemini-3.6-flash", "prompt": 5886, "cached": 0, "thoughts": 0, "output": 12, "total": 5898}
+{"t": 1787023942.086, "model": "gemini-3.6-flash", "prompt": 7176, "cached": 0, "thoughts": 0, "output": 16, "total": 7192}
+{"t": 1787023943.028, "model": "gemini-3.6-flash", "prompt": 6058, "cached": 0, "thoughts": 0, "output": 8, "total": 6066}
+{"t": 1787023949.503, "model": "gemini-3.6-flash", "prompt": 6121, "cached": 0, "thoughts": 0, "output": 8, "total": 6129}
+{"t": 1787023952.174, "model": "gemini-3.6-flash", "prompt": 7402, "cached": 0, "thoughts": 0, "output": 14, "total": 7416}
+{"t": 1787023953.487, "model": "gemini-3.6-flash", "prompt": 6284, "cached": 0, "thoughts": 0, "output": 8, "total": 6292}
+{"t": 1787023960.088, "model": "gemini-3.6-flash", "prompt": 6347, "cached": 0, "thoughts": 0, "output": 8, "total": 6355}
+{"t": 1787023966.816, "model": "gemini-3.6-flash", "prompt": 6410, "cached": 0, "thoughts": 0, "output": 8, "total": 6418}
+{"t": 1787023973.365, "model": "gemini-3.6-flash", "prompt": 6473, "cached": 0, "thoughts": 0, "output": 12, "total": 6485}
+{"t": 1787023974.726, "model": "gemini-3.6-flash", "prompt": 7707, "cached": 0, "thoughts": 0, "output": 28, "total": 7735}
+{"t": 1787023976.558, "model": "gemini-3.6-flash", "prompt": 6485, "cached": 0, "thoughts": 0, "output": 8, "total": 6493}
+{"t": 1787023978.904, "model": "gemini-3.6-flash", "prompt": 7704, "cached": 0, "thoughts": 0, "output": 8, "total": 7712}
+{"t": 1787024000.54, "model": "gemini-3.6-flash", "prompt": 7663, "cached": 0, "thoughts": 0, "output": 8, "total": 7671}
+{"t": 1787024021.792, "model": "gemini-3.6-flash", "prompt": 7640, "cached": 0, "thoughts": 0, "output": 8, "total": 7648}
+{"t": 1787024043.45, "model": "gemini-3.6-flash", "prompt": 7567, "cached": 0, "thoughts": 0, "output": 8, "total": 7575}
+{"t": 1787024064.877, "model": "gemini-3.6-flash", "prompt": 7545, "cached": 0, "thoughts": 0, "output": 8, "total": 7553}
+{"t": 1787024086.933, "model": "gemini-3.6-flash", "prompt": 7536, "cached": 0, "thoughts": 0, "output": 8, "total": 7544}
+{"t": 1787024087.099, "model": "gemini-3.6-flash", "prompt": 2950, "cached": 0, "thoughts": 0, "output": 8, "total": 2958}
+{"t": 1787024108.372, "model": "gemini-3.6-flash", "prompt": 4064, "cached": 0, "thoughts": 0, "output": 8, "total": 4072}
+{"t": 1787024116.243, "model": "gemini-3.6-flash", "prompt": 5207, "cached": 0, "thoughts": 0, "output": 29, "total": 5236}
+{"t": 1787024117.75, "model": "gemini-3.6-flash", "prompt": 5170, "cached": 0, "thoughts": 0, "output": 8, "total": 5178}
+{"t": 1787024121.194, "model": "gemini-3.6-flash", "prompt": 6450, "cached": 0, "thoughts": 0, "output": 19, "total": 6469}
+{"t": 1787024122.914, "model": "gemini-3.6-flash", "prompt": 5346, "cached": 0, "thoughts": 0, "output": 8, "total": 5354}
+{"t": 1787024126.252, "model": "gemini-3.6-flash", "prompt": 6625, "cached": 0, "thoughts": 0, "output": 19, "total": 6644}
+{"t": 1787024127.768, "model": "gemini-3.6-flash", "prompt": 5520, "cached": 0, "thoughts": 0, "output": 8, "total": 5528}
+{"t": 1787024131.133, "model": "gemini-3.6-flash", "prompt": 6798, "cached": 0, "thoughts": 0, "output": 19, "total": 6817}
+{"t": 1787024132.42, "model": "gemini-3.6-flash", "prompt": 5692, "cached": 0, "thoughts": 0, "output": 8, "total": 5700}
+{"t": 1787024136.035, "model": "gemini-3.6-flash", "prompt": 6971, "cached": 0, "thoughts": 0, "output": 28, "total": 6999}
+{"t": 1787024137.588, "model": "gemini-3.6-flash", "prompt": 5899, "cached": 0, "thoughts": 0, "output": 8, "total": 5907}
+{"t": 1787024144.382, "model": "gemini-3.6-flash", "prompt": 5964, "cached": 0, "thoughts": 0, "output": 8, "total": 5972}
+{"t": 1787024150.855, "model": "gemini-3.6-flash", "prompt": 6029, "cached": 0, "thoughts": 0, "output": 12, "total": 6041}
+{"t": 1787024152.745, "model": "gemini-3.6-flash", "prompt": 7319, "cached": 0, "thoughts": 0, "output": 16, "total": 7335}
+{"t": 1787024153.633, "model": "gemini-3.6-flash", "prompt": 6201, "cached": 0, "thoughts": 0, "output": 8, "total": 6209}
+{"t": 1787024160.086, "model": "gemini-3.6-flash", "prompt": 6264, "cached": 0, "thoughts": 0, "output": 8, "total": 6272}
+{"t": 1787024162.763, "model": "gemini-3.6-flash", "prompt": 7545, "cached": 0, "thoughts": 0, "output": 19, "total": 7564}
+{"t": 1787024163.667, "model": "gemini-3.6-flash", "prompt": 6440, "cached": 0, "thoughts": 0, "output": 8, "total": 6448}
+{"t": 1787024166.058, "model": "gemini-3.6-flash", "prompt": 7720, "cached": 0, "thoughts": 0, "output": 24, "total": 7744}
+{"t": 1787024167.613, "model": "gemini-3.6-flash", "prompt": 6621, "cached": 0, "thoughts": 0, "output": 8, "total": 6629}
+{"t": 1787024174.069, "model": "gemini-3.6-flash", "prompt": 6631, "cached": 0, "thoughts": 0, "output": 8, "total": 6639}
+{"t": 1787024174.277, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1267, "cached": 0, "thoughts": 0, "output": 62, "total": 1809}
+{"t": 1787024180.975, "model": "gemini-3.6-flash", "prompt": 6641, "cached": 0, "thoughts": 0, "output": 8, "total": 6649}
+{"t": 1787024187.375, "model": "gemini-3.6-flash", "prompt": 6588, "cached": 0, "thoughts": 0, "output": 8, "total": 6596}
+{"t": 1787024194.009, "model": "gemini-3.6-flash", "prompt": 6576, "cached": 0, "thoughts": 0, "output": 8, "total": 6584}
+{"t": 1787024198.72, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1267, "cached": 0, "thoughts": 0, "output": 62, "total": 1780}
+{"t": 1787024200.707, "model": "gemini-3.6-flash", "prompt": 6545, "cached": 0, "thoughts": 0, "output": 8, "total": 6553}
+{"t": 1787024207.206, "model": "gemini-3.6-flash", "prompt": 6532, "cached": 0, "thoughts": 0, "output": 8, "total": 6540}
+{"t": 1787024214.106, "model": "gemini-3.6-flash", "prompt": 6502, "cached": 0, "thoughts": 0, "output": 8, "total": 6510}
+{"t": 1787024220.55, "model": "gemini-3.6-flash", "prompt": 6490, "cached": 0, "thoughts": 0, "output": 8, "total": 6498}
+{"t": 1787024223.232, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1267, "cached": 0, "thoughts": 0, "output": 62, "total": 1734}
+{"t": 1787024227.142, "model": "gemini-3.6-flash", "prompt": 6461, "cached": 0, "thoughts": 0, "output": 8, "total": 6469}
+{"t": 1787024233.561, "model": "gemini-3.6-flash", "prompt": 6450, "cached": 0, "thoughts": 0, "output": 8, "total": 6458}
+{"t": 1787024234.232, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1267, "cached": 0, "thoughts": 0, "output": 62, "total": 1803}
+{"t": 1787024240.043, "model": "gemini-3.6-flash", "prompt": 6387, "cached": 0, "thoughts": 0, "output": 8, "total": 6395}
+{"t": 1787024243.059, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1267, "cached": 0, "thoughts": 0, "output": 62, "total": 2086}
+{"t": 1787024246.709, "model": "gemini-3.6-flash", "prompt": 6375, "cached": 0, "thoughts": 0, "output": 8, "total": 6383}
+{"t": 1787024248.191, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1267, "cached": 0, "thoughts": 0, "output": 62, "total": 1810}
+{"t": 1787024253.086, "model": "gemini-3.6-flash", "prompt": 6376, "cached": 0, "thoughts": 0, "output": 8, "total": 6384}
+{"t": 1787024255.437, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1147, "cached": 0, "thoughts": 0, "output": 36, "total": 1553}
+{"t": 1787024259.614, "model": "gemini-3.6-flash", "prompt": 6359, "cached": 0, "thoughts": 0, "output": 8, "total": 6367}
+{"t": 1787024266.068, "model": "gemini-3.6-flash", "prompt": 6343, "cached": 0, "thoughts": 0, "output": 8, "total": 6351}
+{"t": 1787024273.573, "model": "gemini-3.6-flash", "prompt": 6335, "cached": 0, "thoughts": 0, "output": 8, "total": 6343}
+{"t": 1787024279.097, "model": "gemini-3.6-flash", "prompt": 7572, "cached": 0, "thoughts": 0, "output": 19, "total": 7591}
+{"t": 1787024280.555, "model": "gemini-3.6-flash", "prompt": 6372, "cached": 0, "thoughts": 0, "output": 8, "total": 6380}
+{"t": 1787024286.792, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 59, "total": 1693}
+{"t": 1787024286.939, "model": "gemini-3.6-flash", "prompt": 6360, "cached": 0, "thoughts": 0, "output": 8, "total": 6368}
+{"t": 1787024289.675, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 1413}
+{"t": 1787024292.119, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 1352}
+{"t": 1787024293.1, "model": "gemini-3.6-flash", "prompt": 6324, "cached": 0, "thoughts": 0, "output": 8, "total": 6332}
+{"t": 1787024299.625, "model": "gemini-3.6-flash", "prompt": 6311, "cached": 0, "thoughts": 0, "output": 8, "total": 6319}
+{"t": 1787024302.21, "model": "gemini-3.6-flash", "prompt": 7530, "cached": 0, "thoughts": 0, "output": 19, "total": 7549}
+{"t": 1787024303.633, "model": "gemini-3.6-flash", "prompt": 6360, "cached": 0, "thoughts": 0, "output": 8, "total": 6368}
+{"t": 1787024307.134, "model": "gemini-3.6-flash", "prompt": 7573, "cached": 0, "thoughts": 0, "output": 19, "total": 7592}
+{"t": 1787024308.644, "model": "gemini-3.6-flash", "prompt": 6402, "cached": 0, "thoughts": 0, "output": 8, "total": 6410}
+{"t": 1787024314.828, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1724}
+{"t": 1787024315.073, "model": "gemini-3.6-flash", "prompt": 6401, "cached": 0, "thoughts": 0, "output": 8, "total": 6409}
+{"t": 1787024321.774, "model": "gemini-3.6-flash", "prompt": 6400, "cached": 0, "thoughts": 0, "output": 8, "total": 6408}
+{"t": 1787024326.246, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1918}
+{"t": 1787024328.23, "model": "gemini-3.6-flash", "prompt": 6399, "cached": 0, "thoughts": 0, "output": 8, "total": 6407}
+{"t": 1787024334.658, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 2392}
+{"t": 1787024334.95, "model": "gemini-3.6-flash", "prompt": 6398, "cached": 0, "thoughts": 0, "output": 8, "total": 6406}
+{"t": 1787024341.139, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1142, "cached": 0, "thoughts": 0, "output": 36, "total": 1431}
+{"t": 1787024341.362, "model": "gemini-3.6-flash", "prompt": 6397, "cached": 0, "thoughts": 0, "output": 8, "total": 6405}
+{"t": 1787024345.992, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1142, "cached": 0, "thoughts": 0, "output": 36, "total": 1540}
+{"t": 1787024348.16, "model": "gemini-3.6-flash", "prompt": 6396, "cached": 0, "thoughts": 0, "output": 8, "total": 6404}
+{"t": 1787024354.686, "model": "gemini-3.6-flash", "prompt": 6395, "cached": 0, "thoughts": 0, "output": 8, "total": 6403}
+{"t": 1787024361.701, "model": "gemini-3.6-flash", "prompt": 6394, "cached": 0, "thoughts": 0, "output": 8, "total": 6402}
+{"t": 1787024368.741, "model": "gemini-3.6-flash", "prompt": 6393, "cached": 0, "thoughts": 0, "output": 8, "total": 6401}
+{"t": 1787024375.339, "model": "gemini-3.6-flash", "prompt": 6392, "cached": 0, "thoughts": 0, "output": 8, "total": 6400}
+{"t": 1787024377.384, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 2257, "cached": 0, "thoughts": 0, "output": 1, "total": 2538}
+{"t": 1787024382.093, "model": "gemini-3.6-flash", "prompt": 6391, "cached": 0, "thoughts": 0, "output": 8, "total": 6399}
+{"t": 1787024385.442, "model": "gemini-3.6-flash", "prompt": 7617, "cached": 0, "thoughts": 0, "output": 19, "total": 7636}
+{"t": 1787024387.0, "model": "gemini-3.6-flash", "prompt": 6395, "cached": 0, "thoughts": 0, "output": 8, "total": 6403}
+{"t": 1787024393.697, "model": "gemini-3.6-flash", "prompt": 6381, "cached": 0, "thoughts": 0, "output": 8, "total": 6389}
+{"t": 1787024394.426, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1951}
+{"t": 1787024400.071, "model": "gemini-3.6-flash", "prompt": 6380, "cached": 0, "thoughts": 0, "output": 8, "total": 6388}
+{"t": 1787024406.665, "model": "gemini-3.6-flash", "prompt": 6379, "cached": 0, "thoughts": 0, "output": 8, "total": 6387}
+{"t": 1787024407.494, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 2278}
+{"t": 1787024413.099, "model": "gemini-3.6-flash", "prompt": 6378, "cached": 0, "thoughts": 0, "output": 8, "total": 6386}
+{"t": 1787024414.51, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 2320}
+{"t": 1787024419.517, "model": "gemini-3.6-flash", "prompt": 6341, "cached": 0, "thoughts": 0, "output": 8, "total": 6349}
+{"t": 1787024421.229, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1142, "cached": 0, "thoughts": 0, "output": 36, "total": 1415}
+{"t": 1787024426.013, "model": "gemini-3.6-flash", "prompt": 6327, "cached": 0, "thoughts": 0, "output": 8, "total": 6335}
+{"t": 1787024431.017, "model": "gemini-3.6-flash", "prompt": 2950, "cached": 0, "thoughts": 0, "output": 8, "total": 2958}
+{"t": 1787024433.395, "model": "gemini-3.6-flash", "prompt": 4080, "cached": 0, "thoughts": 0, "output": 8, "total": 4088}
+{"t": 1787024454.768, "model": "gemini-3.6-flash", "prompt": 5194, "cached": 0, "thoughts": 0, "output": 8, "total": 5202}
+{"t": 1787024469.662, "model": "gemini-3.6-flash", "prompt": 6332, "cached": 0, "thoughts": 0, "output": 41, "total": 6373}
+{"t": 1787024470.974, "model": "gemini-3.6-flash", "prompt": 5273, "cached": 0, "thoughts": 0, "output": 8, "total": 5281}
+{"t": 1787024477.235, "model": "gemini-3.6-flash", "prompt": 5338, "cached": 0, "thoughts": 0, "output": 8, "total": 5346}
+{"t": 1787024483.48, "model": "gemini-3.6-flash", "prompt": 5403, "cached": 0, "thoughts": 0, "output": 8, "total": 5411}
+{"t": 1787024489.679, "model": "gemini-3.6-flash", "prompt": 5468, "cached": 0, "thoughts": 0, "output": 8, "total": 5476}
+{"t": 1787024495.895, "model": "gemini-3.6-flash", "prompt": 5533, "cached": 0, "thoughts": 0, "output": 8, "total": 5541}
+{"t": 1787024502.368, "model": "gemini-3.6-flash", "prompt": 5598, "cached": 0, "thoughts": 0, "output": 8, "total": 5606}
+{"t": 1787024509.064, "model": "gemini-3.6-flash", "prompt": 5663, "cached": 0, "thoughts": 0, "output": 8, "total": 5671}
+{"t": 1787024515.919, "model": "gemini-3.6-flash", "prompt": 5728, "cached": 0, "thoughts": 0, "output": 8, "total": 5736}
+{"t": 1787024522.545, "model": "gemini-3.6-flash", "prompt": 5793, "cached": 0, "thoughts": 0, "output": 8, "total": 5801}
+{"t": 1787024528.811, "model": "gemini-3.6-flash", "prompt": 5858, "cached": 0, "thoughts": 0, "output": 8, "total": 5866}
+{"t": 1787024535.264, "model": "gemini-3.6-flash", "prompt": 5923, "cached": 0, "thoughts": 0, "output": 8, "total": 5931}
+{"t": 1787024541.884, "model": "gemini-3.6-flash", "prompt": 5988, "cached": 0, "thoughts": 0, "output": 8, "total": 5996}
+{"t": 1787024549.977, "model": "gemini-3.6-flash", "prompt": 6053, "cached": 0, "thoughts": 0, "output": 8, "total": 6061}
+{"t": 1787024556.608, "model": "gemini-3.6-flash", "prompt": 6118, "cached": 0, "thoughts": 0, "output": 8, "total": 6126}
+{"t": 1787024563.152, "model": "gemini-3.6-flash", "prompt": 6183, "cached": 0, "thoughts": 0, "output": 8, "total": 6191}
+{"t": 1787024569.507, "model": "gemini-3.6-flash", "prompt": 6248, "cached": 0, "thoughts": 0, "output": 8, "total": 6256}
+{"t": 1787024575.811, "model": "gemini-3.6-flash", "prompt": 6313, "cached": 0, "thoughts": 0, "output": 8, "total": 6321}
+{"t": 1787024582.211, "model": "gemini-3.6-flash", "prompt": 6322, "cached": 0, "thoughts": 0, "output": 8, "total": 6330}
+{"t": 1787024584.797, "model": "gemini-3.6-flash", "prompt": 7622, "cached": 0, "thoughts": 0, "output": 16, "total": 7638}
+{"t": 1787024586.064, "model": "gemini-3.6-flash", "prompt": 6450, "cached": 0, "thoughts": 0, "output": 8, "total": 6458}
+{"t": 1787024590.047, "model": "gemini-3.6-flash", "prompt": 7581, "cached": 0, "thoughts": 0, "output": 28, "total": 7609}
+{"t": 1787024591.682, "model": "gemini-3.6-flash", "prompt": 6431, "cached": 0, "thoughts": 0, "output": 8, "total": 6439}
+{"t": 1787024593.73, "model": "gemini-3.6-flash", "prompt": 7744, "cached": 0, "thoughts": 0, "output": 16, "total": 7760}
+{"t": 1787024594.905, "model": "gemini-3.6-flash", "prompt": 6563, "cached": 0, "thoughts": 0, "output": 8, "total": 6571}
+{"t": 1787024599.042, "model": "gemini-3.6-flash", "prompt": 7779, "cached": 0, "thoughts": 0, "output": 23, "total": 7802}
+{"t": 1787024601.0, "model": "gemini-3.6-flash", "prompt": 6613, "cached": 0, "thoughts": 0, "output": 8, "total": 6621}
+{"t": 1787024607.865, "model": "gemini-3.6-flash", "prompt": 6613, "cached": 0, "thoughts": 0, "output": 8, "total": 6621}
+{"t": 1787024608.152, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 62, "total": 1784}
+{"t": 1787024614.515, "model": "gemini-3.6-flash", "prompt": 6613, "cached": 0, "thoughts": 0, "output": 8, "total": 6621}
+{"t": 1787024620.929, "model": "gemini-3.6-flash", "prompt": 6613, "cached": 0, "thoughts": 0, "output": 8, "total": 6621}
+{"t": 1787024627.615, "model": "gemini-3.6-flash", "prompt": 6613, "cached": 0, "thoughts": 0, "output": 8, "total": 6621}
+{"t": 1787024632.911, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 61, "total": 1859}
+{"t": 1787024634.242, "model": "gemini-3.6-flash", "prompt": 6613, "cached": 0, "thoughts": 0, "output": 8, "total": 6621}
+{"t": 1787024640.923, "model": "gemini-3.6-flash", "prompt": 6614, "cached": 0, "thoughts": 0, "output": 8, "total": 6622}
+{"t": 1787024647.481, "model": "gemini-3.6-flash", "prompt": 6615, "cached": 0, "thoughts": 0, "output": 8, "total": 6623}
+{"t": 1787024654.283, "model": "gemini-3.6-flash", "prompt": 6616, "cached": 0, "thoughts": 0, "output": 8, "total": 6624}
+{"t": 1787024657.325, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 61, "total": 1845}
+{"t": 1787024660.815, "model": "gemini-3.6-flash", "prompt": 6617, "cached": 0, "thoughts": 0, "output": 8, "total": 6625}
+{"t": 1787024667.595, "model": "gemini-3.6-flash", "prompt": 6618, "cached": 0, "thoughts": 0, "output": 8, "total": 6626}
+{"t": 1787024674.311, "model": "gemini-3.6-flash", "prompt": 6619, "cached": 0, "thoughts": 0, "output": 8, "total": 6627}
+{"t": 1787024680.803, "model": "gemini-3.6-flash", "prompt": 6620, "cached": 0, "thoughts": 0, "output": 8, "total": 6628}
+{"t": 1787024681.737, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 61, "total": 1672}
+{"t": 1787024706.38, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 61, "total": 1791}
+{"t": 1787024716.91, "model": "gemini-3.6-flash", "prompt": 6621, "cached": 0, "thoughts": 0, "output": 8, "total": 6629}
+{"t": 1787024723.92, "model": "gemini-3.6-flash", "prompt": 6503, "cached": 0, "thoughts": 0, "output": 8, "total": 6511}
+{"t": 1787024730.202, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 61, "total": 1633}
+{"t": 1787024730.752, "model": "gemini-3.6-flash", "prompt": 6495, "cached": 0, "thoughts": 0, "output": 8, "total": 6503}
+{"t": 1787024737.418, "model": "gemini-3.6-flash", "prompt": 6432, "cached": 0, "thoughts": 0, "output": 8, "total": 6440}
+{"t": 1787024743.944, "model": "gemini-3.6-flash", "prompt": 6420, "cached": 0, "thoughts": 0, "output": 8, "total": 6428}
+{"t": 1787024750.341, "model": "gemini-3.6-flash", "prompt": 6296, "cached": 0, "thoughts": 0, "output": 8, "total": 6304}
+{"t": 1787024754.722, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1266, "cached": 0, "thoughts": 0, "output": 61, "total": 1763}
+{"t": 1787024757.466, "model": "gemini-3.6-flash", "prompt": 6288, "cached": 0, "thoughts": 0, "output": 8, "total": 6296}
+{"t": 1787024762.847, "model": "gemini-3.6-flash", "prompt": 7477, "cached": 0, "thoughts": 0, "output": 36, "total": 7513}
+{"t": 1787024764.385, "model": "gemini-3.6-flash", "prompt": 6304, "cached": 0, "thoughts": 0, "output": 8, "total": 6312}
+{"t": 1787024766.653, "model": "gemini-3.6-flash", "prompt": 6317, "cached": 0, "thoughts": 0, "output": 8, "total": 6325}
+{"t": 1787024768.95, "model": "gemini-3.6-flash", "prompt": 7537, "cached": 0, "thoughts": 0, "output": 8, "total": 7545}
+{"t": 1787024790.663, "model": "gemini-3.6-flash", "prompt": 7529, "cached": 0, "thoughts": 0, "output": 8, "total": 7537}
+{"t": 1787024812.332, "model": "gemini-3.6-flash", "prompt": 7521, "cached": 0, "thoughts": 0, "output": 8, "total": 7529}
+{"t": 1787024834.19, "model": "gemini-3.6-flash", "prompt": 7513, "cached": 0, "thoughts": 0, "output": 8, "total": 7521}
+{"t": 1787024856.151, "model": "gemini-3.6-flash", "prompt": 7504, "cached": 0, "thoughts": 0, "output": 8, "total": 7512}
+{"t": 1787024877.81, "model": "gemini-3.6-flash", "prompt": 7495, "cached": 0, "thoughts": 0, "output": 8, "total": 7503}
+{"t": 1787024914.29, "model": "gemini-3.6-flash", "prompt": 1673, "cached": 0, "thoughts": 0, "output": 8, "total": 1681}
+{"t": 1787024917.186, "model": "gemini-3.6-flash", "prompt": 2927, "cached": 0, "thoughts": 0, "output": 8, "total": 2935}
+{"t": 1787024925.566, "model": "gemini-3.6-flash", "prompt": 4076, "cached": 0, "thoughts": 0, "output": 33, "total": 4109}
+{"t": 1787024927.107, "model": "gemini-3.6-flash", "prompt": 4042, "cached": 0, "thoughts": 0, "output": 8, "total": 4050}
+{"t": 1787024934.072, "model": "gemini-3.6-flash", "prompt": 5164, "cached": 0, "thoughts": 0, "output": 8, "total": 5172}
+{"t": 1787024940.418, "model": "gemini-3.6-flash", "prompt": 6443, "cached": 0, "thoughts": 0, "output": 34, "total": 6477}
+{"t": 1787024941.896, "model": "gemini-3.6-flash", "prompt": 5350, "cached": 0, "thoughts": 0, "output": 8, "total": 5358}
+{"t": 1787024943.755, "model": "gemini-3.6-flash", "prompt": 6728, "cached": 0, "thoughts": 0, "output": 16, "total": 6744}
+{"t": 1787024944.938, "model": "gemini-3.6-flash", "prompt": 5611, "cached": 0, "thoughts": 0, "output": 8, "total": 5619}
+{"t": 1787024951.692, "model": "gemini-3.6-flash", "prompt": 5673, "cached": 0, "thoughts": 0, "output": 8, "total": 5681}
+{"t": 1787024956.159, "model": "gemini-3.6-flash", "prompt": 6953, "cached": 0, "thoughts": 0, "output": 20, "total": 6973}
+{"t": 1787024957.396, "model": "gemini-3.6-flash", "prompt": 5848, "cached": 0, "thoughts": 0, "output": 8, "total": 5856}
+{"t": 1787024964.113, "model": "gemini-3.6-flash", "prompt": 5913, "cached": 0, "thoughts": 0, "output": 8, "total": 5921}
+{"t": 1787024970.593, "model": "gemini-3.6-flash", "prompt": 5977, "cached": 0, "thoughts": 0, "output": 8, "total": 5985}
+{"t": 1787024973.046, "model": "gemini-3.6-flash", "prompt": 7256, "cached": 0, "thoughts": 0, "output": 20, "total": 7276}
+{"t": 1787024974.108, "model": "gemini-3.6-flash", "prompt": 6151, "cached": 0, "thoughts": 0, "output": 8, "total": 6159}
+{"t": 1787024980.49, "model": "gemini-3.6-flash", "prompt": 6215, "cached": 0, "thoughts": 0, "output": 8, "total": 6223}
+{"t": 1787024982.78, "model": "gemini-3.6-flash", "prompt": 7494, "cached": 0, "thoughts": 0, "output": 20, "total": 7514}
+{"t": 1787025004.035, "model": "gemini-3.6-flash", "prompt": 7561, "cached": 0, "thoughts": 0, "output": 8, "total": 7569}
+{"t": 1787025025.615, "model": "gemini-3.6-flash", "prompt": 7617, "cached": 0, "thoughts": 0, "output": 8, "total": 7625}
+{"t": 1787025046.945, "model": "gemini-3.6-flash", "prompt": 7673, "cached": 0, "thoughts": 0, "output": 8, "total": 7681}
+{"t": 1787025068.35, "model": "gemini-3.6-flash", "prompt": 7729, "cached": 0, "thoughts": 0, "output": 8, "total": 7737}
+{"t": 1787025089.629, "model": "gemini-3.6-flash", "prompt": 7752, "cached": 0, "thoughts": 0, "output": 8, "total": 7760}
+{"t": 1787025104.743, "model": "gemini-3.6-flash", "prompt": 2950, "cached": 0, "thoughts": 0, "output": 8, "total": 2958}
+{"t": 1787025112.83, "model": "gemini-3.6-flash", "prompt": 4090, "cached": 0, "thoughts": 0, "output": 28, "total": 4118}
+{"t": 1787025114.594, "model": "gemini-3.6-flash", "prompt": 4051, "cached": 0, "thoughts": 0, "output": 8, "total": 4059}
+{"t": 1787025115.952, "model": "gemini-3.6-flash", "prompt": 6388, "cached": 0, "thoughts": 0, "output": 19, "total": 6407}
+{"t": 1787025117.284, "model": "gemini-3.6-flash", "prompt": 5283, "cached": 0, "thoughts": 0, "output": 8, "total": 5291}
+{"t": 1787025120.857, "model": "gemini-3.6-flash", "prompt": 6562, "cached": 0, "thoughts": 0, "output": 19, "total": 6581}
+{"t": 1787025122.103, "model": "gemini-3.6-flash", "prompt": 5457, "cached": 0, "thoughts": 0, "output": 8, "total": 5465}
+{"t": 1787025124.872, "model": "gemini-3.6-flash", "prompt": 6736, "cached": 0, "thoughts": 0, "output": 28, "total": 6764}
+{"t": 1787025126.404, "model": "gemini-3.6-flash", "prompt": 5664, "cached": 0, "thoughts": 0, "output": 8, "total": 5672}
+{"t": 1787025133.062, "model": "gemini-3.6-flash", "prompt": 5729, "cached": 0, "thoughts": 0, "output": 8, "total": 5737}
+{"t": 1787025136.966, "model": "gemini-3.6-flash", "prompt": 5840, "cached": 0, "thoughts": 0, "output": 8, "total": 5848}
+{"t": 1787025139.515, "model": "gemini-3.6-flash", "prompt": 7177, "cached": 0, "thoughts": 0, "output": 19, "total": 7196}
+{"t": 1787025161.454, "model": "gemini-3.6-flash", "prompt": 7244, "cached": 0, "thoughts": 0, "output": 8, "total": 7252}
+{"t": 1787025183.101, "model": "gemini-3.6-flash", "prompt": 7300, "cached": 0, "thoughts": 0, "output": 8, "total": 7308}
+{"t": 1787025204.473, "model": "gemini-3.6-flash", "prompt": 7356, "cached": 0, "thoughts": 0, "output": 8, "total": 7364}
+{"t": 1787025226.106, "model": "gemini-3.6-flash", "prompt": 7412, "cached": 0, "thoughts": 0, "output": 8, "total": 7420}
+{"t": 1787025247.449, "model": "gemini-3.6-flash", "prompt": 7468, "cached": 0, "thoughts": 0, "output": 8, "total": 7476}
+{"t": 1787025269.398, "model": "gemini-3.6-flash", "prompt": 7524, "cached": 0, "thoughts": 0, "output": 8, "total": 7532}
+{"t": 1787025290.928, "model": "gemini-3.6-flash", "prompt": 7580, "cached": 0, "thoughts": 0, "output": 8, "total": 7588}
+{"t": 1787025297.21, "model": "gemini-3.6-flash", "prompt": 2950, "cached": 0, "thoughts": 0, "output": 8, "total": 2958}
+{"t": 1787025305.776, "model": "gemini-3.6-flash", "prompt": 4095, "cached": 0, "thoughts": 0, "output": 49, "total": 4144}
+{"t": 1787025307.359, "model": "gemini-3.6-flash", "prompt": 4072, "cached": 0, "thoughts": 0, "output": 8, "total": 4080}
+{"t": 1787025314.023, "model": "gemini-3.6-flash", "prompt": 5195, "cached": 0, "thoughts": 0, "output": 8, "total": 5203}
+{"t": 1787025315.353, "model": "gemini-3.6-flash", "prompt": 5306, "cached": 0, "thoughts": 0, "output": 8, "total": 5314}
+{"t": 1787025317.72, "model": "gemini-3.6-flash", "prompt": 6642, "cached": 0, "thoughts": 0, "output": 20, "total": 6662}
+{"t": 1787025318.735, "model": "gemini-3.6-flash", "prompt": 5538, "cached": 0, "thoughts": 0, "output": 8, "total": 5546}
+{"t": 1787025324.703, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 6, "total": 1390}
+{"t": 1787025325.121, "model": "gemini-3.6-flash", "prompt": 5603, "cached": 0, "thoughts": 0, "output": 8, "total": 5611}
+{"t": 1787025329.573, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 6, "total": 1385}
+{"t": 1787025331.637, "model": "gemini-3.6-flash", "prompt": 5668, "cached": 0, "thoughts": 0, "output": 8, "total": 5676}
+{"t": 1787025335.393, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 6, "total": 1390}
+{"t": 1787025338.029, "model": "gemini-3.6-flash", "prompt": 5733, "cached": 0, "thoughts": 0, "output": 8, "total": 5741}
+{"t": 1787025343.609, "model": "gemini-3.6-flash", "prompt": 7021, "cached": 0, "thoughts": 0, "output": 32, "total": 7053}
+{"t": 1787025344.938, "model": "gemini-3.6-flash", "prompt": 5929, "cached": 0, "thoughts": 0, "output": 8, "total": 5937}
+{"t": 1787025351.335, "model": "gemini-3.6-flash", "prompt": 5994, "cached": 0, "thoughts": 0, "output": 8, "total": 6002}
+{"t": 1787025353.634, "model": "gemini-3.6-flash", "prompt": 7381, "cached": 0, "thoughts": 0, "output": 20, "total": 7401}
+{"t": 1787025354.671, "model": "gemini-3.6-flash", "prompt": 6277, "cached": 0, "thoughts": 0, "output": 8, "total": 6285}
+{"t": 1787025360.832, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 6, "total": 1342}
+{"t": 1787025361.383, "model": "gemini-3.6-flash", "prompt": 6342, "cached": 0, "thoughts": 0, "output": 8, "total": 6350}
+{"t": 1787025365.42, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 6, "total": 1361}
+{"t": 1787025367.988, "model": "gemini-3.6-flash", "prompt": 6407, "cached": 0, "thoughts": 0, "output": 8, "total": 6415}
+{"t": 1787025371.011, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 6, "total": 1380}
+{"t": 1787025374.133, "model": "gemini-3.6-flash", "prompt": 6473, "cached": 0, "thoughts": 0, "output": 8, "total": 6481}
+{"t": 1787025378.719, "model": "gemini-3.6-flash", "prompt": 7762, "cached": 0, "thoughts": 0, "output": 20, "total": 7782}
+{"t": 1787025380.203, "model": "gemini-3.6-flash", "prompt": 6659, "cached": 0, "thoughts": 0, "output": 8, "total": 6667}
+{"t": 1787025386.763, "model": "gemini-3.6-flash", "prompt": 6724, "cached": 0, "thoughts": 0, "output": 8, "total": 6732}
+{"t": 1787025389.161, "model": "gemini-3.6-flash", "prompt": 7948, "cached": 0, "thoughts": 0, "output": 20, "total": 7968}
+{"t": 1787025390.096, "model": "gemini-3.6-flash", "prompt": 6709, "cached": 0, "thoughts": 0, "output": 8, "total": 6717}
+{"t": 1787025396.7, "model": "gemini-3.6-flash", "prompt": 6696, "cached": 0, "thoughts": 0, "output": 8, "total": 6704}
+{"t": 1787025396.815, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 6, "total": 1561}
+{"t": 1787025402.178, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 6, "total": 1516}
+{"t": 1787025402.781, "model": "gemini-3.6-flash", "prompt": 6696, "cached": 0, "thoughts": 0, "output": 8, "total": 6704}
+{"t": 1787025408.183, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 6, "total": 1471}
+{"t": 1787025409.133, "model": "gemini-3.6-flash", "prompt": 6650, "cached": 0, "thoughts": 0, "output": 8, "total": 6658}
+{"t": 1787025415.26, "model": "gemini-3.6-flash", "prompt": 6561, "cached": 0, "thoughts": 0, "output": 8, "total": 6569}
+{"t": 1787025417.904, "model": "gemini-3.6-flash", "prompt": 7771, "cached": 0, "thoughts": 0, "output": 32, "total": 7803}
+{"t": 1787025419.343, "model": "gemini-3.6-flash", "prompt": 6614, "cached": 0, "thoughts": 0, "output": 8, "total": 6622}
+{"t": 1787025425.824, "model": "gemini-3.6-flash", "prompt": 6614, "cached": 0, "thoughts": 0, "output": 8, "total": 6622}
+{"t": 1787025432.295, "model": "gemini-3.6-flash", "prompt": 6615, "cached": 0, "thoughts": 0, "output": 12, "total": 6627}
+{"t": 1787025433.936, "model": "gemini-3.6-flash", "prompt": 7787, "cached": 0, "thoughts": 0, "output": 19, "total": 7806}
+{"t": 1787025435.565, "model": "gemini-3.6-flash", "prompt": 6604, "cached": 0, "thoughts": 0, "output": 8, "total": 6612}
+{"t": 1787025438.825, "model": "gemini-3.6-flash", "prompt": 7819, "cached": 0, "thoughts": 0, "output": 28, "total": 7847}
+{"t": 1787025440.368, "model": "gemini-3.6-flash", "prompt": 6543, "cached": 0, "thoughts": 0, "output": 8, "total": 6551}
+{"t": 1787025447.433, "model": "gemini-3.6-flash", "prompt": 6531, "cached": 0, "thoughts": 0, "output": 8, "total": 6539}
+{"t": 1787025452.266, "model": "gemini-3.6-flash", "prompt": 6578, "cached": 0, "thoughts": 0, "output": 8, "total": 6586}
+{"t": 1787025454.925, "model": "gemini-3.6-flash", "prompt": 7849, "cached": 0, "thoughts": 0, "output": 20, "total": 7869}
+{"t": 1787025455.928, "model": "gemini-3.6-flash", "prompt": 6680, "cached": 0, "thoughts": 0, "output": 8, "total": 6688}
+{"t": 1787025462.303, "model": "gemini-3.6-flash", "prompt": 6639, "cached": 0, "thoughts": 0, "output": 8, "total": 6647}
+{"t": 1787025462.606, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 62, "total": 1674}
+{"t": 1787025468.919, "model": "gemini-3.6-flash", "prompt": 6626, "cached": 0, "thoughts": 0, "output": 8, "total": 6634}
+{"t": 1787025475.693, "model": "gemini-3.6-flash", "prompt": 6627, "cached": 0, "thoughts": 0, "output": 8, "total": 6635}
+{"t": 1787025481.395, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1263, "cached": 0, "thoughts": 0, "output": 62, "total": 2158}
+{"t": 1787025482.048, "model": "gemini-3.6-flash", "prompt": 6595, "cached": 0, "thoughts": 0, "output": 8, "total": 6603}
+{"t": 1787025488.756, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1143, "cached": 0, "thoughts": 0, "output": 36, "total": 1504}
+{"t": 1787025488.893, "model": "gemini-3.6-flash", "prompt": 6583, "cached": 0, "thoughts": 0, "output": 8, "total": 6591}
+{"t": 1787025495.833, "model": "gemini-3.6-flash", "prompt": 6584, "cached": 0, "thoughts": 0, "output": 8, "total": 6592}
+{"t": 1787025502.539, "model": "gemini-3.6-flash", "prompt": 6585, "cached": 0, "thoughts": 0, "output": 8, "total": 6593}
+{"t": 1787025513.349, "model": "gemini-3.6-flash", "prompt": 6586, "cached": 0, "thoughts": 0, "output": 8, "total": 6594}
+{"t": 1787025521.134, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 2259, "cached": 0, "thoughts": 0, "output": 1, "total": 2451}
+{"t": 1787025533.954, "model": "gemini-3.6-flash", "prompt": 6587, "cached": 0, "thoughts": 0, "output": 8, "total": 6595}
+{"t": 1787025562.755, "model": "gemini-3.6-flash", "prompt": 7760, "cached": 0, "thoughts": 0, "output": 38, "total": 7798}
+{"t": 1787025571.113, "model": "gemini-3.6-flash", "prompt": 6593, "cached": 0, "thoughts": 0, "output": 8, "total": 6601}
+{"t": 1787025573.699, "model": "gemini-3.6-flash", "prompt": 7870, "cached": 0, "thoughts": 0, "output": 28, "total": 7898}
+{"t": 1787025574.66, "model": "gemini-3.6-flash", "prompt": 6715, "cached": 0, "thoughts": 0, "output": 8, "total": 6723}
+{"t": 1787025581.268, "model": "gemini-3.6-flash", "prompt": 6692, "cached": 0, "thoughts": 0, "output": 8, "total": 6700}
+{"t": 1787025585.278, "model": "gemini-3.6-flash", "prompt": 6725, "cached": 0, "thoughts": 0, "output": 8, "total": 6733}
+{"t": 1787025588.669, "model": "gemini-3.6-flash", "prompt": 7932, "cached": 0, "thoughts": 0, "output": 28, "total": 7960}
+{"t": 1787025589.944, "model": "gemini-3.6-flash", "prompt": 6782, "cached": 0, "thoughts": 0, "output": 8, "total": 6790}
+{"t": 1787025596.494, "model": "gemini-3.6-flash", "prompt": 6781, "cached": 0, "thoughts": 0, "output": 8, "total": 6789}
+{"t": 1787025603.253, "model": "gemini-3.6-flash", "prompt": 6734, "cached": 0, "thoughts": 0, "output": 8, "total": 6742}
+{"t": 1787025609.643, "model": "gemini-3.6-flash", "prompt": 2950, "cached": 0, "thoughts": 0, "output": 8, "total": 2958}
+{"t": 1787025616.426, "model": "gemini-3.6-flash", "prompt": 4080, "cached": 0, "thoughts": 0, "output": 8, "total": 4088}
+{"t": 1787025617.408, "model": "gemini-3.6-flash", "prompt": 4121, "cached": 0, "thoughts": 0, "output": 40, "total": 4161}
+{"t": 1787025618.504, "model": "gemini-3.6-flash", "prompt": 4095, "cached": 0, "thoughts": 0, "output": 8, "total": 4103}
+{"t": 1787025624.805, "model": "gemini-3.6-flash", "prompt": 5219, "cached": 0, "thoughts": 0, "output": 8, "total": 5227}
+{"t": 1787025627.323, "model": "gemini-3.6-flash", "prompt": 6499, "cached": 0, "thoughts": 0, "output": 28, "total": 6527}
+{"t": 1787025628.645, "model": "gemini-3.6-flash", "prompt": 5427, "cached": 0, "thoughts": 0, "output": 8, "total": 5435}
+{"t": 1787025635.288, "model": "gemini-3.6-flash", "prompt": 5492, "cached": 0, "thoughts": 0, "output": 8, "total": 5500}
+{"t": 1787025638.953, "model": "gemini-3.6-flash", "prompt": 5603, "cached": 0, "thoughts": 0, "output": 8, "total": 5611}
+{"t": 1787025641.633, "model": "gemini-3.6-flash", "prompt": 6937, "cached": 0, "thoughts": 0, "output": 33, "total": 6970}
+{"t": 1787025642.828, "model": "gemini-3.6-flash", "prompt": 5846, "cached": 0, "thoughts": 0, "output": 8, "total": 5854}
+{"t": 1787025644.567, "model": "gemini-3.6-flash", "prompt": 5958, "cached": 0, "thoughts": 0, "output": 8, "total": 5966}
+{"t": 1787025646.699, "model": "gemini-3.6-flash", "prompt": 7300, "cached": 0, "thoughts": 0, "output": 33, "total": 7333}
+{"t": 1787025647.934, "model": "gemini-3.6-flash", "prompt": 6210, "cached": 0, "thoughts": 0, "output": 8, "total": 6218}
+{"t": 1787025652.741, "model": "gemini-3.6-flash", "prompt": 7550, "cached": 0, "thoughts": 0, "output": 28, "total": 7578}
+{"t": 1787025654.356, "model": "gemini-3.6-flash", "prompt": 6479, "cached": 0, "thoughts": 0, "output": 8, "total": 6487}
+{"t": 1787025661.122, "model": "gemini-3.6-flash", "prompt": 6544, "cached": 0, "thoughts": 0, "output": 8, "total": 6552}
+{"t": 1787025664.759, "model": "gemini-3.6-flash", "prompt": 6655, "cached": 0, "thoughts": 0, "output": 8, "total": 6663}
+{"t": 1787025667.352, "model": "gemini-3.6-flash", "prompt": 7991, "cached": 0, "thoughts": 0, "output": 28, "total": 8019}
+{"t": 1787025668.442, "model": "gemini-3.6-flash", "prompt": 6919, "cached": 0, "thoughts": 0, "output": 8, "total": 6927}
+{"t": 1787025670.509, "model": "gemini-3.6-flash", "prompt": 8296, "cached": 0, "thoughts": 0, "output": 16, "total": 8312}
+{"t": 1787025671.473, "model": "gemini-3.6-flash", "prompt": 7180, "cached": 0, "thoughts": 0, "output": 8, "total": 7188}
+{"t": 1787025677.993, "model": "gemini-3.6-flash", "prompt": 7187, "cached": 0, "thoughts": 0, "output": 8, "total": 7195}
+{"t": 1787025682.892, "model": "gemini-3.6-flash", "prompt": 8310, "cached": 0, "thoughts": 0, "output": 19, "total": 8329}
+{"t": 1787025684.204, "model": "gemini-3.6-flash", "prompt": 7127, "cached": 0, "thoughts": 0, "output": 8, "total": 7135}
+{"t": 1787025690.882, "model": "gemini-3.6-flash", "prompt": 7126, "cached": 0, "thoughts": 0, "output": 8, "total": 7134}
+{"t": 1787025690.937, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 61, "total": 1596}
+{"t": 1787025697.226, "model": "gemini-3.6-flash", "prompt": 7061, "cached": 0, "thoughts": 0, "output": 8, "total": 7069}
+{"t": 1787025703.949, "model": "gemini-3.6-flash", "prompt": 7048, "cached": 0, "thoughts": 0, "output": 8, "total": 7056}
+{"t": 1787025708.574, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 61, "total": 1943}
+{"t": 1787025710.947, "model": "gemini-3.6-flash", "prompt": 7048, "cached": 0, "thoughts": 0, "output": 8, "total": 7056}
+{"t": 1787025714.717, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1790}
+{"t": 1787025718.496, "model": "gemini-3.6-flash", "prompt": 7002, "cached": 0, "thoughts": 0, "output": 8, "total": 7010}
+{"t": 1787025721.039, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 61, "total": 2150}
+{"t": 1787025724.778, "model": "gemini-3.6-flash", "prompt": 6902, "cached": 0, "thoughts": 0, "output": 8, "total": 6910}
+{"t": 1787025726.577, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 61, "total": 2150}
+{"t": 1787025731.08, "model": "gemini-3.6-flash", "prompt": 6889, "cached": 0, "thoughts": 0, "output": 8, "total": 6897}
+{"t": 1787025731.951, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 2002}
+{"t": 1787025737.511, "model": "gemini-3.6-flash", "prompt": 6842, "cached": 0, "thoughts": 0, "output": 8, "total": 6850}
+{"t": 1787025743.922, "model": "gemini-3.6-flash", "prompt": 6734, "cached": 0, "thoughts": 0, "output": 8, "total": 6742}
+{"t": 1787025750.781, "model": "gemini-3.6-flash", "prompt": 6720, "cached": 0, "thoughts": 0, "output": 8, "total": 6728}
+{"t": 1787025756.222, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1643}
+{"t": 1787025757.061, "model": "gemini-3.6-flash", "prompt": 6595, "cached": 0, "thoughts": 0, "output": 8, "total": 6603}
+{"t": 1787025763.425, "model": "gemini-3.6-flash", "prompt": 6581, "cached": 0, "thoughts": 0, "output": 8, "total": 6589}
+{"t": 1787025765.946, "model": "gemini-3.6-flash", "prompt": 7800, "cached": 0, "thoughts": 0, "output": 16, "total": 7816}
+{"t": 1787025767.399, "model": "gemini-3.6-flash", "prompt": 6573, "cached": 0, "thoughts": 0, "output": 8, "total": 6581}
+{"t": 1787025768.902, "model": "gemini-3.6-flash", "prompt": 7668, "cached": 0, "thoughts": 0, "output": 19, "total": 7687}
+{"t": 1787025770.378, "model": "gemini-3.6-flash", "prompt": 6485, "cached": 0, "thoughts": 0, "output": 8, "total": 6493}
+{"t": 1787025776.739, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1747}
+{"t": 1787025777.043, "model": "gemini-3.6-flash", "prompt": 6361, "cached": 0, "thoughts": 0, "output": 8, "total": 6369}
+{"t": 1787025783.787, "model": "gemini-3.6-flash", "prompt": 6352, "cached": 0, "thoughts": 0, "output": 8, "total": 6360}
+{"t": 1787025788.245, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 61, "total": 1683}
+{"t": 1787025790.307, "model": "gemini-3.6-flash", "prompt": 6354, "cached": 0, "thoughts": 0, "output": 8, "total": 6362}
+{"t": 1787025796.808, "model": "gemini-3.6-flash", "prompt": 6323, "cached": 0, "thoughts": 0, "output": 8, "total": 6331}
+{"t": 1787025800.279, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 2016}
+{"t": 1787025803.498, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787025806.894, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 69, "total": 1889}
+{"t": 1787025810.097, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787025812.227, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1692}
+{"t": 1787025816.613, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787025823.206, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787025829.718, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787025835.947, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1623}
+{"t": 1787025836.217, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787025843.228, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787025852.266, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787025852.732, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1743}
+{"t": 1787025858.882, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787025861.833, "model": "gemini-3.6-flash", "prompt": 7529, "cached": 0, "thoughts": 0, "output": 16, "total": 7545}
+{"t": 1787025863.151, "model": "gemini-3.6-flash", "prompt": 6348, "cached": 0, "thoughts": 0, "output": 8, "total": 6356}
+{"t": 1787025865.723, "model": "gemini-3.6-flash", "prompt": 7564, "cached": 0, "thoughts": 0, "output": 19, "total": 7583}
+{"t": 1787025866.937, "model": "gemini-3.6-flash", "prompt": 6394, "cached": 0, "thoughts": 0, "output": 8, "total": 6402}
+{"t": 1787025873.718, "model": "gemini-3.6-flash", "prompt": 6363, "cached": 0, "thoughts": 0, "output": 8, "total": 6371}
+{"t": 1787025874.272, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 61, "total": 1654}
+{"t": 1787025880.77, "model": "gemini-3.6-flash", "prompt": 6354, "cached": 0, "thoughts": 0, "output": 8, "total": 6362}
+{"t": 1787025885.769, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1967}
+{"t": 1787025887.141, "model": "gemini-3.6-flash", "prompt": 6323, "cached": 0, "thoughts": 0, "output": 8, "total": 6331}
+{"t": 1787025891.879, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 2063}
+{"t": 1787025893.268, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787025896.5, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1765}
+{"t": 1787025900.261, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787025902.208, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 2063}
+{"t": 1787025906.519, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787025909.044, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 2418}
+{"t": 1787025912.913, "model": "gemini-3.6-flash", "prompt": 6310, "cached": 0, "thoughts": 0, "output": 8, "total": 6318}
+{"t": 1787025913.898, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 62, "total": 1975}
+{"t": 1787025919.062, "model": "gemini-3.6-flash", "prompt": 6311, "cached": 0, "thoughts": 0, "output": 8, "total": 6319}
+{"t": 1787025921.586, "model": "gemini-3.6-flash", "prompt": 7532, "cached": 0, "thoughts": 0, "output": 16, "total": 7548}
+{"t": 1787025923.41, "model": "gemini-3.6-flash", "prompt": 6353, "cached": 0, "thoughts": 0, "output": 8, "total": 6361}
+{"t": 1787025942.356, "model": "gemini-3.6-flash", "prompt": 1673, "cached": 0, "thoughts": 0, "output": 8, "total": 1681}
+{"t": 1787025945.647, "model": "gemini-3.6-flash", "prompt": 2927, "cached": 0, "thoughts": 0, "output": 8, "total": 2935}
+{"t": 1787025953.663, "model": "gemini-3.6-flash", "prompt": 4055, "cached": 0, "thoughts": 0, "output": 8, "total": 4063}
+{"t": 1787025954.015, "model": "gemini-3.6-flash", "prompt": 4081, "cached": 0, "thoughts": 0, "output": 28, "total": 4109}
+{"t": 1787025955.326, "model": "gemini-3.6-flash", "prompt": 4031, "cached": 0, "thoughts": 0, "output": 8, "total": 4039}
+{"t": 1787025962.137, "model": "gemini-3.6-flash", "prompt": 5150, "cached": 0, "thoughts": 0, "output": 8, "total": 5158}
+{"t": 1787025969.007, "model": "gemini-3.6-flash", "prompt": 5212, "cached": 0, "thoughts": 0, "output": 8, "total": 5220}
+{"t": 1787025972.09, "model": "gemini-3.6-flash", "prompt": 6492, "cached": 0, "thoughts": 0, "output": 14, "total": 6506}
+{"t": 1787025973.714, "model": "gemini-3.6-flash", "prompt": 5373, "cached": 0, "thoughts": 0, "output": 8, "total": 5381}
+{"t": 1787025980.443, "model": "gemini-3.6-flash", "prompt": 5435, "cached": 0, "thoughts": 0, "output": 8, "total": 5443}
+{"t": 1787025987.184, "model": "gemini-3.6-flash", "prompt": 5497, "cached": 0, "thoughts": 0, "output": 8, "total": 5505}
+{"t": 1787025994.486, "model": "gemini-3.6-flash", "prompt": 5559, "cached": 0, "thoughts": 0, "output": 8, "total": 5567}
+{"t": 1787026001.322, "model": "gemini-3.6-flash", "prompt": 5621, "cached": 0, "thoughts": 0, "output": 8, "total": 5629}
+{"t": 1787026007.978, "model": "gemini-3.6-flash", "prompt": 5683, "cached": 0, "thoughts": 0, "output": 8, "total": 5691}
+{"t": 1787026014.599, "model": "gemini-3.6-flash", "prompt": 5745, "cached": 0, "thoughts": 0, "output": 8, "total": 5753}
+{"t": 1787026017.123, "model": "gemini-3.6-flash", "prompt": 7034, "cached": 0, "thoughts": 0, "output": 19, "total": 7053}
+{"t": 1787026018.48, "model": "gemini-3.6-flash", "prompt": 5928, "cached": 0, "thoughts": 0, "output": 8, "total": 5936}
+{"t": 1787026024.992, "model": "gemini-3.6-flash", "prompt": 5991, "cached": 0, "thoughts": 0, "output": 8, "total": 5999}
+{"t": 1787026027.314, "model": "gemini-3.6-flash", "prompt": 7268, "cached": 0, "thoughts": 0, "output": 16, "total": 7284}
+{"t": 1787026035.496, "model": "gemini-3.6-flash", "prompt": 6151, "cached": 0, "thoughts": 0, "output": 8, "total": 6159}
+{"t": 1787026042.074, "model": "gemini-3.6-flash", "prompt": 6214, "cached": 0, "thoughts": 0, "output": 8, "total": 6222}
+{"t": 1787026048.702, "model": "gemini-3.6-flash", "prompt": 6278, "cached": 0, "thoughts": 0, "output": 8, "total": 6286}
+{"t": 1787026055.459, "model": "gemini-3.6-flash", "prompt": 6342, "cached": 0, "thoughts": 0, "output": 8, "total": 6350}
+{"t": 1787026060.7, "model": "gemini-3.6-flash", "prompt": 7600, "cached": 0, "thoughts": 0, "output": 20, "total": 7620}
+{"t": 1787026062.062, "model": "gemini-3.6-flash", "prompt": 6372, "cached": 0, "thoughts": 0, "output": 8, "total": 6380}
+{"t": 1787026068.442, "model": "gemini-3.6-flash", "prompt": 6365, "cached": 0, "thoughts": 0, "output": 8, "total": 6373}
+{"t": 1787026074.862, "model": "gemini-3.6-flash", "prompt": 6369, "cached": 0, "thoughts": 0, "output": 8, "total": 6377}
+{"t": 1787026077.14, "model": "gemini-3.6-flash", "prompt": 7586, "cached": 0, "thoughts": 0, "output": 16, "total": 7602}
+{"t": 1787026078.482, "model": "gemini-3.6-flash", "prompt": 6381, "cached": 0, "thoughts": 0, "output": 8, "total": 6389}
+{"t": 1787026085.28, "model": "gemini-3.6-flash", "prompt": 6370, "cached": 0, "thoughts": 0, "output": 8, "total": 6378}
+{"t": 1787026091.76, "model": "gemini-3.6-flash", "prompt": 6371, "cached": 0, "thoughts": 0, "output": 8, "total": 6379}
+{"t": 1787026097.878, "model": "gemini-3.6-flash", "prompt": 6372, "cached": 0, "thoughts": 0, "output": 8, "total": 6380}
+{"t": 1787026103.979, "model": "gemini-3.6-flash", "prompt": 6373, "cached": 0, "thoughts": 0, "output": 8, "total": 6381}
+{"t": 1787026110.075, "model": "gemini-3.6-flash", "prompt": 6374, "cached": 0, "thoughts": 0, "output": 8, "total": 6382}
+{"t": 1787026112.172, "model": "gemini-3.6-flash", "prompt": 7602, "cached": 0, "thoughts": 0, "output": 8, "total": 7610}
+{"t": 1787026133.268, "model": "gemini-3.6-flash", "prompt": 7596, "cached": 0, "thoughts": 0, "output": 8, "total": 7604}
+{"t": 1787026134.35, "model": "gemini-3.6-flash", "prompt": 2950, "cached": 0, "thoughts": 0, "output": 8, "total": 2958}
+{"t": 1787026141.258, "model": "gemini-3.6-flash", "prompt": 4079, "cached": 0, "thoughts": 0, "output": 8, "total": 4087}
+{"t": 1787026143.125, "model": "gemini-3.6-flash", "prompt": 4111, "cached": 0, "thoughts": 0, "output": 27, "total": 4138}
+{"t": 1787026144.835, "model": "gemini-3.6-flash", "prompt": 4064, "cached": 0, "thoughts": 0, "output": 8, "total": 4072}
+{"t": 1787026152.182, "model": "gemini-3.6-flash", "prompt": 5186, "cached": 0, "thoughts": 0, "output": 8, "total": 5194}
+{"t": 1787026157.141, "model": "gemini-3.6-flash", "prompt": 6468, "cached": 0, "thoughts": 0, "output": 19, "total": 6487}
+{"t": 1787026158.563, "model": "gemini-3.6-flash", "prompt": 5364, "cached": 0, "thoughts": 0, "output": 8, "total": 5372}
+{"t": 1787026162.194, "model": "gemini-3.6-flash", "prompt": 6643, "cached": 0, "thoughts": 0, "output": 20, "total": 6663}
+{"t": 1787026163.773, "model": "gemini-3.6-flash", "prompt": 5539, "cached": 0, "thoughts": 0, "output": 8, "total": 5547}
+{"t": 1787026170.255, "model": "gemini-3.6-flash", "prompt": 5605, "cached": 0, "thoughts": 0, "output": 8, "total": 5613}
+{"t": 1787026172.921, "model": "gemini-3.6-flash", "prompt": 6886, "cached": 0, "thoughts": 0, "output": 19, "total": 6905}
+{"t": 1787026173.83, "model": "gemini-3.6-flash", "prompt": 5782, "cached": 0, "thoughts": 0, "output": 8, "total": 5790}
+{"t": 1787026177.761, "model": "gemini-3.6-flash", "prompt": 7062, "cached": 0, "thoughts": 0, "output": 16, "total": 7078}
+{"t": 1787026179.228, "model": "gemini-3.6-flash", "prompt": 5945, "cached": 0, "thoughts": 0, "output": 8, "total": 5953}
+{"t": 1787026185.76, "model": "gemini-3.6-flash", "prompt": 6009, "cached": 0, "thoughts": 0, "output": 8, "total": 6017}
+{"t": 1787026187.906, "model": "gemini-3.6-flash", "prompt": 7291, "cached": 0, "thoughts": 0, "output": 19, "total": 7310}
+{"t": 1787026189.169, "model": "gemini-3.6-flash", "prompt": 6187, "cached": 0, "thoughts": 0, "output": 8, "total": 6195}
+{"t": 1787026191.407, "model": "gemini-3.6-flash", "prompt": 7466, "cached": 0, "thoughts": 0, "output": 20, "total": 7486}
+{"t": 1787026192.739, "model": "gemini-3.6-flash", "prompt": 6362, "cached": 0, "thoughts": 0, "output": 8, "total": 6370}
+{"t": 1787026197.295, "model": "gemini-3.6-flash", "prompt": 7643, "cached": 0, "thoughts": 0, "output": 16, "total": 7659}
+{"t": 1787026198.745, "model": "gemini-3.6-flash", "prompt": 6528, "cached": 0, "thoughts": 0, "output": 8, "total": 6536}
+{"t": 1787026205.109, "model": "gemini-3.6-flash", "prompt": 6592, "cached": 0, "thoughts": 0, "output": 8, "total": 6600}
+{"t": 1787026210.912, "model": "gemini-3.6-flash", "prompt": 7818, "cached": 0, "thoughts": 0, "output": 19, "total": 7837}
+{"t": 1787026212.373, "model": "gemini-3.6-flash", "prompt": 6581, "cached": 0, "thoughts": 0, "output": 8, "total": 6589}
+{"t": 1787026215.602, "model": "gemini-3.6-flash", "prompt": 7786, "cached": 0, "thoughts": 0, "output": 20, "total": 7806}
+{"t": 1787026217.001, "model": "gemini-3.6-flash", "prompt": 6618, "cached": 0, "thoughts": 0, "output": 8, "total": 6626}
+{"t": 1787026223.572, "model": "gemini-3.6-flash", "prompt": 6586, "cached": 0, "thoughts": 0, "output": 8, "total": 6594}
+{"t": 1787026226.054, "model": "gemini-3.6-flash", "prompt": 7788, "cached": 0, "thoughts": 0, "output": 19, "total": 7807}
+{"t": 1787026226.95, "model": "gemini-3.6-flash", "prompt": 6587, "cached": 0, "thoughts": 0, "output": 8, "total": 6595}
+{"t": 1787026228.581, "model": "gemini-3.6-flash", "prompt": 7788, "cached": 0, "thoughts": 0, "output": 28, "total": 7816}
+{"t": 1787026230.144, "model": "gemini-3.6-flash", "prompt": 6650, "cached": 0, "thoughts": 0, "output": 8, "total": 6658}
+{"t": 1787026232.799, "model": "gemini-3.6-flash", "prompt": 7892, "cached": 0, "thoughts": 0, "output": 28, "total": 7920}
+{"t": 1787026233.808, "model": "gemini-3.6-flash", "prompt": 6741, "cached": 0, "thoughts": 0, "output": 8, "total": 6749}
+{"t": 1787026236.142, "model": "gemini-3.6-flash", "prompt": 6762, "cached": 0, "thoughts": 0, "output": 8, "total": 6770}
+{"t": 1787026238.502, "model": "gemini-3.6-flash", "prompt": 8029, "cached": 0, "thoughts": 0, "output": 28, "total": 8057}
+{"t": 1787026239.562, "model": "gemini-3.6-flash", "prompt": 6893, "cached": 0, "thoughts": 0, "output": 8, "total": 6901}
+{"t": 1787026242.066, "model": "gemini-3.6-flash", "prompt": 8134, "cached": 0, "thoughts": 0, "output": 19, "total": 8153}
+{"t": 1787026243.37, "model": "gemini-3.6-flash", "prompt": 6950, "cached": 0, "thoughts": 0, "output": 8, "total": 6958}
+{"t": 1787026249.818, "model": "gemini-3.6-flash", "prompt": 6918, "cached": 0, "thoughts": 0, "output": 8, "total": 6926}
+{"t": 1787026250.174, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 1691}
+{"t": 1787026255.886, "model": "gemini-3.6-flash", "prompt": 6905, "cached": 0, "thoughts": 0, "output": 8, "total": 6913}
+{"t": 1787026257.823, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 2119}
+{"t": 1787026262.25, "model": "gemini-3.6-flash", "prompt": 6878, "cached": 0, "thoughts": 0, "output": 8, "total": 6886}
+{"t": 1787026267.232, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 63, "total": 2184}
+{"t": 1787026268.616, "model": "gemini-3.6-flash", "prompt": 6869, "cached": 0, "thoughts": 0, "output": 8, "total": 6877}
+{"t": 1787026275.338, "model": "gemini-3.6-flash", "prompt": 6870, "cached": 0, "thoughts": 0, "output": 8, "total": 6878}
+{"t": 1787026281.882, "model": "gemini-3.6-flash", "prompt": 6839, "cached": 0, "thoughts": 0, "output": 8, "total": 6847}
+{"t": 1787026288.443, "model": "gemini-3.6-flash", "prompt": 6825, "cached": 0, "thoughts": 0, "output": 8, "total": 6833}
+{"t": 1787026292.745, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 1801}
+{"t": 1787026294.843, "model": "gemini-3.6-flash", "prompt": 6793, "cached": 0, "thoughts": 0, "output": 8, "total": 6801}
+{"t": 1787026297.325, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 1801}
+{"t": 1787026302.65, "model": "gemini-3.6-flash", "prompt": 6780, "cached": 0, "thoughts": 0, "output": 8, "total": 6788}
+{"t": 1787026305.803, "model": "gemini-3.6-flash", "prompt": 7999, "cached": 0, "thoughts": 0, "output": 19, "total": 8018}
+{"t": 1787026307.435, "model": "gemini-3.6-flash", "prompt": 6796, "cached": 0, "thoughts": 0, "output": 8, "total": 6804}
+{"t": 1787026313.964, "model": "gemini-3.6-flash", "prompt": 6782, "cached": 0, "thoughts": 0, "output": 8, "total": 6790}
+{"t": 1787026314.26, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 1734}
+{"t": 1787026319.927, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 6, "total": 1615}
+{"t": 1787026320.186, "model": "gemini-3.6-flash", "prompt": 6718, "cached": 0, "thoughts": 0, "output": 8, "total": 6726}
+{"t": 1787026325.946, "model": "gemini-3.6-flash", "prompt": 2950, "cached": 0, "thoughts": 0, "output": 8, "total": 2958}
+{"t": 1787026327.0, "model": "gemini-3.5-flash", "kind": "vision", "prompt": 1262, "cached": 0, "thoughts": 0, "output": 5, "total": 1659}
+{"t": 1787026334.193, "model": "gemini-3.6-flash", "prompt": 4087, "cached": 0, "thoughts": 0, "output": 32, "total": 4119}
+{"t": 1787026335.63, "model": "gemini-3.6-flash", "prompt": 4054, "cached": 0, "thoughts": 0, "output": 8, "total": 4062}
+{"t": 1787026338.993, "model": "gemini-3.6-flash", "prompt": 6391, "cached": 0, "thoughts": 0, "output": 19, "total": 6410}
+{"t": 1787026340.692, "model": "gemini-3.6-flash", "prompt": 5286, "cached": 0, "thoughts": 0, "output": 8, "total": 5294}
+{"t": 1787026343.016, "model": "gemini-3.6-flash", "prompt": 6565, "cached": 0, "thoughts": 0, "output": 28, "total": 6593}
+{"t": 1787026344.186, "model": "gemini-3.6-flash", "prompt": 5493, "cached": 0, "thoughts": 0, "output": 8, "total": 5501}
+{"t": 1787026350.892, "model": "gemini-3.6-flash", "prompt": 5558, "cached": 0, "thoughts": 0, "output": 8, "total": 5566}
+{"t": 1787026357.608, "model": "gemini-3.6-flash", "prompt": 5623, "cached": 0, "thoughts": 0, "output": 8, "total": 5631}
+{"t": 1787026365.088, "model": "gemini-3.6-flash", "prompt": 5688, "cached": 0, "thoughts": 0, "output": 8, "total": 5696}
+{"t": 1787026371.586, "model": "gemini-3.6-flash", "prompt": 5754, "cached": 0, "thoughts": 0, "output": 8, "total": 5762}
+{"t": 1787026378.11, "model": "gemini-3.6-flash", "prompt": 7119, "cached": 0, "thoughts": 0, "output": 19, "total": 7138}
+{"t": 1787026379.509, "model": "gemini-3.6-flash", "prompt": 6015, "cached": 0, "thoughts": 0, "output": 8, "total": 6023}
+{"t": 1787026384.334, "model": "gemini-3.6-flash", "prompt": 7294, "cached": 0, "thoughts": 0, "output": 16, "total": 7310}
+{"t": 1787026385.76, "model": "gemini-3.6-flash", "prompt": 6178, "cached": 0, "thoughts": 0, "output": 8, "total": 6186}
+{"t": 1787026392.173, "model": "gemini-3.6-flash", "prompt": 6242, "cached": 0, "thoughts": 0, "output": 8, "total": 6250}
+{"t": 1787026398.589, "model": "gemini-3.6-flash", "prompt": 6306, "cached": 0, "thoughts": 0, "output": 8, "total": 6314}
+{"t": 1787026403.987, "model": "gemini-3.6-flash", "prompt": 7597, "cached": 0, "thoughts": 0, "output": 16, "total": 7613}
+{"t": 1787026405.269, "model": "gemini-3.6-flash", "prompt": 6482, "cached": 0, "thoughts": 0, "output": 8, "total": 6490}
+{"t": 1787026411.724, "model": "gemini-3.6-flash", "prompt": 6546, "cached": 0, "thoughts": 0, "output": 8, "total": 6554}
+{"t": 1787026418.32, "model": "gemini-3.6-flash", "prompt": 6610, "cached": 0, "thoughts": 0, "output": 8, "total": 6618}
+{"t": 1787026423.7, "model": "gemini-3.6-flash", "prompt": 7845, "cached": 0, "thoughts": 0, "output": 16, "total": 7861}
+{"t": 1787026425.072, "model": "gemini-3.6-flash", "prompt": 6614, "cached": 0, "thoughts": 0, "output": 8, "total": 6622}
+{"t": 1787026431.338, "model": "gemini-3.6-flash", "prompt": 6599, "cached": 0, "thoughts": 0, "output": 8, "total": 6607}
+{"t": 1787026436.958, "model": "gemini-3.6-flash", "prompt": 7794, "cached": 0, "thoughts": 0, "output": 34, "total": 7828}
+{"t": 1787026438.216, "model": "gemini-3.6-flash", "prompt": 6625, "cached": 0, "thoughts": 0, "output": 8, "total": 6633}
+{"t": 1787026440.178, "model": "gemini-3.6-flash", "prompt": 7878, "cached": 0, "thoughts": 0, "output": 28, "total": 7906}
+{"t": 1787026441.015, "model": "gemini-3.6-flash", "prompt": 6729, "cached": 0, "thoughts": 0, "output": 8, "total": 6737}
+{"t": 1787026442.914, "model": "gemini-3.6-flash", "prompt": 8047, "cached": 0, "thoughts": 0, "output": 20, "total": 8067}
+{"t": 1787026444.04, "model": "gemini-3.6-flash", "prompt": 6879, "cached": 0, "thoughts": 0, "output": 8, "total": 6887}
+{"t": 1787026450.564, "model": "gemini-3.6-flash", "prompt": 6879, "cached": 0, "thoughts": 0, "output": 8, "total": 6887}
+{"t": 1787026453.423, "model": "gemini-3.6-flash", "prompt": 8092, "cached": 0, "thoughts": 0, "output": 19, "total": 8111}
+{"t": 1787026454.949, "model": "gemini-3.6-flash", "prompt": 6804, "cached": 0, "thoughts": 0, "output": 8, "total": 6812}
+{"t": 1787026456.968, "model": "gemini-3.6-flash", "prompt": 8004, "cached": 0, "thoughts": 0, "output": 28, "total": 8032}
+{"t": 1787026458.226, "model": "gemini-3.6-flash", "prompt": 6841, "cached": 0, "thoughts": 0, "output": 8, "total": 6849}
+{"t": 1787026464.525, "model": "gemini-3.6-flash", "prompt": 6832, "cached": 0, "thoughts": 0, "output": 8, "total": 6840}
+{"t": 1787026471.036, "model": "gemini-3.6-flash", "prompt": 6832, "cached": 0, "thoughts": 0, "output": 8, "total": 6840}

@@ -1,0 +1,14 @@
+household household_take_orders
+blaze blaze_l1
+counter counter_serve_the_red
+counter counter_change_of_mind
+counter counter_three_orders
+pantry pantry_count_jars
+pantry pantry_stocktake
+workshop workshop_bench_tour
+gallery gallery_ladder_reach
+rounds rounds_all_doors
+household household_tour
+bridge bridge_five
+blaze blaze_l2
+blaze blaze_l4

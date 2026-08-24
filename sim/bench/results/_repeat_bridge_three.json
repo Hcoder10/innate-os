@@ -1,0 +1,50 @@
+[
+  {
+    "i": 0,
+    "passed": false,
+    "goals_done": 1,
+    "goals_total": 3,
+    "reason": "went through the wrong door",
+    "wall_s": 102.1
+  },
+  {
+    "i": 1,
+    "passed": false,
+    "goals_done": 1,
+    "goals_total": 3,
+    "reason": "went through the wrong door",
+    "wall_s": 389.2
+  },
+  {
+    "i": 2,
+    "passed": false,
+    "goals_done": 1,
+    "goals_total": 3,
+    "reason": "went through the wrong door",
+    "wall_s": 414.9
+  },
+  {
+    "i": 3,
+    "passed": false,
+    "goals_done": 1,
+    "goals_total": 3,
+    "reason": "went through the wrong door",
+    "wall_s": 58.3
+  },
+  {
+    "i": 4,
+    "passed": false,
+    "goals_done": 1,
+    "goals_total": 3,
+    "reason": "went through the wrong door",
+    "wall_s": 157.2
+  },
+  {
+    "i": 5,
+    "passed": false,
+    "goals_done": 1,
+    "goals_total": 3,
+    "reason": "went through the wrong door",
+    "wall_s": 76.4
+  }
+]

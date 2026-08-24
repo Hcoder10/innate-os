@@ -1,0 +1,4 @@
+counter counter_read_the_pass
+counter counter_which_colour
+counter counter_out_of_reach
+counter counter_within_reach

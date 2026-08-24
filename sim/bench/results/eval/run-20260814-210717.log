@@ -1,0 +1,14 @@
+=== full benchmark, maps: counter pantry workshop gallery rounds household bridge blaze
+=== caps: cat1 180s, cat2 300s, cat3 480s
+
+########## counter
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (182x177 @ 0.05m): 5496 free, 506 occupied, 26212 unknown (23397 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 7
+--- category 1 (180s cap): counter_out_of_reach counter_read_the_pass counter_which_colour counter_within_reach
+[  1/4] fail  live       counter_out_of_reach         system  0/3  sim  163.3s  wall 180.0s  harness timeout (challenge still running)
+[  2/4] PASS  live       counter_read_the_pass        system  1/1  sim    3.0s  wall   6.3s  
+[  3/4] PASS  live       counter_which_colour         system  1/1  sim    2.8s  wall   2.8s  

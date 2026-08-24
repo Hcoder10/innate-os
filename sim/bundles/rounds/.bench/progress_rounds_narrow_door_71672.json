@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "challenges": {
+    "rounds_narrow_door": {
+      "attempts": 1,
+      "passed": true,
+      "best_time_s": 9.1,
+      "last_result": "passed",
+      "updated_at": "2026-08-12T05:53:40-0700"
+    }
+  }
+}

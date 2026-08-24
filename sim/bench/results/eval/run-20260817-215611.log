@@ -1,0 +1,45 @@
+=== full benchmark, maps: rounds household bridge blaze
+=== caps: cat1 180s, cat2 300s, cat3 480s
+
+########## rounds
+--- backend: Innate proxy
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (382x331 @ 0.05m): 21617 free, 1960 occupied, 102865 unknown (95924 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 0
+    the CONTAINER cannot reach Innate auth -- skipping rounds
+
+########## household
+--- backend: Innate proxy
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (340x339 @ 0.05m): 20683 free, 1694 occupied, 92883 unknown (86975 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 0
+    the CONTAINER cannot reach Innate auth -- skipping household
+
+########## bridge
+--- backend: Innate proxy
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (282x289 @ 0.05m): 7151 free, 643 occupied, 73704 unknown (70318 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 0
+    the CONTAINER cannot reach Innate auth -- skipping bridge
+
+########## blaze
+--- backend: Innate proxy
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (236x233 @ 0.05m): 9537 free, 990 occupied, 44461 unknown (40780 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 0
+    the CONTAINER cannot reach Innate auth -- skipping blaze
+
+=== done. results in sim/bench/results/eval, log sim/bench/results/eval/run-20260817-215611.log
+no usage log at /home/sarta/innate-os/workspace/gemini_usage.jsonl -- no Gemini calls recorded yet

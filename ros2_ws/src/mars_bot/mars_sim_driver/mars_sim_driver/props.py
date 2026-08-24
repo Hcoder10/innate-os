@@ -195,7 +195,18 @@ class Prop:
             # visible and collidable, all from one geom.
             geoms = self._primitive_geom(f"{self.name}_geom", visual_group, physical=True)
         else:
-            material = f' material="mat_{self.name}"' if self.texture_path is not None else self._fill(visual_group)
+            # A textured mesh takes its colour from the material; an untextured
+            # one falls back to flat rgba. Only the rgba belongs here: the geom
+            # line below already emits `group`, and _fill() carries group too,
+            # so using it produced a DUPLICATE group attribute -- an XML parse
+            # error for any mesh-backed prop without a texture. Every prop that
+            # ships a mesh today also ships a texture, which is why this path
+            # went unexercised.
+            material = (
+                f' material="mat_{self.name}"'
+                if self.texture_path is not None
+                else f' rgba="{" ".join(f"{c:g}" for c in self.rgba)}"'
+            )
             geoms = (
                 f'\n      <geom name="{self.name}_visual" mesh="{self.name}" type="mesh"{material}'
                 f' contype="0" conaffinity="0" density="0" group="{visual_group}"/>'

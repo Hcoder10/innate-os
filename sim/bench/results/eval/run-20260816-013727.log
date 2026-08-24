@@ -1,0 +1,26 @@
+=== full benchmark, maps: counter pantry workshop gallery rounds household bridge blaze
+=== caps: cat1 180s, cat2 300s, cat3 480s
+
+########## counter
+--- backend: Innate proxy
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (182x177 @ 0.05m): 5496 free, 506 occupied, 26212 unknown (23397 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 7
+--- category 1 (180s cap): counter_floor_within_reach counter_out_of_reach counter_read_the_pass counter_which_colour counter_within_reach
+--- category 2 (300s cap): counter_change_of_mind counter_floor_serve counter_not_for_you counter_second_order counter_serve_the_red counter_which_one
+--- category 3 (480s cap): counter_cafe_shift counter_floor_two_orders counter_three_orders
+
+per call: $0.00311   (3,920 in / 12 out avg)
+
+########## pantry
+--- backend: Innate proxy
+--- map
+wrote /home/sarta/innate-os/sim/assets/map/sim_apartment.yaml (189x185 @ 0.05m): 6584 free, 397 occupied, 27984 unknown (25212 unreachable cells returned to unknown)
+
+OK: unknown space is not drivable, and the drivable map is the building.
+--- restart
+    checks passed: 7
+--- category 1 (180s cap): pantry_count_jars
