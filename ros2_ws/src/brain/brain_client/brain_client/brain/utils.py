@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import datetime, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from brain_client.common.enums import StrEnum
 from brain_client.perception import pose as pose_math
@@ -57,8 +59,33 @@ class TraceEvent(StrEnum):
     SNAPSHOT = "snapshot"
 
 
+# Cold boot before NTP, on a robot whose RTC lost the time: the clock reads 1970.
+_CLOCK_VALID_FROM_YEAR = 2025
+_CLOCK_UNSET = "time not known"
+
+
+def resolve_timezone(name: str) -> tzinfo | None:
+    """An IANA zone by name, or None for the host's own — left unresolved so a
+    DST change is picked up rather than frozen at boot."""
+    if not name.strip():
+        return None
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+
+
+def clock_text(now: datetime) -> str:
+    """The wall clock for the status line, or a marker the agent can act on:
+    a confidently wrong time misleads it worse than a stated unknown does."""
+    if now.year < _CLOCK_VALID_FROM_YEAR:
+        return _CLOCK_UNSET
+    return f"{now:%a %Y-%m-%d %H:%M %Z}".strip()
+
+
 def observation_text(
     *,
+    now: datetime,
     uptime_s: int,
     pose: Pose | None,
     battery: Battery | None,
@@ -68,7 +95,7 @@ def observation_text(
     has_wrist_frame: bool,
 ) -> str:
     """The text half of a turn input: robot status, guidance, and new events."""
-    status = f"[t+{uptime_s}s]"
+    status = f"[{clock_text(now)} | t+{uptime_s}s]"
     if pose is not None:
         status += f" pose: x={pose[0]:.2f}m y={pose[1]:.2f}m heading={math.degrees(pose[2]):.0f}°"
     if battery is not None:
