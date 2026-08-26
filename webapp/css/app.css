@@ -1455,6 +1455,44 @@ select.skill-input {
   transition: color 150ms ease, background-color 150ms ease;
 }
 
+/* Hover-revealed close on live tiles: drops the view back to off (#687's redesign
+   removed this block as dead CSS while the collapsible strip lived on a branch). */
+.cam-tile-close {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: none;
+  background: rgb(18 18 21 / 62%);
+  color: rgb(255 255 255 / 82%);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 150ms ease, color 150ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .cam-tile.live:hover .cam-tile-close {
+    opacity: 1;
+  }
+}
+
+.cam-tile-close:focus-visible {
+  opacity: 1;
+  outline: 2px solid rgb(255 255 255 / 72%);
+  outline-offset: 1px;
+}
+
+.cam-tile-close:hover {
+  color: #fff;
+}
+
 /* Map view — same ladder as a camera. As a thumbnail it's a tile-sized canvas host. */
 .cam-tile-map {
   height: auto;
@@ -7003,8 +7041,8 @@ select.skill-input {
   left: calc(var(--agent-dock-gutter) + var(--agent-overlay-inset));
 }
 
-/* Agent page keeps every camera live (no off pill), so any off tile here is the
-   optional map — give it the same square footprint as the live feeds. */
+/* On the agent page off tiles (cameras or the map) keep the same square
+   footprint as the live feeds so the strip's grid stays tidy. */
 .agent-cockpit .cam-tile.off {
   display: flex;
   align-items: center;

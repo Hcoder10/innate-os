@@ -12,7 +12,9 @@ import { WEBRTC_ACTIVE_STREAMS_TOPIC } from "../constants.js";
 // Views are the robot's cameras (from /webrtc/active_streams, 2-4, not hardcoded) PLUS the nav map, which
 // behaves identically — off / live thumbnail / big. When the map is primary it covers the stage and the
 // video stage hides; a camera stays the session's primary underneath so the WebRTC link keeps a live feed.
-// The enabled set + which view is primary persist in localStorage; by default only the first camera is on.
+// The enabled set + which view is primary persist in localStorage; by default only the default primary
+// camera and the map are on. A closed tile genuinely stops streaming (each live tile is a full-bitrate
+// WebRTC stream), so collapsing views is how an operator sheds bandwidth.
 
 const STORE_KEY = "innate.cameras";
 
@@ -71,11 +73,17 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
   function loadPrefs() {
     try {
       const p = JSON.parse(localStorage.getItem(storeKey) || "{}");
-      enabledCams = new Set(Array.isArray(p.enabled) ? p.enabled : []);
-      mapOn = p.mapOn === true;
       // "" = no saved choice; reconcile picks. A primaryOnMount caller overrides
       // the saved value outright — reconcile validates it against the roster.
       primary = opts.primaryOnMount ?? (typeof p.primary === "string" ? p.primary : "");
+      if (p.v === 2) {
+        enabledCams = new Set(Array.isArray(p.enabled) ? p.enabled : []);
+        mapOn = p.mapOn === true;
+      } else {
+        // v1 profiles: reconcile forced every camera on (never a user choice), so only the
+        // primary survives the migration to the primary+map default (reconcile re-enables it).
+        mapOn = true;
+      }
     } catch {
       primary = opts.primaryOnMount ?? "";
       /* other defaults: nothing enabled, reconcile picks the first camera */
@@ -94,20 +102,18 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
   }
 
   function savePrefs() {
-    localStorage.setItem(storeKey, JSON.stringify({ enabled: [...enabledCams], mapOn, primary }));
+    localStorage.setItem(storeKey, JSON.stringify({ v: 2, enabled: [...enabledCams], mapOn, primary }));
   }
 
   // Drop names the roster no longer has, then guarantee a valid enabled primary (the stage always needs a
-  // view). Zero cameras is fine when the map is primary (map-only releases WebRTC). Default when nothing
-  // valid persists: the first camera.
+  // view). Zero cameras is fine when the map is primary (map-only releases WebRTC). Fresh profile: only
+  // the default primary camera streams, plus the map.
   function reconcile() {
     enabledCams = new Set([...enabledCams].filter((n) => roster.includes(n)));
-    // Every view stays live on every page: tiles are not collapsible, and a
-    // stale persisted "enabled"/mapOn must not relaunch tiles as off pills.
-    for (const n of roster) enabledCams.add(n);
-    mapOn = true;
-    const validPrimary =
-      primary === MAP_ID || (roster.includes(primary) && enabledCams.has(primary));
+    if (primary === "") mapOn = true; // nothing persisted yet — the map starts on
+    // Roster membership is the validity test: the tail below re-enables the primary, so a
+    // primaryOnMount view (or a migrated v1 primary) outside the saved enabled set still wins.
+    const validPrimary = primary === MAP_ID ? mapOn : roster.includes(primary);
     if (!validPrimary) {
       // No saved choice (or a stale one): default to the view that shows the
       // robot best -- the sim's orbit "top view" (only simulated robots have
@@ -137,12 +143,32 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
     renderStructure();
   }
 
+  /** Bring a view one rung up the ladder: off → live thumbnail (does NOT steal the big stage). @param {string} id */
+  function enable(id) {
+    if (id === MAP_ID) mapOn = true;
+    else enabledCams.add(id);
+    commit();
+  }
+
   /** Promote a view to the big stage; whatever was big drops back into the strip. @param {string} id */
   function promote(id) {
     if (id === primary) return;
     primary = id;
     if (id === MAP_ID) mapOn = true;
     else enabledCams.add(id);
+    commit();
+  }
+
+  // Drop a live view back to off. The strip never shows the primary, so the closed view normally isn't
+  // it; if that invariant ever breaks, fall back so the stage keeps a view.
+  /** @param {string} id */
+  function disable(id) {
+    if (id === MAP_ID) mapOn = false;
+    else enabledCams.delete(id);
+    if (id === primary) {
+      primary = roster.find((n) => enabledCams.has(n)) ?? MAP_ID;
+      if (primary === MAP_ID) mapOn = true;
+    }
     commit();
   }
 
@@ -218,6 +244,7 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
 
   /** @param {string} name */
   function buildCameraTile(name) {
+    if (!enabledCams.has(name)) return offTile(name, displayLabel(name), `Turn on the ${name} camera`);
     const index = roster.indexOf(name);
     const label = displayLabel(name);
     const tile = liveTile(name, label, `Switch to ${label} view`);
@@ -246,9 +273,27 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
   }
 
   function buildMapTile() {
+    if (!mapOn) return offTile(MAP_ID, "Map", "Show the navigation map");
     const tile = liveTile(MAP_ID, "Map", "Switch to Map view · scroll to zoom");
     tile.classList.add("cam-tile-map");
     if (mapHost) tile.prepend(mapHost); // reparent the persistent host into the thumbnail
+    return tile;
+  }
+
+  /** Dim pill for an off view; clicking climbs to the live-thumbnail rung. @param {string} id @param {string} label @param {string} title */
+  function offTile(id, label, title) {
+    const tile = document.createElement("div");
+    tile.className = "cam-tile off";
+    tile.textContent = label;
+    tile.tabIndex = 0;
+    tile.setAttribute("role", "button");
+    tile.setAttribute("aria-label", title);
+    tile.addEventListener("click", () => enable(id));
+    tile.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      enable(id);
+    });
     return tile;
   }
 
@@ -268,7 +313,16 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
     const tag = document.createElement("span");
     tag.className = "cam-tile-label";
     tag.textContent = label;
-    tile.append(tag);
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "cam-tile-close";
+    close.title = id === MAP_ID ? "Close" : "Close (stops streaming)";
+    close.textContent = "×";
+    close.addEventListener("click", (e) => {
+      e.stopPropagation();
+      disable(id);
+    });
+    tile.append(tag, close);
     return tile;
   }
 
