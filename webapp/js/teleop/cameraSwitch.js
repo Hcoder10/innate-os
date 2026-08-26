@@ -3,7 +3,7 @@ import { WEBRTC_ACTIVE_STREAMS_TOPIC } from "../constants.js";
 // Multi-view PiP strip — a Zoom-style switcher pinned bottom-right. The big stage shows the PRIMARY view;
 // the strip shows every OTHER view as a tile that climbs a three-rung ladder:
 //
-//   off (dim pill)  --click-->  live thumbnail (PiP)  --click-->  primary (fills the stage; leaves the strip)
+//   off (dark placeholder tile)  --click-->  live thumbnail (PiP)  --click-->  primary (fills the stage; leaves the strip)
 //
 // Promoting a thumbnail demotes whatever was big back into the strip (the swap). Hovering a live thumbnail
 // reveals a × that drops it back to off. "Size is the state": the big view is self-evidently primary, so
@@ -26,6 +26,14 @@ const DISPLAY_LABELS = { main: "Main", arm: "Arm", orbit: "Top View" };
 function displayLabel(name) {
   return DISPLAY_LABELS[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
 }
+
+// Same stroke style as the rest of the cockpit's inline icons (24 viewBox, 1.5 stroke).
+const CAMERA_ICON =
+  '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>';
+const MAP_ICON =
+  '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>';
 const MAP_ZOOM_KEY = "innate.map.zoom"; // { small, big } metres-across, persisted per map size
 const MAP_ID = "__map__"; // sentinel "view" id for the nav map (never a real camera name)
 const MAP_ZOOM_DEFAULT = { small: 6, big: 16 }; // tighter as a thumbnail, wider on the full stage
@@ -143,10 +151,14 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
     renderStructure();
   }
 
+  /** One-shot: the view whose fresh live tile plays the pill→tile entrance animation. */
+  let justOpened = "";
+
   /** Bring a view one rung up the ladder: off → live thumbnail (does NOT steal the big stage). @param {string} id */
   function enable(id) {
     if (id === MAP_ID) mapOn = true;
     else enabledCams.add(id);
+    justOpened = id;
     commit();
   }
 
@@ -248,6 +260,10 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
     const index = roster.indexOf(name);
     const label = displayLabel(name);
     const tile = liveTile(name, label, `Switch to ${label} view`);
+    const status = document.createElement("span");
+    status.className = "cam-tile-status";
+    status.textContent = "connecting…";
+    tile.append(status);
     // Sim sessions expose live canvases (no MediaStream pipeline -- canvas
     // capture pinned page composition to its capture rate); mount those
     // directly. Real robots keep the <video> + WebRTC stream path. SimSession
@@ -280,14 +296,19 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
     return tile;
   }
 
-  /** Dim pill for an off view; clicking climbs to the live-thumbnail rung. @param {string} id @param {string} label @param {string} title */
+  /** Dark placeholder tile for an off view — same footprint as a live tile, so the strip never
+   *  reflows; clicking climbs to the live-thumbnail rung. @param {string} id @param {string} label @param {string} title */
   function offTile(id, label, title) {
     const tile = document.createElement("div");
     tile.className = "cam-tile off";
-    tile.textContent = label;
     tile.tabIndex = 0;
     tile.setAttribute("role", "button");
     tile.setAttribute("aria-label", title);
+    tile.innerHTML =
+      (id === MAP_ID ? MAP_ICON : CAMERA_ICON) +
+      '<span class="cam-tile-name"></span><span class="cam-tile-hint">tap to view</span>';
+    const name = tile.querySelector(".cam-tile-name");
+    if (name) name.textContent = label;
     tile.addEventListener("click", () => enable(id));
     tile.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
@@ -304,6 +325,11 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
     tile.tabIndex = 0;
     tile.setAttribute("role", "button");
     tile.setAttribute("aria-label", title);
+    if (id === justOpened) {
+      justOpened = "";
+      tile.classList.add("opening");
+      tile.addEventListener("animationend", () => tile.classList.remove("opening"), { once: true });
+    }
     tile.addEventListener("click", () => promote(id));
     tile.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
