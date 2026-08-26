@@ -48,7 +48,8 @@ struct CameraEncoder {
     int fps = 30;     // encoder framerate (appsrc caps)
     int width = 640;  // encode resolution (appsrc caps); incoming frames are resized to it
     int height = 480;
-    guint ssrc = 0;  // fixed SSRC so the SDP offer carries a=ssrc/msid before any RTP has flowed
+    int bitrate_kbps = 2000;  // vp8enc target-bitrate
+    guint ssrc = 0;           // fixed SSRC so the SDP offer carries a=ssrc/msid before any RTP has flowed
     std::atomic<int64_t> last_forced_ns{0};  // maybe_force_keyframe throttle (browser PLIs can storm)
 
     GstElement* appsrc = nullptr;  // src_<name>, ref'd out of the encode pipeline

@@ -40,9 +40,8 @@ std::string WebRTCStreamer::video_encode_branch(const CameraEncoder& cam) const 
            "/1 ! "
            "queue leaky=downstream max-size-buffers=1 max-size-time=0 max-size-bytes=0 ! "
            "videoconvert ! "
-           "vp8enc deadline=1 target-bitrate=2000000 cpu-used=4 error-resilient=partitions "
-           "keyframe-max-dist=" +
-           std::to_string(cam.fps * 4) +
+           "vp8enc deadline=1 target-bitrate=" + std::to_string(cam.bitrate_kbps * 1000) +
+           " cpu-used=4 error-resilient=partitions keyframe-max-dist=" + std::to_string(cam.fps * 4) +
            " end-usage=cbr buffer-size=600 buffer-initial-size=400 buffer-optimal-size=500 ! "
            // picture-id-mode is required for browsers: without picture IDs Chrome can't prove frame
            // continuity after loss and discards every delta frame until the next keyframe — NACK/RTX

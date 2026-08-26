@@ -101,6 +101,11 @@ def generate_launch_description():
                 # no round trip; NACK resends land within the receiver's adaptive jitter buffer.
                 "video_nack": True,
                 "video_fec_percentage": 25,
+                # Per-camera vp8enc target. The sum (+~25% FEC, + retransmits under loss) must fit
+                # the site uplink with margin — 2000 each measurably congested a residential link
+                # once two cameras streamed, and the resulting keyframe storms compounded the loss.
+                "main_bitrate_kbps": 1500,
+                "arm_bitrate_kbps": 800,
                 # Local-only STUN Binding responder. Browsers still obfuscate host candidates as mDNS,
                 # but when they query stun:<robot-lan-ip>:3478, the srflx candidate they emit is the LAN
                 # IP:port observed by the robot, not a public NAT hairpin route.
