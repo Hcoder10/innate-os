@@ -12,6 +12,14 @@
 
 namespace mars_cam {
 
+namespace {
+struct TransceiverCtx {
+    WebRTCStreamer* self;
+    guint video_count;  // transceivers are created in sink-pad link order: the video m-lines, then audio
+    guint seen = 0;
+};
+}  // namespace
+
 // =============================================================================
 // Per-peer transport
 // =============================================================================
@@ -53,6 +61,29 @@ bool WebRTCStreamer::link_rtp_appsrc(GstElement* webrtc, GstElement* appsrc, Gst
     return linked;
 }
 
+// Post-link re-assert of the creation-time loss-repair props (the on-new-transceiver hook in
+// create_peer_transport is where they take effect): the first `video_count` transceivers get
+// NACK/RTX + ULPFEC/RED, anything after (audio) is stripped. fec-percentage defaults to 100
+// (double the bitrate) — always set it alongside fec-type.
+void WebRTCStreamer::configure_video_transceivers(GstElement* webrtc, size_t video_count) {
+    for (size_t i = 0;; ++i) {
+        GstWebRTCRTPTransceiver* trans = nullptr;
+        g_signal_emit_by_name(webrtc, "get-transceiver", static_cast<gint>(i), &trans);
+        if (!trans) {
+            if (i < video_count) {
+                RCLCPP_WARN(this->get_logger(), "No transceiver for video m-line %zu; loss repair not applied", i);
+            }
+            return;
+        }
+        const bool video = i < video_count;
+        g_object_set(trans, "do-nack", (video && video_nack_) ? TRUE : FALSE, nullptr);
+        const guint pct = video ? video_fec_percentage_ : 0u;
+        g_object_set(trans, "fec-type", pct > 0 ? GST_WEBRTC_FEC_TYPE_ULP_RED : GST_WEBRTC_FEC_TYPE_NONE,
+                     "fec-percentage", pct, nullptr);
+        g_object_unref(trans);
+    }
+}
+
 Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const std::vector<std::string>& negotiated,
                                             const std::vector<std::string>& active, bool with_audio,
                                             bool audio_active) {
@@ -88,6 +119,29 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
         RCLCPP_ERROR(this->get_logger(), "Transport pipeline missing webrtcbin");
         return nullptr;  // ~Peer() tears down the pipeline
     }
+
+    // Loss-repair props must land the moment each transceiver is CREATED (as its sink pad links):
+    // webrtcbin wires its internal FEC/RTX elements from them during negotiation setup, so a
+    // post-link write cannot engage them. A pad-created transceiver doesn't know its media kind
+    // yet, but creation order is link order — the first `negotiated.size()` are the video m-lines,
+    // so audio never gets video loss-repair wired in the first place.
+    auto* tctx = new TransceiverCtx{this, static_cast<guint>(negotiated.size())};
+    g_signal_connect_data(
+        peer->webrtc, "on-new-transceiver",
+        G_CALLBACK(+[](GstElement*, GstWebRTCRTPTransceiver* trans, gpointer user_data) {
+            auto* ctx = static_cast<TransceiverCtx*>(user_data);
+            if (ctx->seen++ >= ctx->video_count) {
+                return;  // audio m-line
+            }
+            auto* self = ctx->self;
+            g_object_set(trans, "do-nack", self->video_nack_ ? TRUE : FALSE, nullptr);
+            if (self->video_fec_percentage_ > 0) {
+                g_object_set(trans, "fec-type", GST_WEBRTC_FEC_TYPE_ULP_RED, "fec-percentage",
+                             self->video_fec_percentage_, nullptr);
+            }
+        }),
+        tctx, [](gpointer data, GClosure*) { delete static_cast<TransceiverCtx*>(data); },
+        static_cast<GConnectFlags>(0));
 
     // Configure each RTP appsrc: caps (incl. the extmap so webrtcbin emits a=extmap), drop-old on
     // congestion so one slow peer can't backpressure the shared encoders.
@@ -142,6 +196,7 @@ Peer* WebRTCStreamer::create_peer_transport(const std::string& client_id, const 
         RCLCPP_ERROR(this->get_logger(), "Transport pipeline missing/failed an rtp appsrc");
         return nullptr;  // ~Peer() tears down the pipeline + the rtp appsrcs stored so far
     }
+    configure_video_transceivers(peer->webrtc, negotiated.size());
 
     // Tag the webrtcbin with its client_id (ICE-candidate routing) and a copy of its generation token,
     // so the on-negotiation-needed handler can build the offer context lock-free off the element alone.

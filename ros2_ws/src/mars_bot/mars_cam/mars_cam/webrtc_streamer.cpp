@@ -86,6 +86,11 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     this->declare_parameter("audio_capture_device", "");
     this->declare_parameter("playout_min_delay_ms", 0);
     this->declare_parameter("playout_max_delay_ms", 40);
+    // Video loss repair. ULPFEC repairs without a round trip at ~fec% bitrate overhead (0 disables);
+    // NACK retransmits only pay off when the browser's jitter buffer (playout_max_delay_ms) can wait
+    // roughly one RTT for the resend, so remote viewers should raise that param too.
+    this->declare_parameter("video_nack", true);
+    this->declare_parameter("video_fec_percentage", 25);
     this->declare_parameter("enable_local_stun", true);
     this->declare_parameter("local_stun_port", 3478);
     // RTCP-inactivity release only fires on a peer webrtcbin still reports CONNECTED — it's a backstop for
@@ -100,6 +105,9 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     audio_capture_device_ = this->get_parameter("audio_capture_device").as_string();
     playout_min_delay_ms_ = static_cast<guint>(this->get_parameter("playout_min_delay_ms").as_int());
     playout_max_delay_ms_ = static_cast<guint>(this->get_parameter("playout_max_delay_ms").as_int());
+    video_nack_ = this->get_parameter("video_nack").as_bool();
+    video_fec_percentage_ =
+        static_cast<guint>(std::clamp(this->get_parameter("video_fec_percentage").as_int(), int64_t{0}, int64_t{100}));
     enable_local_stun_ = this->get_parameter("enable_local_stun").as_bool();
     local_stun_port_ = static_cast<int>(this->get_parameter("local_stun_port").as_int());
     rtcp_inactivity_timeout_s_ = this->get_parameter("rtcp_inactivity_timeout_s").as_double();
@@ -160,6 +168,8 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
                 current_source_.c_str(), use_compressed_images_ ? "true" : "false");
     RCLCPP_INFO(this->get_logger(), "  Mic audio: %s", enable_audio_ ? "enabled (opt-in per peer)" : "disabled");
     RCLCPP_INFO(this->get_logger(), "  Local STUN: %s", enable_local_stun_ ? "enabled" : "disabled");
+    RCLCPP_INFO(this->get_logger(), "  Video loss repair: nack=%s, fec=%u%%", video_nack_ ? "on" : "off",
+                video_fec_percentage_);
     RCLCPP_INFO(this->get_logger(), "  RTCP-inactivity teardown: %.1f s", rtcp_inactivity_timeout_s_);
 }
 
