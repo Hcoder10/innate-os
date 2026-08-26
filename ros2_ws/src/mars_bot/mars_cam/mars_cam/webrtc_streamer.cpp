@@ -163,6 +163,8 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
         this->create_wall_timer(std::chrono::milliseconds(200), std::bind(&WebRTCStreamer::poll_pipeline_health, this));
     prev_status_time_ = std::chrono::steady_clock::now();
     status_timer_ = this->create_wall_timer(std::chrono::seconds(2), std::bind(&WebRTCStreamer::publish_status, this));
+    adapt_timer_ =
+        this->create_wall_timer(std::chrono::seconds(1), std::bind(&WebRTCStreamer::poll_network_adaptation, this));
 
     RCLCPP_INFO(this->get_logger(), "WebRTC Streamer ready (%zu cameras, source: %s, compressed: %s)", cameras_.size(),
                 current_source_.c_str(), use_compressed_images_ ? "true" : "false");
@@ -228,6 +230,7 @@ WebRTCStreamer::~WebRTCStreamer() {
     stop_local_stun_server();
     health_timer_.reset();
     status_timer_.reset();
+    adapt_timer_.reset();
     destroy_subscriptions();
     {
         std::lock_guard<std::mutex> lock(peers_mutex_);
@@ -309,6 +312,142 @@ bool WebRTCStreamer::install_rtcp_probe_for(Peer* peer) {
     gst_iterator_free(it);
     gst_object_unref(rtpbin);
     return installed;
+}
+
+// One get-stats reply: keep the worst remote-inbound-rtp (the RTCP receiver-report echo) loss/RTT
+// seen this round. Fires on a webrtcbin thread; only atomics are touched (node outlives promises —
+// same lifetime contract as OfferContext).
+void WebRTCStreamer::on_peer_stats(GstPromise* promise, gpointer user_data) {
+    auto* self = static_cast<WebRTCStreamer*>(user_data);
+    const GstStructure* reply = gst_promise_get_reply(promise);
+    if (!reply) {
+        gst_promise_unref(promise);
+        return;
+    }
+    gst_structure_foreach(
+        reply,
+        [](GQuark, const GValue* value, gpointer data) -> gboolean {
+            auto* self = static_cast<WebRTCStreamer*>(data);
+            if (!GST_VALUE_HOLDS_STRUCTURE(value)) {
+                return TRUE;
+            }
+            const GstStructure* s = gst_value_get_structure(value);
+            GstWebRTCStatsType type;
+            if (!gst_structure_get(s, "type", GST_TYPE_WEBRTC_STATS_TYPE, &type, nullptr) ||
+                type != GST_WEBRTC_STATS_REMOTE_INBOUND_RTP) {
+                return TRUE;
+            }
+            // rb-fractionlost is the RR's 0-255 fraction; round-trip-time is seconds (double).
+            if (guint fl = 0; gst_structure_get_uint(s, "rb-fractionlost", &fl)) {
+                const int promille = static_cast<int>(fl * 1000 / 255);
+                if (promille > self->rtcp_loss_promille_.load(std::memory_order_relaxed)) {
+                    self->rtcp_loss_promille_.store(promille, std::memory_order_relaxed);
+                }
+            }
+            if (gdouble rtt_s = 0.0; gst_structure_get_double(s, "round-trip-time", &rtt_s)) {
+                const int ms = static_cast<int>(rtt_s * 1000.0);
+                if (ms > self->rtcp_rtt_ms_.load(std::memory_order_relaxed)) {
+                    self->rtcp_rtt_ms_.store(ms, std::memory_order_relaxed);
+                }
+            }
+            return TRUE;
+        },
+        self);
+    gst_promise_unref(promise);
+}
+
+void WebRTCStreamer::apply_adaptation(bool degraded, int loss_promille, int rtt_ms) {
+    degraded_ = degraded;
+    for (auto& cam : cameras_) {
+        GstElement* enc = gst_bin_get_by_name(GST_BIN(encode_pipeline_), ("enc_" + cam->name).c_str());
+        if (!enc) {
+            continue;
+        }
+        const int bps = cam->bitrate_kbps * 1000 * (degraded ? 6 : 10) / 10;
+        g_object_set(enc, "target-bitrate", bps, nullptr);
+        gst_object_unref(enc);
+    }
+    // FEC strength follows the state: webrtcbin binds the transceiver's fec-percentage to the live
+    // rtpulpfecenc, so full protection is only paid for while a viewer needs it (measured: 100%
+    // took a 4-5%-loss path from 17-29 s frozen/min to 0.7 s; 25% stayed keyframe-bound).
+    if (video_fec_percentage_ > 0) {
+        const guint pct = degraded ? 100u : video_fec_percentage_;
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        for (auto& kv : peers_) {
+            for (size_t i = 0; i < kv.second->videos.size(); ++i) {
+                GstWebRTCRTPTransceiver* trans = nullptr;
+                g_signal_emit_by_name(kv.second->webrtc, "get-transceiver", static_cast<gint>(i), &trans);
+                if (trans) {
+                    g_object_set(trans, "fec-percentage", pct, nullptr);
+                    g_object_unref(trans);
+                }
+            }
+        }
+    }
+    const char* state = degraded ? "DEGRADED: 60% bitrate + 1 Hz keyframes + full FEC"
+                                 : "GOOD: full bitrate, on-demand keyframes, base FEC";
+    if (loss_promille < 0 && rtt_ms < 0) {
+        RCLCPP_INFO(this->get_logger(), "Network adaptation -> %s (no viewer reports)", state);
+    } else {
+        RCLCPP_INFO(this->get_logger(), "Network adaptation -> %s (viewer loss %.1f%%, rtt %d ms)", state,
+                    loss_promille < 0 ? 0.0 : loss_promille / 10.0, rtt_ms);
+    }
+}
+
+void WebRTCStreamer::poll_network_adaptation() {
+    const int loss = rtcp_loss_promille_.exchange(-1, std::memory_order_relaxed);
+    const int rtt = rtcp_rtt_ms_.exchange(-1, std::memory_order_relaxed);
+
+    // Kick off this round of per-peer stats (answers land before the next tick).
+    bool any_peers = false;
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        any_peers = !peers_.empty();
+        for (auto& kv : peers_) {
+            if (!kv.second->media_ready->load(std::memory_order_relaxed)) {
+                continue;
+            }
+            GstPromise* promise = gst_promise_new_with_change_func(on_peer_stats, this, nullptr);
+            g_signal_emit_by_name(kv.second->webrtc, "get-stats", nullptr, promise);
+        }
+    }
+
+    // Last viewer gone: back to GOOD now, so the next peer (LAN included) isn't served a DEGRADED
+    // state frozen from a link that no longer exists.
+    if (!any_peers) {
+        adapt_bad_ticks_ = 0;
+        adapt_good_ticks_ = 0;
+        if (degraded_) {
+            apply_adaptation(false, loss, rtt);
+        }
+        return;
+    }
+
+    // Enter DEGRADED fast (2 s of trouble), leave slowly (15 s without it) — flapping re-keyframes
+    // hurt more than staying conservative. clean is exactly !bad: any value band between the two
+    // would freeze the exit counter and make DEGRADED permanent (e.g. a steady 200 ms RTT path).
+    // A tick with no report leaves the counters unchanged (get-stats answers land between ticks).
+    const bool report = loss >= 0 || rtt >= 0;
+    const bool bad = loss >= 30 || rtt >= 250;
+    if (report) {
+        adapt_bad_ticks_ = bad ? adapt_bad_ticks_ + 1 : 0;
+        adapt_good_ticks_ = bad ? 0 : adapt_good_ticks_ + 1;
+    }
+    if (!degraded_ && adapt_bad_ticks_ >= 2) {
+        apply_adaptation(true, loss, rtt);
+    } else if (degraded_ && adapt_good_ticks_ >= 15) {
+        apply_adaptation(false, loss, rtt);
+    }
+
+    // Bounded corruption age while DEGRADED: a keyframe per second per flowing camera, no PLI
+    // round-trip needed. maybe_force_keyframe's 500 ms throttle also coalesces this with real PLIs.
+    if (degraded_) {
+        for (auto& cam : cameras_) {
+            if (cam->want.load(std::memory_order_relaxed) > 0) {
+                maybe_force_keyframe(cam->name);
+            }
+        }
+    }
 }
 
 void WebRTCStreamer::poll_pipeline_health() {
