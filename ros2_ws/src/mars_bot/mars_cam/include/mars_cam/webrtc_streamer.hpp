@@ -49,6 +49,7 @@ struct CameraEncoder {
     int width = 640;  // encode resolution (appsrc caps); incoming frames are resized to it
     int height = 480;
     guint ssrc = 0;  // fixed SSRC so the SDP offer carries a=ssrc/msid before any RTP has flowed
+    std::atomic<int64_t> last_forced_ns{0};  // maybe_force_keyframe throttle (browser PLIs can storm)
 
     GstElement* appsrc = nullptr;  // src_<name>, ref'd out of the encode pipeline
     GstElement* sink = nullptr;    // sink_<name> appsink, ref'd; the fan-out tap
@@ -146,6 +147,9 @@ class WebRTCStreamer : public rclcpp::Node {
 
     // ---- GStreamer callbacks (static for the C callback interface) ----
     static void on_ice_candidate(GstElement* webrtc, guint mline, gchar* candidate, gpointer user_data);
+    // Upstream-event probe on each transport rtp appsrc: forwards the browser's PLI-driven
+    // GstForceKeyUnit to the (separate) encode pipeline, which the event can't reach on its own.
+    static GstPadProbeReturn on_keyunit_request(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static void on_connection_state_changed(GstElement* webrtc, GParamSpec* pspec, gpointer user_data);
     static void on_negotiation_needed(GstElement* webrtc, gpointer user_data);
     static void on_offer_created(GstPromise* promise, gpointer user_data);
@@ -177,6 +181,7 @@ class WebRTCStreamer : public rclcpp::Node {
     void push_frame(CameraEncoder* cam, const cv::Mat& frame, const rclcpp::Time& stamp);
     GstBufferPool* create_frame_pool(int width, int height, int channels);
     void force_keyframe(const std::string& cam);          // request an IDR so a fresh/resumed peer can decode
+    void maybe_force_keyframe(const std::string& cam);    // force_keyframe, throttled per camera (PLI path)
     CameraEncoder* find_camera(const std::string& name);  // configured camera by name, or nullptr
 
     // ---- Per-peer transport ----
