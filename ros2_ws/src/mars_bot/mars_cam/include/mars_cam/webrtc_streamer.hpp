@@ -165,6 +165,7 @@ class WebRTCStreamer : public rclcpp::Node {
     // ---- Shared audio (mic) — encoded once like the cameras, fanned out, gated for privacy ----
     bool build_audio_pipeline();  // alsasrc -> opusenc -> rtpopuspay -> appsink (built once, kept NULL)
     void reconcile_audio();       // PLAYING when some peer has audio active, NULL otherwise (mic off)
+    void fail_audio_pipeline();   // NULL + arm the retry backoff; the one landing for every mic failure
     static GstFlowReturn on_audio_sample(GstElement* appsink, gpointer user_data);
     void fan_out_audio(GstElement* appsink);
 
@@ -247,9 +248,14 @@ class WebRTCStreamer : public rclcpp::Node {
     // ---- Shared audio (mic) pipeline: encoded once, fanned out to peers, gated for mic privacy ----
     GstElement* audio_pipeline_ = nullptr;   // built once if enable_audio_; alsasrc..rtpopuspay..appsink
     GstElement* audio_sink_ = nullptr;       // ref'd appsink (the fan-out tap)
+    GstElement* audio_src_ = nullptr;        // ref'd mic source (device re-resolved before each open)
     std::atomic<int> want_audio_{0};         // # peers with audio active; >0 => mic open (pipeline PLAYING)
     std::atomic<uint64_t> audio_frames_{0};  // for status: is audio actually flowing
-    bool audio_playing_ = false;             // current audio pipeline state (gated by want_audio_)
+    // audio_playing_ and mic_retry_ns_ are unlocked on purpose: every writer is a ROS callback on this
+    // node, and all callbacks share the default mutually exclusive group, so the executor serializes
+    // them even in a multithreaded container. Moving any callback to a reentrant group revisits this.
+    bool audio_playing_ = false;  // current audio pipeline state (gated by want_audio_)
+    int64_t mic_retry_ns_ = 0;    // earliest retry after a failed open (the poll runs at 5 Hz)
 
     // ---- Peers ----
     std::map<std::string, std::unique_ptr<Peer>> peers_;
