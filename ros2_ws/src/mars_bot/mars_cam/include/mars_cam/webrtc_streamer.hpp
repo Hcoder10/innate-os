@@ -48,7 +48,9 @@ struct CameraEncoder {
     int fps = 30;     // encoder framerate (appsrc caps)
     int width = 640;  // encode resolution (appsrc caps); incoming frames are resized to it
     int height = 480;
-    guint ssrc = 0;  // fixed SSRC so the SDP offer carries a=ssrc/msid before any RTP has flowed
+    int bitrate_kbps = 2000;  // vp8enc target-bitrate
+    guint ssrc = 0;           // fixed SSRC so the SDP offer carries a=ssrc/msid before any RTP has flowed
+    std::atomic<int64_t> last_forced_ns{0};  // maybe_force_keyframe throttle (browser PLIs can storm)
 
     GstElement* appsrc = nullptr;  // src_<name>, ref'd out of the encode pipeline
     GstElement* sink = nullptr;    // sink_<name> appsink, ref'd; the fan-out tap
@@ -146,6 +148,9 @@ class WebRTCStreamer : public rclcpp::Node {
 
     // ---- GStreamer callbacks (static for the C callback interface) ----
     static void on_ice_candidate(GstElement* webrtc, guint mline, gchar* candidate, gpointer user_data);
+    // Upstream-event probe on each transport rtp appsrc: forwards the browser's PLI-driven
+    // GstForceKeyUnit to the (separate) encode pipeline, which the event can't reach on its own.
+    static GstPadProbeReturn on_keyunit_request(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static void on_connection_state_changed(GstElement* webrtc, GParamSpec* pspec, gpointer user_data);
     static void on_negotiation_needed(GstElement* webrtc, gpointer user_data);
     static void on_offer_created(GstPromise* promise, gpointer user_data);
@@ -177,6 +182,7 @@ class WebRTCStreamer : public rclcpp::Node {
     void push_frame(CameraEncoder* cam, const cv::Mat& frame, const rclcpp::Time& stamp);
     GstBufferPool* create_frame_pool(int width, int height, int channels);
     void force_keyframe(const std::string& cam);          // request an IDR so a fresh/resumed peer can decode
+    void maybe_force_keyframe(const std::string& cam);    // force_keyframe, throttled per camera (PLI path)
     CameraEncoder* find_camera(const std::string& name);  // configured camera by name, or nullptr
 
     // ---- Per-peer transport ----
@@ -193,6 +199,9 @@ class WebRTCStreamer : public rclcpp::Node {
     // Apply RTP caps + tuning to a transport appsrc and link it to the next webrtcbin sink pad (consumes
     // caps). Shared by the video and audio m-line setup in create_peer_transport.
     bool link_rtp_appsrc(GstElement* webrtc, GstElement* appsrc, GstCaps* caps, guint64 max_bytes);
+    // Enable NACK/RTX + ULPFEC (per video_nack_ / video_fec_percentage_) on the first `video_count`
+    // transceivers — GStreamer's defaults negotiate no loss repair at all.
+    void configure_video_transceivers(GstElement* webrtc, size_t video_count);
     void publish_offer(const std::string& client_id, const std::string& sdp);
 
     // ---- Camera subscriptions (lazy: a camera is subscribed only while some connected peer negotiates
@@ -204,6 +213,15 @@ class WebRTCStreamer : public rclcpp::Node {
     // ---- Health / status (executor thread) ----
     void poll_pipeline_health();  // per-peer teardown of dead transports
     void publish_status();        // /webrtc/active_streams snapshot at 0.5 Hz
+
+    // ---- RTCP-driven sender adaptation (executor thread + webrtcbin stats callbacks) ----
+    // The viewers' RTCP receiver reports carry loss + RTT back to us; a 1 Hz poll turns the worst
+    // of them into two states. GOOD = full bitrate, keyframes on demand only (lowest latency).
+    // DEGRADED = ~60% bitrate + a periodic 1 Hz keyframe, so reference-chain corruption on an
+    // unrepairable link clears in bounded time instead of smearing until a PLI round-trip.
+    void poll_network_adaptation();
+    static void on_peer_stats(GstPromise* promise, gpointer user_data);   // parses one get-stats reply
+    void apply_adaptation(bool degraded, int loss_promille, int rtt_ms);  // sets vp8enc bitrates + logs
 
     // ---- Local STUN helper ----
     // Minimal RFC 8489 Binding responder. This gives browsers a robot-local STUN server so their srflx
@@ -244,6 +262,15 @@ class WebRTCStreamer : public rclcpp::Node {
     // Timers
     rclcpp::TimerBase::SharedPtr health_timer_;
     rclcpp::TimerBase::SharedPtr status_timer_;
+    rclcpp::TimerBase::SharedPtr adapt_timer_;
+
+    // Worst viewer-reported link quality from the last stats round (-1 = no report yet). Written by
+    // webrtcbin stats callbacks, read by the 1 Hz adaptation tick.
+    std::atomic<int> rtcp_loss_promille_{-1};
+    std::atomic<int> rtcp_rtt_ms_{-1};
+    std::atomic<bool> degraded_{false};  // adaptation state; also read on webrtcbin threads (on-new-transceiver)
+    int adapt_bad_ticks_ = 0;
+    int adapt_good_ticks_ = 0;
 
     // RTCP-inactivity watchdog timeout (seconds without RTCP before a peer's transport is released).
     double rtcp_inactivity_timeout_s_ = kDefaultRtcpInactivityTimeoutS;
@@ -258,6 +285,8 @@ class WebRTCStreamer : public rclcpp::Node {
     std::string audio_capture_device_;
     guint playout_min_delay_ms_ = 0;
     guint playout_max_delay_ms_ = 40;
+    bool video_nack_ = true;
+    guint video_fec_percentage_ = 25;
     bool enable_local_stun_ = true;
     int local_stun_port_ = 3478;
     std::atomic<bool> stun_running_{false};

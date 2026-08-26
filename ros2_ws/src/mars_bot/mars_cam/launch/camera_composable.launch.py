@@ -18,6 +18,8 @@ Usage:
     ros2 launch mars_cam camera_composable.launch.py
 """
 
+import os
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
@@ -87,15 +89,23 @@ def generate_launch_description():
                 "enable_audio": True,
                 "audio_source_element": "alsasrc",
                 "audio_capture_device": "sysdefault:CARD=Light",
-                # Bound the teleop receiver's de-jitter buffer (ms) via the playout-delay RTP
-                # extension. Measured effect on the LAN: once this extension advertises playout-delay
-                # support, Chrome (which already pins jitterBufferTarget=0) drops the buffer from
-                # ~75 ms to ~2 ms with no added loss. max is the effective lever — it caps how far the
-                # buffer may grow during jitter spikes, bounding worst-case latency below the 75 ms
-                # default. min is inert while the client pins target=0 (kept at 0). Raise max for
-                # smoother playout under jitter, lower it for tighter latency. Retunable via restart.
+                # Playout-delay RTP extension = the CEILING the receiver may buffer, not a target.
+                # The webapp adapts receiver.jitterBufferTarget itself: 0 on a clean LAN (measured
+                # ~2 ms buffer once this extension is advertised), ~1.2x RTT on a lossy remote path
+                # so NACK resends land before playout. max must leave headroom for that adaptation;
+                # min stays 0 so the LAN case keeps its lowest latency.
                 "playout_min_delay_ms": 0,
-                "playout_max_delay_ms": 40,
+                "playout_max_delay_ms": 500,
+                # Video loss repair (webrtcbin negotiates none by default — one lost packet then
+                # freezes the stream until a PLI keyframe round-trip). ULPFEC repairs losses with
+                # no round trip; NACK resends land within the receiver's adaptive jitter buffer.
+                "video_nack": True,
+                "video_fec_percentage": 25,
+                # Per-camera vp8enc target. The sum (+~25% FEC, + retransmits under loss) must fit
+                # the site uplink with margin — 2000 each measurably congested a residential link
+                # once two cameras streamed, and the resulting keyframe storms compounded the loss.
+                "main_bitrate_kbps": 1500,
+                "arm_bitrate_kbps": 800,
                 # Local-only STUN Binding responder. Browsers still obfuscate host candidates as mDNS,
                 # but when they query stun:<robot-lan-ip>:3478, the srflx candidate they emit is the LAN
                 # IP:port observed by the robot, not a public NAT hairpin route.
@@ -135,11 +145,33 @@ def generate_launch_description():
 
     # ── Container ─────────────────────────────────────────────────────────────
 
+    # Opt-in newer GStreamer: a robot with a parallel build staged at /opt/gst
+    # (scripts/update/build_gst_opt.sh) runs the camera container against it — 1.20's
+    # webrtcbin negotiates ULPFEC but never sends it; >=1.22 does. GStreamer's ABI
+    # guarantee lets the 1.20-built binaries run unmodified; NVIDIA's hardware plugins
+    # stay on the system path (verified loading under the 1.24 core). Robots without
+    # /opt/gst are untouched; INNATE_GST_OPT=0 forces the system stack (per-robot rollback
+    # that survives the apt package being reinstalled by the next update).
+    gst_opt = "/opt/gst/lib/aarch64-linux-gnu"
+    system_ld = os.environ.get("LD_LIBRARY_PATH", "")
+    gst_env = (
+        {
+            # Never leave an empty element (ld.so reads "" as the cwd) when the parent
+            # environment has no LD_LIBRARY_PATH.
+            "LD_LIBRARY_PATH": gst_opt + (":" + system_ld if system_ld else ""),
+            "GST_PLUGIN_PATH": gst_opt + "/gstreamer-1.0:/usr/lib/aarch64-linux-gnu/gstreamer-1.0",
+            "GST_REGISTRY": "/tmp/gst-opt-camera.registry",
+        }
+        if os.path.isdir(gst_opt) and os.environ.get("INNATE_GST_OPT") != "0"
+        else {}
+    )
+
     camera_container = ComposableNodeContainer(
         name="camera_container",
         namespace="",
         package="rclcpp_components",
         executable="component_container_mt",
+        additional_env=gst_env,
         composable_node_descriptions=[
             main_camera_node,
             arm_camera_node,

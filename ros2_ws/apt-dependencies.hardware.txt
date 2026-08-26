@@ -103,3 +103,8 @@ htop
 btop
 nano
 vim
+
+# Parallel GStreamer 1.24 at /opt/gst: working webrtcbin ULPFEC for teleop
+# video (the system 1.20 negotiates it but never emits it); the camera launch
+# activates it automatically when installed
+innate-gstreamer-opt

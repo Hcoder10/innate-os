@@ -140,6 +140,23 @@ cd ros2_ws/src/brain/brain_client && PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m
 cd ros2_ws/src/brain/brain_client && basedpyright brain_client/
 ```
 
+## Nodes: the fleet is the budget
+
+**Before adding a ROS node, look for somewhere it could live instead.** We are past 20 and
+every one of them costs RAM whether or not it is doing anything — a process, an executor, a
+DDS participant, its own discovery traffic. On a Jetson that budget is real and shared with
+the models.
+
+The pull toward more nodes is that it *looks* like clean design: one concern, one process,
+crisp boundaries. That instinct is right on a server and wrong on an embedded system, where
+composability sometimes has to be sacrificed for performance. (The Quest went from hundreds
+of microservices to about four while optimizing.)
+
+So: prefer a new function, class, or timer in a node that already owns the data. Reach for a
+new node when it genuinely needs its own lifecycle — separate crash domain, different rate,
+hardware it must own exclusively — and when it does, put it in an existing composable
+container so it shares a process rather than starting another one.
+
 ## Writing skills
 
 ### Never `time.sleep` — always `self.sleep`

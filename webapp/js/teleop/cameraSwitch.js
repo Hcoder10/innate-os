@@ -3,7 +3,7 @@ import { WEBRTC_ACTIVE_STREAMS_TOPIC } from "../constants.js";
 // Multi-view PiP strip — a Zoom-style switcher pinned bottom-right. The big stage shows the PRIMARY view;
 // the strip shows every OTHER view as a tile that climbs a three-rung ladder:
 //
-//   off (dim pill)  --click-->  live thumbnail (PiP)  --click-->  primary (fills the stage; leaves the strip)
+//   off (dark placeholder tile)  --click-->  live thumbnail (PiP)  --click-->  primary (fills the stage; leaves the strip)
 //
 // Promoting a thumbnail demotes whatever was big back into the strip (the swap). Hovering a live thumbnail
 // reveals a × that drops it back to off. "Size is the state": the big view is self-evidently primary, so
@@ -12,7 +12,9 @@ import { WEBRTC_ACTIVE_STREAMS_TOPIC } from "../constants.js";
 // Views are the robot's cameras (from /webrtc/active_streams, 2-4, not hardcoded) PLUS the nav map, which
 // behaves identically — off / live thumbnail / big. When the map is primary it covers the stage and the
 // video stage hides; a camera stays the session's primary underneath so the WebRTC link keeps a live feed.
-// The enabled set + which view is primary persist in localStorage; by default only the first camera is on.
+// The enabled set + which view is primary persist in localStorage; by default only the default primary
+// camera and the map are on. A closed tile genuinely stops streaming (each live tile is a full-bitrate
+// WebRTC stream), so collapsing views is how an operator sheds bandwidth.
 
 const STORE_KEY = "innate.cameras";
 
@@ -24,6 +26,14 @@ const DISPLAY_LABELS = { main: "Main", arm: "Arm", orbit: "Top View" };
 function displayLabel(name) {
   return DISPLAY_LABELS[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
 }
+
+// Same stroke style as the rest of the cockpit's inline icons (24 viewBox, 1.5 stroke).
+const CAMERA_ICON =
+  '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>';
+const MAP_ICON =
+  '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>';
 const MAP_ZOOM_KEY = "innate.map.zoom"; // { small, big } metres-across, persisted per map size
 const MAP_ID = "__map__"; // sentinel "view" id for the nav map (never a real camera name)
 const MAP_ZOOM_DEFAULT = { small: 6, big: 16 }; // tighter as a thumbnail, wider on the full stage
@@ -71,11 +81,17 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
   function loadPrefs() {
     try {
       const p = JSON.parse(localStorage.getItem(storeKey) || "{}");
-      enabledCams = new Set(Array.isArray(p.enabled) ? p.enabled : []);
-      mapOn = p.mapOn === true;
       // "" = no saved choice; reconcile picks. A primaryOnMount caller overrides
       // the saved value outright — reconcile validates it against the roster.
       primary = opts.primaryOnMount ?? (typeof p.primary === "string" ? p.primary : "");
+      if (p.v === 2) {
+        enabledCams = new Set(Array.isArray(p.enabled) ? p.enabled : []);
+        mapOn = p.mapOn === true;
+      } else {
+        // v1 profiles: reconcile forced every camera on (never a user choice), so only the
+        // primary survives the migration to the primary+map default (reconcile re-enables it).
+        mapOn = true;
+      }
     } catch {
       primary = opts.primaryOnMount ?? "";
       /* other defaults: nothing enabled, reconcile picks the first camera */
@@ -94,20 +110,18 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
   }
 
   function savePrefs() {
-    localStorage.setItem(storeKey, JSON.stringify({ enabled: [...enabledCams], mapOn, primary }));
+    localStorage.setItem(storeKey, JSON.stringify({ v: 2, enabled: [...enabledCams], mapOn, primary }));
   }
 
   // Drop names the roster no longer has, then guarantee a valid enabled primary (the stage always needs a
-  // view). Zero cameras is fine when the map is primary (map-only releases WebRTC). Default when nothing
-  // valid persists: the first camera.
+  // view). Zero cameras is fine when the map is primary (map-only releases WebRTC). Fresh profile: only
+  // the default primary camera streams, plus the map.
   function reconcile() {
     enabledCams = new Set([...enabledCams].filter((n) => roster.includes(n)));
-    // Every view stays live on every page: tiles are not collapsible, and a
-    // stale persisted "enabled"/mapOn must not relaunch tiles as off pills.
-    for (const n of roster) enabledCams.add(n);
-    mapOn = true;
-    const validPrimary =
-      primary === MAP_ID || (roster.includes(primary) && enabledCams.has(primary));
+    if (primary === "") mapOn = true; // nothing persisted yet — the map starts on
+    // Roster membership is the validity test: the tail below re-enables the primary, so a
+    // primaryOnMount view (or a migrated v1 primary) outside the saved enabled set still wins.
+    const validPrimary = primary === MAP_ID ? mapOn : roster.includes(primary);
     if (!validPrimary) {
       // No saved choice (or a stale one): default to the view that shows the
       // robot best -- the sim's orbit "top view" (only simulated robots have
@@ -137,12 +151,36 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
     renderStructure();
   }
 
+  /** One-shot: the view whose fresh live tile plays the pill→tile entrance animation. */
+  let justOpened = "";
+
+  /** Bring a view one rung up the ladder: off → live thumbnail (does NOT steal the big stage). @param {string} id */
+  function enable(id) {
+    if (id === MAP_ID) mapOn = true;
+    else enabledCams.add(id);
+    justOpened = id;
+    commit();
+  }
+
   /** Promote a view to the big stage; whatever was big drops back into the strip. @param {string} id */
   function promote(id) {
     if (id === primary) return;
     primary = id;
     if (id === MAP_ID) mapOn = true;
     else enabledCams.add(id);
+    commit();
+  }
+
+  // Drop a live view back to off. The strip never shows the primary, so the closed view normally isn't
+  // it; if that invariant ever breaks, fall back so the stage keeps a view.
+  /** @param {string} id */
+  function disable(id) {
+    if (id === MAP_ID) mapOn = false;
+    else enabledCams.delete(id);
+    if (id === primary) {
+      primary = roster.find((n) => enabledCams.has(n)) ?? MAP_ID;
+      if (primary === MAP_ID) mapOn = true;
+    }
     commit();
   }
 
@@ -218,9 +256,14 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
 
   /** @param {string} name */
   function buildCameraTile(name) {
+    if (!enabledCams.has(name)) return offTile(name, displayLabel(name), `Turn on the ${name} camera`);
     const index = roster.indexOf(name);
     const label = displayLabel(name);
     const tile = liveTile(name, label, `Switch to ${label} view`);
+    const status = document.createElement("span");
+    status.className = "cam-tile-status";
+    status.textContent = "connecting…";
+    tile.append(status);
     // Sim sessions expose live canvases (no MediaStream pipeline -- canvas
     // capture pinned page composition to its capture rate); mount those
     // directly. Real robots keep the <video> + WebRTC stream path. SimSession
@@ -246,9 +289,32 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
   }
 
   function buildMapTile() {
+    if (!mapOn) return offTile(MAP_ID, "Map", "Show the navigation map");
     const tile = liveTile(MAP_ID, "Map", "Switch to Map view · scroll to zoom");
     tile.classList.add("cam-tile-map");
     if (mapHost) tile.prepend(mapHost); // reparent the persistent host into the thumbnail
+    return tile;
+  }
+
+  /** Dark placeholder tile for an off view — same footprint as a live tile, so the strip never
+   *  reflows; clicking climbs to the live-thumbnail rung. @param {string} id @param {string} label @param {string} title */
+  function offTile(id, label, title) {
+    const tile = document.createElement("div");
+    tile.className = "cam-tile off";
+    tile.tabIndex = 0;
+    tile.setAttribute("role", "button");
+    tile.setAttribute("aria-label", title);
+    tile.innerHTML =
+      (id === MAP_ID ? MAP_ICON : CAMERA_ICON) +
+      '<span class="cam-tile-name"></span><span class="cam-tile-hint">tap to view</span>';
+    const name = tile.querySelector(".cam-tile-name");
+    if (name) name.textContent = label;
+    tile.addEventListener("click", () => enable(id));
+    tile.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      enable(id);
+    });
     return tile;
   }
 
@@ -259,6 +325,11 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
     tile.tabIndex = 0;
     tile.setAttribute("role", "button");
     tile.setAttribute("aria-label", title);
+    if (id === justOpened) {
+      justOpened = "";
+      tile.classList.add("opening");
+      tile.addEventListener("animationend", () => tile.classList.remove("opening"), { once: true });
+    }
     tile.addEventListener("click", () => promote(id));
     tile.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
@@ -268,7 +339,16 @@ export function createCameraSwitch(parent, session, ros, opts = {}) {
     const tag = document.createElement("span");
     tag.className = "cam-tile-label";
     tag.textContent = label;
-    tile.append(tag);
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "cam-tile-close";
+    close.title = id === MAP_ID ? "Close" : "Close (stops streaming)";
+    close.textContent = "×";
+    close.addEventListener("click", (e) => {
+      e.stopPropagation();
+      disable(id);
+    });
+    tile.append(tag, close);
     return tile;
   }
 
