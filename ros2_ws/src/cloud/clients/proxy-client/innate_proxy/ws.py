@@ -2,8 +2,8 @@
 # Copyright (c) 2026 Innate Inc
 """Sync wrapper around an async proxy WebSocket.
 
-Shared by the realtime adapters (OpenAI Realtime, ElevenLabs Scribe) — the
-transport is identical, only the URL and the frame vocabulary differ.
+The transport under the realtime adapters (ElevenLabs Scribe) — the adapter
+supplies the URL and the frame vocabulary.
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ class SyncRealtimeConnection:
 
     Presents the callback-based API expected by existing consumers::
 
-        conn = proxy.openai.realtime.connect_sync(
-            model=model,
+        conn = proxy.elevenlabs.realtime.connect_sync(
+            model_id=model,
             on_message=my_handler,   # (ws, message_str)
             on_open=on_open_cb,      # ()
             on_error=on_error_cb,    # (error)

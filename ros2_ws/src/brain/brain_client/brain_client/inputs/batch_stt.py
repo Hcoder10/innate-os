@@ -15,7 +15,6 @@ words in its prompt.
 from __future__ import annotations
 
 import array
-import audioop
 import base64
 import io
 import json
@@ -27,7 +26,10 @@ from collections import deque
 from collections.abc import Callable, Iterable, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
+import numpy as np
+
 from brain_client.brain.transport import GENERATE_PATH
+from brain_client.inputs.vad import MIC_SAMPLE_RATE, pcm16_to_f32, resample_24k_to_16k
 
 if TYPE_CHECKING:
     from brain_client.brain.transport import GeminiRest
@@ -73,15 +75,20 @@ def rms_level(chunk: bytes) -> float:
 
 
 class EnergyDetector:
-    """Voiced = RMS above a fixed threshold; `level` is the last chunk's RMS."""
+    """Voiced = RMS above a fixed threshold; `level` is the last chunk's RMS.
 
-    def __init__(self, threshold: float):
+    ``gain`` reports an upstream software AGC's current boost; dividing it back
+    out keeps boosted room tone under a threshold tuned on the raw mic.
+    """
+
+    def __init__(self, threshold: float, gain: Callable[[], float] | None = None):
         self.threshold = threshold
         self.level = 0.0
         self.voiced = False
+        self._gain = gain
 
     def __call__(self, chunk: bytes) -> bool:
-        self.level = rms_level(chunk)
+        self.level = rms_level(chunk) / (self._gain() if self._gain else 1.0)
         self.voiced = self.level >= self.threshold
         return self.voiced
 
@@ -248,8 +255,10 @@ def _wav_to_scribe_pcm(wav: bytes) -> bytes:
         pcm, rate = reader.readframes(reader.getnframes()), reader.getframerate()
     if rate == SCRIBE_UPLOAD_RATE:
         return pcm
-    converted, _ = audioop.ratecv(pcm, 2, 1, rate, SCRIBE_UPLOAD_RATE, None)
-    return converted
+    if rate != MIC_SAMPLE_RATE:
+        raise ValueError(f"no resampler for {rate} Hz -> Scribe upload (mic captures at {MIC_SAMPLE_RATE} Hz)")
+    samples = resample_24k_to_16k(pcm16_to_f32(pcm))
+    return np.clip(samples * 32768.0, -32768, 32767).astype(np.int16).tobytes()
 
 
 def elevenlabs_proxy_transcriber(

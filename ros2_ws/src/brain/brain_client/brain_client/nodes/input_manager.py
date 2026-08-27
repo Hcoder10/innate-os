@@ -48,8 +48,6 @@ class InputManagerNode(Node):
 
     def _init_proxy(self):
         # Credentials come from env (INNATE_PROXY_URL, INNATE_SERVICE_KEY); config from params.
-        # Scribe realtime since 2026-08: ~0.75 s after the last word vs ~1.1 s
-        # for batch, same accuracy. Rollback is "elevenlabs_batch" in settings.
         self.declare_parameter("stt_backend", "elevenlabs")
         self.declare_parameter("stt_vad_engine", "silero")
         self.declare_parameter("stt_language", "en")

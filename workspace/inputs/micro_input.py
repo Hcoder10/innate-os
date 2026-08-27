@@ -68,7 +68,7 @@ MIC_AUDIO_TOPIC = "/mic/audio"
 
 STT_BACKENDS = frozenset({"elevenlabs_batch", "gemini", "elevenlabs"})
 BATCH_BACKENDS = frozenset({"elevenlabs_batch", "gemini"})
-# Scribe realtime since 2026-08 (P4): ~0.75 s after the last word vs ~1.1 s for
+# Scribe realtime since 2026-08: ~0.75 s after the last word vs ~1.1 s for
 # batch, same accuracy. Rollback is stt_backend: "elevenlabs_batch" in settings.
 DEFAULT_STT_BACKEND = "elevenlabs"
 
@@ -141,15 +141,21 @@ class SlowAgc:
         self._peak = AGC_TARGET_PEAK  # unity gain until the room says otherwise
 
     @property
+    def gain(self) -> float:
+        return AGC_TARGET_PEAK / self._peak
+
+    @property
     def gain_db(self) -> float:
-        return float(20 * np.log10(AGC_TARGET_PEAK / self._peak))
+        return float(20 * np.log10(self.gain))
 
     def __call__(self, chunk: bytes) -> bytes:
         samples = np.frombuffer(chunk[: len(chunk) - len(chunk) % 2], dtype=np.int16)
         if samples.size == 0:
             return chunk
-        self._peak = max(float(np.abs(samples).max()) / 32768.0, self._peak * self._decay, self._floor)
-        gain = AGC_TARGET_PEAK / self._peak
+        # int32 before abs: |int16 -32768| wraps back to -32768.
+        peak = float(np.abs(samples.astype(np.int32)).max()) / 32768.0
+        self._peak = max(peak, self._peak * self._decay, self._floor)
+        gain = self.gain
         if gain <= 1.001:
             return chunk
         boosted = np.clip(samples.astype(np.float32) * gain, -32768, 32767)
@@ -179,6 +185,7 @@ class MicroInput(InputDevice):
         self._commit_at = 0.0
         self._streamed_bytes = 0
         self._utterance_count = 0
+        self._failure_count = 0
         self._sent_keyterms: list[str] = []
         self._scribe_context = ""
         self._scribe_first_chunk = True
@@ -289,6 +296,7 @@ class MicroInput(InputDevice):
         elif etype == "insufficient_audio_activity":
             pass  # expected whenever the room is quiet — not worth a log line
         elif etype in ELEVENLABS_ERROR_TYPES:
+            self._failure_count += 1
             self.logger.error(f"❌ ElevenLabs error ({etype}): {event.get('error', event)}")
         else:
             self.logger.info(f"📨 ElevenLabs event: {etype}")
@@ -299,6 +307,7 @@ class MicroInput(InputDevice):
 
     def _on_ws_error(self, error):
         """Handle WebSocket error event."""
+        self._failure_count += 1
         self.logger.error(f"[ws error] {error}")
 
     def _on_ws_close(self):
@@ -411,9 +420,12 @@ class MicroInput(InputDevice):
             if detector is None:
                 engine = "energy"  # silero_detector logged why
         if detector is None:
-            detector = EnergyDetector(float(cfg.get("stt_energy_threshold", 0.01)))
+            detector = EnergyDetector(float(cfg.get("stt_energy_threshold", 0.01)), gain=self._agc_gain)
         self._vad_detector, self._vad_engine = detector, engine
         return detector, engine
+
+    def _agc_gain(self) -> float:
+        return self._agc.gain if self._agc else 1.0
 
     def _send_vad_status(self) -> None:
         """One vad_status frame for the webapp's voice panel.
@@ -458,6 +470,7 @@ class MicroInput(InputDevice):
             "utterance_open": self._endpointer.in_speech,
             "utterance_secs": round(self._endpointer.utterance_secs, 2),
             "utterances": self._utterance_count,
+            "failures": self._failure_count,
         }
 
     def _connect_elevenlabs(self) -> str:
@@ -561,7 +574,10 @@ class MicroInput(InputDevice):
             return
         if self._endpointer.feed(chunk) is not None:
             self._commit_scribe()
-        elif self._streamed_bytes > SAFETY_COMMIT_SECS * DEFAULT_SAMPLE_RATE * 2 and not self._endpointer.in_speech:
+        elif self._safety_commit_due() and not self._vad_detector.voiced:
+            # Any unvoiced chunk will do: waiting for the utterance to close
+            # could put the buffer past the vendor's ~36 s force-commit, and a
+            # split at a pause cannot cut mid-word.
             self._commit_scribe()
 
     def _send_scribe_audio(self, chunk: bytes, commit: bool) -> None:
@@ -585,12 +601,17 @@ class MicroInput(InputDevice):
         self._commit_at = time.monotonic()
         self._streamed_bytes = 0
 
+    def _safety_commit_due(self) -> bool:
+        return self._streamed_bytes > SAFETY_COMMIT_SECS * DEFAULT_SAMPLE_RATE * 2
+
     def _keep_warm(self, nbytes: int) -> None:
         # The endpointer is deliberately not fed here: a paused stream must not
         # count as silence (the batch endpointer holds the same invariant).
         if self._backend in BATCH_BACKENDS or self.client is None:
             return
         self._send_scribe_audio(b"\x00" * nbytes, commit=False)
+        if self._safety_commit_due():
+            self._commit_scribe()
 
     def _start_audio_thread(self):
         """Start the audio streaming thread."""
