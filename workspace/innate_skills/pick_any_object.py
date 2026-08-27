@@ -45,6 +45,15 @@ PARAMS = {
     # FIND / LOCALIZE
     "tilt_deg": -20.0,
     "settle_s": 1.2,
+    # Objects don't teleport: a match farther than this from the last sighting
+    # is a different instance (e.g. an identical twin), not the target. The
+    # allowance grows with the range the memory was taken at, because
+    # pixel_to_floor over-ranges an object whose visible centre sits above the
+    # floor by ~range * height / camera_height (0.26 m) — a 6 cm object at 2 m
+    # back-projects 0.6 m too far, and only 0.11 m too far at the 0.37 m pick
+    # range, so a flat gate would reject the very object it is protecting.
+    "mem_gate_m": 0.35,
+    "mem_gate_frac": 0.4,
     # POSITION. sweet_x ceiling is 0.43 (reach clamp); 0.37 grasps at ~0.32 —
     # grasping at the 0.40 reach edge stalls the wrist and overloads servo 2.
     "sweet_x": 0.37,
@@ -107,6 +116,12 @@ WRIST_ALIGN_TIMEOUT_S = 60.0
 WRIST_MAX_JUMP_PX = 80.0
 WRIST_SEG_MIN_SCORE = 25.0
 WRIST_CAM_ABOVE_EE = 0.07
+# Gate rejections before the memory is treated as stale and re-anchored. At 2,
+# the first rejection still coasts — that is the case the gate exists for (the
+# target missed for one frame while a twin is detected) — and _localize_retry's
+# second look re-anchors instead of turning a wrong memory into a run-ending
+# "could not centre".
+MEM_COAST_LIMIT = 2
 WRIST_SEARCH_ARM = [0.1473, -0.0706, -0.4449, 1.3376, -0.0491]
 
 
@@ -162,14 +177,80 @@ class PickAnyObject(Skill):
     _p = PARAMS
     _grip_strength: float | None = None
     _holding = False  # fingers committed on an object this run
+    # (odom x, odom y, range from the base at that sighting)
+    _last_seen: tuple[float, float, float] | None = None
+    _coasts = 0  # consecutive looks the memory gate rejected
 
     @resource
     def _proxy(self):
         return gemlib.make_client()
 
+    def _base_to_odom(self, xy):
+        """base_link floor point -> odom frame, or None without odometry."""
+        o = self._odom_xyt()
+        if o is None:
+            return None
+        ox, oy, th = o
+        c, s = math.cos(th), math.sin(th)
+        return (ox + c * xy[0] - s * xy[1], oy + s * xy[0] + c * xy[1])
+
+    def _sighting(self, cand):
+        """Candidate pixel -> (odom x, odom y, range from the base), or None
+        when it doesn't back-project or odometry is missing."""
+        xy = pixel_to_floor(cand[0], cand[1], self._p["tilt_deg"])
+        wxy = self._base_to_odom(xy) if xy else None
+        return (wxy[0], wxy[1], math.hypot(xy[0], xy[1])) if wxy else None
+
+    def _memory_dist(self, cand):
+        """Metres from a candidate to the remembered target; inf when the
+        back-projection or odometry is unavailable."""
+        seen = self._sighting(cand)
+        if seen is None or self._last_seen is None:
+            return math.inf
+        return math.hypot(seen[0] - self._last_seen[0], seen[1] - self._last_seen[1])
+
+    def _choose_cand(self, cands):
+        """Object permanence: among several identical-looking matches, keep the
+        instance we've been tracking — the one nearest to where the target was
+        last seen (odom frame, so the memory survives base motion between
+        looks). A best match outside the gate is a different instance, so the
+        target counts as not seen this frame rather than re-anchoring on a
+        twin. Gemini's best-first order only breaks the first look.
+
+        The pick of the nearest candidate is immune to back-projection bias
+        (identical twins in one frame share it); only the absolute gate is
+        not, hence its range term."""
+        if self._last_seen is None:
+            return cands[0]
+        best = min(cands, key=self._memory_dist)
+        d = self._memory_dist(best)
+        gate = self._p["mem_gate_m"] + self._p["mem_gate_frac"] * self._last_seen[2]
+        if d > gate:
+            self._coasts += 1
+            if self._coasts < MEM_COAST_LIMIT:
+                self.logger.info(
+                    f"[PickAnyObject] {len(cands)} match(es), nearest {d:.2f}m from last sighting "
+                    f"(gate {gate:.2f}m) — coasting"
+                )
+                return None
+            # Disagreeing look after look means the memory is stale, not that
+            # the object teleported. Drop it and re-anchor: coasting forever
+            # would strand the run in "could not centre" while Gemini is
+            # returning the object in every frame.
+            self.logger.info(f"[PickAnyObject] memory {d:.2f}m off for {self._coasts} looks — re-anchoring")
+            self._last_seen = None
+            self._coasts = 0
+            return cands[0]
+        self._coasts = 0
+        if len(cands) > 1:
+            self.logger.info(
+                f"[PickAnyObject] {len(cands)} matches; kept #{cands.index(best) + 1} ({d:.2f}m from last sighting)"
+            )
+        return best
+
     def _detect_px(self, prompt):
-        """Head frame -> best grasp pixel, or None. Also records Gemini's
-        per-object grip_strength for the close."""
+        """Head frame -> grasp pixel of the remembered target, or None. Also
+        records Gemini's per-object grip_strength for the close."""
         self.mobility.stop()
         self.sleep(self._p["settle_s"])
         img = self.main_image
@@ -180,7 +261,8 @@ class PickAnyObject(Skill):
             img,
             f"Find '{prompt}' lying on the floor in this image. Match precisely — "
             "not paper/packaging when asked for clothing, and NOT anything held "
-            "by the robot arm. Return ONLY a JSON list of matches, each "
+            "by the robot arm. Return ONLY a JSON list of ALL matches (every "
+            "one, if several look alike), each "
             '{"box_2d":[ymin,xmin,ymax,xmax], "grasp_point":[y,x], '
             '"grip_strength":s} normalized 0-1000, best first. grasp_point is '
             "the CENTER of the object (geometric middle of the visible blob), "
@@ -192,12 +274,18 @@ class PickAnyObject(Skill):
             "Empty list if not present.",
             logger=self.logger,
         )
-        px = vision.parse_det_px(text)
-        grip = vision.parse_det_grip(text)
-        if px is not None and grip is not None:
+        cands = vision.parse_det_cands(text)
+        cand = self._choose_cand(cands) if cands else None
+        if cand is None:
+            return None
+        u, v, grip = cand
+        if grip is not None:
             lo, hi = GRIP_STRENGTH_RANGE
             self._grip_strength = max(lo, min(hi, grip))
-        return px
+        seen = self._sighting(cand)
+        if seen is not None:
+            self._last_seen = seen
+        return (u, v)
 
     def _localize_px(self, prompt):
         """Detect + back-project -> ((x,y)|None, pixel|None)."""
@@ -409,7 +497,7 @@ class PickAnyObject(Skill):
                 img,
                 f"Wrist camera on a robot gripper, looking down at the floor. "
                 f"Find '{prompt}' on the floor. Ignore the gripper fingers "
-                "themselves. Return ONLY a JSON list of matches, each "
+                "themselves. Return ONLY a JSON list of ALL matches, each "
                 '{"box_2d":[ymin,xmin,ymax,xmax]} normalized 0-1000, best first, '
                 "each box TIGHT around its object. Empty list if not visible.",
                 logger=self.logger,
@@ -417,9 +505,16 @@ class PickAnyObject(Skill):
             if img
             else None
         )
-        box = vision.parse_det_box(text)
+        boxes = vision.parse_det_boxes(text)
+        # The base already centred the tracked instance under the arm, so among
+        # identical twins the box nearest the servo aim point is ours.
+        box = min(boxes, key=self._wrist_aim_dist) if boxes else None
         px = (box[0] + box[2] / 2.0, box[1] + box[3] / 2.0) if box else None
         return px, box
+
+    def _wrist_aim_dist(self, box):
+        u, v = box[0] + box[2] / 2.0, box[1] + box[3] / 2.0
+        return math.hypot(u - self._p["wrist_box_u"], v - self._p["wrist_box_v"])
 
     def _next_wrist_hsv(self, last_b64, timeout=1.5):
         """Wait for a new wrist frame -> (hsv|None, b64)."""
@@ -720,13 +815,17 @@ class PickAnyObject(Skill):
             gemlib.ask_image(
                 self._proxy,
                 images,
-                f"Robot just tried to pick up '{prompt}'. {' '.join(labels)} "
-                f"Is '{prompt}' lying loose on the floor/carpet, OUT of the "
+                f"Robot just tried to pick up '{prompt}' and backed up a step. "
+                f"{' '.join(labels)} "
+                f"Is '{prompt}' lying loose on the floor/carpet DIRECTLY in "
+                "front of the robot (the spot it just grabbed at), OUT of the "
                 "robot's gripper? An object held between the gripper fingers "
                 "counts as grabbed even if it is still touching or resting on "
                 "the floor — answer NO for that, as for anything hanging from "
-                "the gripper. Answer YES only if the object is on the floor "
-                "free of the gripper. Answer only YES or NO.",
+                "the gripper. If several similar objects are visible, judge "
+                "ONLY the grab spot just ahead — identical objects lying "
+                "elsewhere do not count. Answer YES only if the object is on "
+                "the floor free of the gripper. Answer only YES or NO.",
                 logger=self.logger,
             )
             if images
@@ -764,6 +863,8 @@ class PickAnyObject(Skill):
         # Per-run reset: don't carry the last run's object or grip rating.
         self._grip_strength = None
         self._holding = False
+        self._last_seen = None
+        self._coasts = 0
         try:
             self.head.set_position(int(round(self._p["tilt_deg"])))
             # Fold to rest so the arm doesn't occlude the head camera
