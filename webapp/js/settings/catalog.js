@@ -95,7 +95,6 @@ const STT_BACKEND_OPTIONS = [
   { value: "elevenlabs_batch", label: "ElevenLabs Scribe (batch)" },
   { value: "gemini", label: "Gemini (batch)" },
   { value: "elevenlabs", label: "ElevenLabs Scribe (realtime)" },
-  { value: "openai", label: "OpenAI Realtime" },
 ];
 
 // The robot's OS ships on Etc/UTC, so the agent's clock has to be told where the
@@ -337,19 +336,17 @@ export const SETTINGS_PAGES = [
         note: "The brain and the speech-to-text path use separate models. The transcribe backend picks which STT model knob applies.",
         knobs: [
           { path: ["brain_client_node", P, "gemini_model"], label: "Brain model", default: "gemini-3.6-flash", type: "string", doc: "Gemini model powering the local brain", subsection: "Brain" },
-          { path: ["input_manager_node", P, "stt_backend"], label: "Transcribe backend", default: "elevenlabs_batch", type: "string", options: STT_BACKEND_OPTIONS, doc: "Which service transcribes the microphone", subsection: "Speech to text" },
-          { path: ["input_manager_node", P, "stt_vad_engine"], label: "VAD engine", default: "silero", type: "string", options: VAD_ENGINE_OPTIONS, doc: "How batch backends detect speech on the robot", subsection: "Speech to text" },
+          { path: ["input_manager_node", P, "stt_backend"], label: "Transcribe backend", default: "elevenlabs", type: "string", options: STT_BACKEND_OPTIONS, doc: "Which service transcribes the microphone", subsection: "Speech to text" },
+          { path: ["input_manager_node", P, "stt_vad_engine"], label: "VAD engine", default: "silero", type: "string", options: VAD_ENGINE_OPTIONS, doc: "Local voice detector, every backend", subsection: "Speech to text" },
           { path: ["input_manager_node", P, "elevenlabs_batch_stt_model"], label: "Scribe batch model", default: "scribe_v2", type: "string", doc: "ElevenLabs model for the elevenlabs_batch backend", subsection: "Speech to text" },
           { path: ["input_manager_node", P, "gemini_stt_model"], label: "Gemini STT model", default: "gemini-3.6-flash", type: "string", doc: "Gemini model for the gemini backend", subsection: "Speech to text" },
           { path: ["input_manager_node", P, "elevenlabs_stt_model"], label: "Scribe realtime model", default: "scribe_v2_realtime", type: "string", doc: "ElevenLabs model for the elevenlabs (realtime) backend", subsection: "Speech to text" },
           { path: ["input_manager_node", P, "stt_language"], label: "Language", default: "en", type: "string", doc: "Transcription language code", subsection: "Speech to text" },
-          { path: ["input_manager_node", P, "stt_vad_threshold"], label: "VAD threshold", default: 0.2, type: "float", doc: "Lower is more sensitive to speech (batch backends, silero engine)", subsection: "Speech to text" },
+          { path: ["input_manager_node", P, "stt_vad_threshold"], label: "VAD threshold", default: 0.2, type: "float", doc: "Lower is more sensitive to speech (silero engine)", subsection: "Speech to text" },
           { path: ["input_manager_node", P, "stt_energy_threshold"], label: "Energy threshold", default: 0.01, type: "float", doc: "RMS that counts as speech (energy engine only)", subsection: "Speech to text" },
-          { path: ["input_manager_node", P, "stt_vad_silence_secs"], label: "Silence to end turn", default: 0.5, type: "float", unit: "s", doc: "Silence that closes an utterance (batch backends)", subsection: "Speech to text" },
-          { path: ["input_manager_node", P, "openai_realtime_model"], label: "Realtime model", default: "gpt-4o-realtime-preview", type: "string", doc: "OpenAI realtime model (openai backend only)", subsection: "Realtime voice" },
-          { path: ["input_manager_node", P, "openai_transcribe_model"], label: "Transcribe model", default: "gpt-4o-mini-transcribe", type: "string", doc: "OpenAI transcription model (openai backend only)", subsection: "Realtime voice" },
-          { path: ["input_manager_node", P, "stt_realtime_vad_threshold"], label: "VAD threshold", default: 0.3, type: "float", doc: "Vendor VAD sensitivity, lower is more sensitive (realtime backends)", subsection: "Realtime voice" },
-          { path: ["input_manager_node", P, "stt_realtime_vad_silence_secs"], label: "Silence to end turn", default: 0.7, type: "float", unit: "s", doc: "Vendor-side silence that ends a turn (realtime backends)", subsection: "Realtime voice" },
+          { path: ["input_manager_node", P, "stt_vad_silence_secs"], label: "Silence to end turn", default: 0.5, type: "float", unit: "s", doc: "Silence that closes an utterance (every backend)", subsection: "Speech to text" },
+          { path: ["input_manager_node", P, "stt_agc_max_db"], label: "Mic gain ceiling", default: 24, type: "float", unit: "dB", doc: "Software AGC max boost toward -6 dBFS peak; 0 disables", subsection: "Speech to text" },
+          { path: ["input_manager_node", P, "stt_filter_background_audio"], label: "Filter background", default: true, type: "bool", doc: "Scribe realtime: server-side gate against nearby conversations and ambient noise", subsection: "Speech to text" },
         ],
       },
       {

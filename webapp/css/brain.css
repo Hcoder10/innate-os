@@ -203,12 +203,6 @@
   content: " · telemetry lost — mic closed?";
   color: var(--danger);
 }
-/* Realtime backends endpoint server-side: no local meter or chips to show. */
-.br-panel-voice.no-vad .br-vad-meter,
-.br-panel-voice.no-vad .br-vad-chips,
-.br-panel-voice.no-vad .br-vad-tiles {
-  display: none;
-}
 .br-vad-meter {
   flex: 1 1 200px;
   min-width: 140px;

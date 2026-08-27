@@ -15,7 +15,7 @@ Usage::
 
     proxy = ProxyClient(config={"cartesia_voice_id": "..."})
     proxy.cartesia.tts.bytes_stream(...)
-    ws = await proxy.openai.realtime.connect(...)
+    conn = proxy.elevenlabs.realtime.connect_sync(...)
 """
 
 from __future__ import annotations
@@ -71,7 +71,6 @@ class ProxyClient:
         self._sync_client: httpx.Client | None = None
         self._async_client: httpx.AsyncClient | None = None
         self._cartesia: Any = None
-        self._openai: Any = None
         self._elevenlabs: Any = None
 
     # -- Availability ---------------------------------------------------------
@@ -200,15 +199,6 @@ class ProxyClient:
 
             self._cartesia = ProxyCartesiaClient(self)
         return self._cartesia
-
-    @property
-    def openai(self) -> Any:
-        """Lazy OpenAI adapter (Chat + Realtime)."""
-        if self._openai is None:
-            from innate_proxy.adapters.openai import ProxyOpenAIClient
-
-            self._openai = ProxyOpenAIClient(self, auth=self._auth)
-        return self._openai
 
     @property
     def elevenlabs(self) -> Any:

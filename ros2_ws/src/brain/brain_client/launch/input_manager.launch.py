@@ -22,8 +22,6 @@ def generate_launch_description():
     # These are service configs that can be overridden at launch
     stt_backend_arg = DeclareLaunchArgument(
         "stt_backend",
-        # Scribe realtime since 2026-08: ~0.75 s after the last word vs ~1.1 s
-        # for batch, same accuracy. Rollback is "elevenlabs_batch".
         default_value="elevenlabs",
         description="STT backend: elevenlabs (realtime, default) | elevenlabs_batch | gemini (batch)",
     )
@@ -35,12 +33,12 @@ def generate_launch_description():
     stt_vad_threshold_arg = DeclareLaunchArgument(
         "stt_vad_threshold",
         default_value="0.2",
-        description="Batch backends: silero speech probability that counts as speech (lower = more sensitive)",
+        description="Silero speech probability that counts as speech (lower = more sensitive)",
     )
     stt_vad_silence_secs_arg = DeclareLaunchArgument(
         "stt_vad_silence_secs",
         default_value="0.5",
-        description="Batch backends: silence needed to close an utterance, in seconds",
+        description="Silence that closes an utterance, in seconds (every backend)",
     )
     stt_agc_max_db_arg = DeclareLaunchArgument(
         "stt_agc_max_db",
@@ -55,12 +53,12 @@ def generate_launch_description():
     stt_energy_threshold_arg = DeclareLaunchArgument(
         "stt_energy_threshold",
         default_value="0.01",
-        description="Batch backends: normalized RMS (0-1) above which a mic chunk counts as speech (energy engine)",
+        description="Normalized RMS (0-1) above which a mic chunk counts as speech (energy engine)",
     )
     stt_vad_engine_arg = DeclareLaunchArgument(
         "stt_vad_engine",
         default_value="silero",
-        description="Batch backends' local voice detector: silero (neural) | energy (RMS threshold)",
+        description="Local voice detector: silero (neural) | energy (RMS threshold)",
     )
     elevenlabs_batch_stt_model_arg = DeclareLaunchArgument(
         "elevenlabs_batch_stt_model",

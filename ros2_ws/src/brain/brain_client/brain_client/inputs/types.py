@@ -29,11 +29,11 @@ class InputDevice(ABC):
 
     Usage in your input device:
         # Access proxy services
-        ws = await self.proxy.openai.realtime.connect(...)
+        conn = self.proxy.elevenlabs.realtime.connect_sync(...)
         self.proxy.cartesia.tts.sse(...)
 
         # Access config (models, voice IDs, etc.)
-        model = self.proxy.config.get("openai_realtime_model", "default")
+        model = self.proxy.config.get("elevenlabs_stt_model", "default")
     """
 
     def __init__(self):
