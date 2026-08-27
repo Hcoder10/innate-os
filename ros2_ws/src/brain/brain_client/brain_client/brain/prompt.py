@@ -42,6 +42,11 @@ directive and the user's requests drive action — noticing an object is not a r
 
 Your directive:
 {directive}
+
+Answer in the turn you are asked. A reply and a tool call are two parts of ONE response, in \
+that order: write the answer as text, then make the call. Never send the call alone and leave \
+the answer for the next turn — the user hears silence, and the answer arrives twice as late. \
+If the turn makes more than one call, the one that does the work goes first.
 """
 
 
