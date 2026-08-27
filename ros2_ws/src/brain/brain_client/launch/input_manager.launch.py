@@ -22,8 +22,10 @@ def generate_launch_description():
     # These are service configs that can be overridden at launch
     stt_backend_arg = DeclareLaunchArgument(
         "stt_backend",
-        default_value="elevenlabs_batch",
-        description="STT backend: elevenlabs_batch | gemini (batch) | elevenlabs | openai (realtime)",
+        # Scribe realtime since 2026-08: ~0.75 s after the last word vs ~1.1 s
+        # for batch, same accuracy. Rollback is "elevenlabs_batch".
+        default_value="elevenlabs",
+        description="STT backend: elevenlabs (realtime, default) | elevenlabs_batch | gemini (batch)",
     )
     stt_language_arg = DeclareLaunchArgument(
         "stt_language",
@@ -40,15 +42,15 @@ def generate_launch_description():
         default_value="0.5",
         description="Batch backends: silence needed to close an utterance, in seconds",
     )
-    stt_realtime_vad_threshold_arg = DeclareLaunchArgument(
-        "stt_realtime_vad_threshold",
-        default_value="0.3",
-        description="Realtime backends: vendor VAD sensitivity (lower = more sensitive)",
+    stt_agc_max_db_arg = DeclareLaunchArgument(
+        "stt_agc_max_db",
+        default_value="24.0",
+        description="Software mic gain ceiling in dB (slow AGC toward -6 dBFS peak); 0 disables",
     )
-    stt_realtime_vad_silence_secs_arg = DeclareLaunchArgument(
-        "stt_realtime_vad_silence_secs",
-        default_value="0.7",
-        description="Realtime backends: vendor-side silence that closes a turn, in seconds",
+    stt_filter_background_audio_arg = DeclareLaunchArgument(
+        "stt_filter_background_audio",
+        default_value="true",
+        description="Scribe realtime: server-side gate against nearby conversations and ambient noise",
     )
     stt_energy_threshold_arg = DeclareLaunchArgument(
         "stt_energy_threshold",
@@ -75,21 +77,6 @@ def generate_launch_description():
         default_value="scribe_v2_realtime",
         description="ElevenLabs Scribe realtime model",
     )
-    openai_realtime_model_arg = DeclareLaunchArgument(
-        "openai_realtime_model",
-        default_value="gpt-4o-realtime-preview",
-        description="OpenAI Realtime model for STT",
-    )
-    openai_realtime_url_arg = DeclareLaunchArgument(
-        "openai_realtime_url",
-        default_value="wss://api.openai.com/v1/realtime",
-        description="OpenAI Realtime WebSocket URL",
-    )
-    openai_transcribe_model_arg = DeclareLaunchArgument(
-        "openai_transcribe_model",
-        default_value="gpt-4o-mini-transcribe",
-        description="OpenAI transcription model",
-    )
     cartesia_voice_id_arg = DeclareLaunchArgument(
         "cartesia_voice_id",
         # Same env default as brain_client.launch.py, so .env CARTESIA_VOICE_ID sets both speech paths.
@@ -104,16 +91,13 @@ def generate_launch_description():
             stt_language_arg,
             stt_vad_threshold_arg,
             stt_vad_silence_secs_arg,
-            stt_realtime_vad_threshold_arg,
-            stt_realtime_vad_silence_secs_arg,
+            stt_agc_max_db_arg,
+            stt_filter_background_audio_arg,
             stt_energy_threshold_arg,
             stt_vad_engine_arg,
             elevenlabs_batch_stt_model_arg,
             gemini_stt_model_arg,
             elevenlabs_stt_model_arg,
-            openai_realtime_model_arg,
-            openai_realtime_url_arg,
-            openai_transcribe_model_arg,
             cartesia_voice_id_arg,
             Node(
                 package="brain_client",
@@ -130,11 +114,9 @@ def generate_launch_description():
                         "stt_vad_silence_secs": ParameterValue(
                             LaunchConfiguration("stt_vad_silence_secs"), value_type=float
                         ),
-                        "stt_realtime_vad_threshold": ParameterValue(
-                            LaunchConfiguration("stt_realtime_vad_threshold"), value_type=float
-                        ),
-                        "stt_realtime_vad_silence_secs": ParameterValue(
-                            LaunchConfiguration("stt_realtime_vad_silence_secs"), value_type=float
+                        "stt_agc_max_db": ParameterValue(LaunchConfiguration("stt_agc_max_db"), value_type=float),
+                        "stt_filter_background_audio": ParameterValue(
+                            LaunchConfiguration("stt_filter_background_audio"), value_type=bool
                         ),
                         "stt_energy_threshold": ParameterValue(
                             LaunchConfiguration("stt_energy_threshold"), value_type=float
@@ -143,9 +125,6 @@ def generate_launch_description():
                         "elevenlabs_batch_stt_model": LaunchConfiguration("elevenlabs_batch_stt_model"),
                         "gemini_stt_model": LaunchConfiguration("gemini_stt_model"),
                         "elevenlabs_stt_model": LaunchConfiguration("elevenlabs_stt_model"),
-                        "openai_realtime_model": LaunchConfiguration("openai_realtime_model"),
-                        "openai_realtime_url": LaunchConfiguration("openai_realtime_url"),
-                        "openai_transcribe_model": LaunchConfiguration("openai_transcribe_model"),
                         "cartesia_voice_id": LaunchConfiguration("cartesia_voice_id"),
                     },
                     *settings_params(),
