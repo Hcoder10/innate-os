@@ -16,9 +16,12 @@ from brain_client.inputs.batch_stt import (
     TRANSCRIBE_TIMEOUT_SECS,
     elevenlabs_proxy_transcriber,
     gemini_transcriber,
+    pcm_to_wav,
 )
 
-WAV = b"RIFF-not-really-a-wav"
+# A real container: the ElevenLabs transcriber now parses it to build the
+# raw-PCM upload form.
+WAV = pcm_to_wav(b"\x00\x00" * 240, 24_000)
 
 GEMINI_MODEL = "gemini-3.6-flash"
 
