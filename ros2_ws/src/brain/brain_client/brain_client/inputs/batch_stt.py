@@ -2,19 +2,20 @@
 # Copyright (c) 2026 Innate Inc
 """Batch speech-to-text: local endpointing, one blocking API call per utterance.
 
-The realtime backends (Scribe, OpenAI) do voice-activity detection server-side;
-a batch backend has no session to do it in, so the endpointing moves onto the
-robot. :class:`Endpointer` runs a voiced/unvoiced detector — Silero VAD
+:class:`Endpointer` runs a voiced/unvoiced detector — Silero VAD
 (``brain_client.inputs.vad``) or the energy fallback — over the PCM stream and
-closes an utterance after enough silence; :class:`BatchSttSession` then ships
-the whole clip as WAV through a vendor transcriber — ElevenLabs Scribe batch or
-Gemini ``generateContent``. Both bias toward the ``keyterms`` vocabulary: Scribe
-takes a parameter, Gemini gets the words in its prompt.
+closes an utterance after enough silence. It also drives the realtime Scribe
+backend's manual commits (``workspace/inputs/micro_input.py``); here,
+:class:`BatchSttSession` ships each closed utterance whole through a vendor
+transcriber — ElevenLabs Scribe batch or Gemini ``generateContent``. Both bias
+toward the ``keyterms`` vocabulary: Scribe takes a parameter, Gemini gets the
+words in its prompt.
 """
 
 from __future__ import annotations
 
 import array
+import audioop
 import base64
 import io
 import json
@@ -235,17 +236,39 @@ def sanitize_keyterms(terms: Iterable[str] | str) -> list[str]:
 ELEVENLABS_PROXY_ENDPOINT = "v1/speech-to-text"
 
 
+SCRIBE_UPLOAD_RATE = 16_000
+
+
+def _wav_to_scribe_pcm(wav: bytes) -> bytes:
+    """WAV -> raw 16 kHz mono PCM, Scribe's documented low-latency upload form
+    (file_format=pcm_s16le_16). Measured 2026-08: the raw upload plus skipping
+    timestamps and audio-event tagging takes the round trip from ~1.1 s to
+    ~0.45 s on the same route."""
+    with wave.open(io.BytesIO(wav), "rb") as reader:
+        pcm, rate = reader.readframes(reader.getnframes()), reader.getframerate()
+    if rate == SCRIBE_UPLOAD_RATE:
+        return pcm
+    converted, _ = audioop.ratecv(pcm, 2, 1, rate, SCRIBE_UPLOAD_RATE, None)
+    return converted
+
+
 def elevenlabs_proxy_transcriber(
     proxy: ProxyClient, model: str, language: str, keyterms: Sequence[str] = ()
 ) -> Transcriber:
-    form: dict[str, Any] = {"model_id": model, "language_code": language}
+    form: dict[str, Any] = {
+        "model_id": model,
+        "language_code": language,
+        "file_format": "pcm_s16le_16",
+        "timestamps_granularity": "none",
+        "tag_audio_events": "false",
+    }
     if keyterms:
         # One repeated form field per term — the vendor SDK passes keyterms as a
         # raw list, unlike its other list params, which it JSON-encodes.
         form["keyterms"] = list(keyterms)
 
     def transcribe(wav: bytes) -> str:
-        files = {"file": ("utterance.wav", wav, "audio/wav")}
+        files = {"file": ("utterance.raw", _wav_to_scribe_pcm(wav), "application/octet-stream")}
         with proxy.request_stream(
             "elevenlabs", ELEVENLABS_PROXY_ENDPOINT, files=files, form=form, timeout=TRANSCRIBE_TIMEOUT_SECS
         ) as resp:
