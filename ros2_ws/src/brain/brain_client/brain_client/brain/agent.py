@@ -689,6 +689,7 @@ class BrainAgent:
             streak=self._error_streak,
             running=running.primitive_name if running else None,
             history=self._context.history_len if self._context else 0,
+            tokens=self._context.last_usage if self._context else {},
             uptime=round(time.monotonic() - self._activated_at, 0) if self._state.is_brain_active else 0,
             motion=round(self._camera.motion_peak(), 4),
         )
