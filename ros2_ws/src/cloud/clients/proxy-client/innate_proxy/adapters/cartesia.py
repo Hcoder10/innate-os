@@ -36,6 +36,7 @@ class ProxyCartesiaClient:
             transcript: str,
             voice: dict[str, Any],
             output_format: dict[str, Any],
+            generation_config: dict[str, Any] | None = None,
         ) -> Iterator[bytes]:
             """Generate speech audio as a streaming iterator of byte chunks.
 
@@ -49,6 +50,8 @@ class ProxyCartesiaClient:
                 "voice": voice,
                 "output_format": output_format,
             }
+            if generation_config:
+                body["generation_config"] = generation_config
             with self._parent.request_stream(
                 service_name="cartesia",
                 endpoint="/tts/bytes",
