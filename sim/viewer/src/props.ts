@@ -29,6 +29,8 @@ const MODEL_GRACE_MS = 300;
 /** How the browser should place a prop's glb into its MuJoCo body frame. */
 export interface PropViewerDef {
   glb?: string;
+  /** The model is already in metres, Z-up, and authored around its body origin. */
+  preNormalized?: boolean;
   /** Standard glTF Y-up -> scene Z-up. False for a model already authored Z-up. */
   rotateToZUp?: boolean;
   /** Rescale so fitDim spans this many metres. */
@@ -39,6 +41,61 @@ export interface PropViewerDef {
   origin?: "base" | "center";
   /** CoACD hull soup (float32 xyz) in the body frame, for the collision overlay. */
   hulls?: string;
+  /** Draw the prop title as a browser-only billboard above the model. */
+  nameLabel?: boolean;
+  /** Body-frame height of the billboard's bottom edge. */
+  nameLabelHeightM?: number;
+}
+
+function makeNameLabel(text: string, heightM: number): THREE.Sprite {
+  const fontPx = 52;
+  const padX = 28;
+  const padY = 16;
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("2D canvas is unavailable for prop name label");
+  context.font = `600 ${fontPx}px system-ui, sans-serif`;
+  canvas.width = Math.ceil(context.measureText(text).width + padX * 2);
+  canvas.height = fontPx + padY * 2;
+
+  context.font = `600 ${fontPx}px system-ui, sans-serif`;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillStyle = "rgba(12, 14, 18, 0.82)";
+  context.beginPath();
+  context.roundRect(0, 0, canvas.width, canvas.height, 18);
+  context.fill();
+  context.fillStyle = "white";
+  context.fillText(text, canvas.width / 2, canvas.height / 2 + 1);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false, toneMapped: false }),
+  );
+  const labelHeightM = 0.22;
+  sprite.scale.set(labelHeightM * (canvas.width / canvas.height), labelHeightM, 1);
+  sprite.center.set(0.5, 0);
+  sprite.position.z = heightM;
+  sprite.renderOrder = 10;
+  sprite.userData.isNameLabel = true;
+  return sprite;
+}
+
+function nameLabelOf(root: THREE.Object3D): THREE.Sprite | undefined {
+  return root.children.find((child) => child.userData.isNameLabel) as THREE.Sprite | undefined;
+}
+
+/** Body-frame z just above everything drawn under `root` (label excluded). */
+function labelAnchorZ(root: THREE.Object3D): number {
+  const label = nameLabelOf(root);
+  if (label) root.remove(label);
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(root);
+  if (label) root.add(label);
+  const top = box.isEmpty() ? 0.42 : box.max.z - root.getWorldPosition(new THREE.Vector3()).z;
+  return top + 0.08;
 }
 
 /** One prop as the world server describes it (props.py Prop.manifest). */
@@ -123,6 +180,11 @@ export class PropLibrary {
     for (const [name, root] of this.roots) {
       if (!this.info.has(name)) {
         this.scene.remove(root);
+        const label = nameLabelOf(root);
+        if (label) {
+          label.material.map?.dispose();
+          label.material.dispose();
+        }
         this.roots.delete(name);
         this.firstSeen.delete(name); // re-added later, it gets a fresh grace window
       }
@@ -255,6 +317,11 @@ export class PropLibrary {
       root.add(placeholder);
       if (info.viewer.glb) void this.swapWhenReady(info, root, placeholder);
     }
+    if (info.viewer.nameLabel) {
+      // Measured from the drawn content: `size` is the fallback collision box,
+      // which for a mesh prop bears no relation to the model's height.
+      root.add(makeNameLabel(info.title, info.viewer.nameLabelHeightM ?? labelAnchorZ(root)));
+    }
     this.onChanged();
     return root;
   }
@@ -290,6 +357,8 @@ export class PropLibrary {
     root.remove(placeholder);
     placeholder.geometry.dispose();
     root.add(model);
+    const label = info.viewer.nameLabelHeightM === undefined ? nameLabelOf(root) : undefined;
+    if (label) label.position.z = labelAnchorZ(root); // the placeholder's height was a stand-in
     this.onChanged();
   }
 

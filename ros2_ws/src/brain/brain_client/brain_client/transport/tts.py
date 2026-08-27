@@ -7,16 +7,41 @@ Generates speech audio and plays it through the robot's audio system.
 """
 
 import base64
+import io
 import queue
 import struct
 import subprocess
 import threading
 import time
+import wave
+from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from brain_client.common.logging import UniversalLogger
 from innate_proxy import ProxyClient
 from innate_proxy.adapters.cartesia import ProxyCartesiaClient
+
+
+@dataclass(frozen=True)
+class _Utterance:
+    """One queued clip, with the metadata the flush policy needs."""
+
+    text: str
+    voice_config: dict[str, Any] | None
+    on_start: Callable[[], None] | None
+    on_done: Callable[[bool], None] | None
+    reply_id: str | None  # sentences of one streamed reply share an id
+    protected: bool  # never flushed (environment speech: not our backlog)
+
+
+def _survives_flush(item: _Utterance, playing_reply_id: str | None) -> bool:
+    """A reply the user is hearing holds the floor: its remaining sentences
+    survive a newer reply's flush. Everything else queued is stale backlog."""
+    if item.protected:
+        return True
+    return item.reply_id is not None and item.reply_id == playing_reply_id
 
 
 class TTSHandler:
@@ -68,7 +93,14 @@ class TTSHandler:
 
         # Async speech is played in order by one worker so back-to-back calls
         # aren't dropped; bounded so a runaway say() loop can't build a backlog.
-        self._speech_queue: queue.Queue = queue.Queue(maxsize=16)
+        self._speech_queue: deque[_Utterance | None] = deque()
+        self._speech_queue_maxlen = 16
+        # Guards the queue and the floor together: popping an utterance and
+        # taking the floor for its reply must be one step, or a flush racing
+        # the pop judges siblings against the previous reply's id.
+        self._speech_cv = threading.Condition()
+        self._playing_reply_id: str | None = None
+        self._closing = threading.Event()
         threading.Thread(target=self._speech_loop, daemon=True).start()
 
     def _init_client(self):
@@ -123,13 +155,19 @@ class TTSHandler:
             except Exception as e:
                 self.logger.debug(f"Failed to publish TTS status: {e}")
 
-    def speak_text(self, text: str, voice_config: dict[str, Any] | None = None) -> bool:
+    def speak_text(
+        self,
+        text: str,
+        voice_config: dict[str, Any] | None = None,
+        on_start: Callable[[], None] | None = None,
+    ) -> bool:
         """
         Convert text to speech and play it.
 
         Args:
             text: Text to speak
             voice_config: Optional voice configuration override
+            on_start: Called once the first audio reaches the speaker
 
         Returns:
             True if speech was successfully generated and played, False otherwise
@@ -163,9 +201,9 @@ class TTSHandler:
             }
 
             if self._simulator_mode and self.tts_audio_pub is not None:
-                success = self._synthesize_to_topic(text, voice, t_start)
+                success = self._synthesize_to_topic(text, voice, t_start, on_start)
             else:
-                success = self._synthesize_to_aplay(text, voice, t_start)
+                success = self._synthesize_to_aplay(text, voice, t_start, on_start)
         except Exception as e:
             self.logger.error(f"❌ TTS generation failed: {e}")
             success = False
@@ -191,7 +229,13 @@ class TTSHandler:
             },
         )
 
-    def _synthesize_to_aplay(self, text: str, voice: dict[str, Any], t_start: float) -> bool:
+    def _synthesize_to_aplay(
+        self,
+        text: str,
+        voice: dict[str, Any],
+        t_start: float,
+        on_start: Callable[[], None] | None = None,
+    ) -> bool:
         """Stream speech straight into aplay (real robot's speaker)."""
         text_len = len(text)
         # Volume is managed system-wide by app.cpp via
@@ -236,10 +280,12 @@ class TTSHandler:
                     continue
                 chunk_count += 1
                 total_bytes += len(chunk)
+                q.put(chunk)
                 if t_first_chunk is None:
                     t_first_chunk = time.perf_counter()
                     self.logger.info(f"⏱️ TTS first byte in {(t_first_chunk - t_api) * 1000:.0f}ms")
-                q.put(chunk)
+                    if on_start is not None:
+                        on_start()
 
             t_stream_done = time.perf_counter()
 
@@ -278,7 +324,13 @@ class TTSHandler:
                 pass
             return False
 
-    def _synthesize_to_topic(self, text: str, voice: dict[str, Any], t_start: float) -> bool:
+    def _synthesize_to_topic(
+        self,
+        text: str,
+        voice: dict[str, Any],
+        t_start: float,
+        on_start: Callable[[], None] | None = None,
+    ) -> bool:
         """Synthesize the full clip and publish it (base64 WAV) on /tts/audio.
 
         The sim container has no audio device, so the webapp is the speaker. We
@@ -299,7 +351,17 @@ class TTSHandler:
             self.logger.error("❌ TTS produced no audio")
             return False
 
-        self._publish_audio(bytes(buf))
+        wav = _finalize_wav(bytes(buf))
+        self._publish_audio(wav)
+        if on_start is not None:
+            on_start()
+        # Publishing the full clip is the beginning of playback, not the end.
+        # Keep /tts/is_playing true (and the serialized worker occupied) for
+        # the clip's actual duration so completion callbacks match what the
+        # operator hears in the browser.
+        duration_s = _wav_duration_s(wav)
+        if duration_s > 0:
+            self._closing.wait(duration_s)  # close() must not ride out a whole clip
         self.logger.info(
             f"✅ TTS streamed to browser ({len(text)} chars, {len(buf) / 1024:.0f}KB, "
             f"total={(time.perf_counter() - t_start) * 1000:.0f}ms)"
@@ -307,17 +369,24 @@ class TTSHandler:
         return True
 
     def _publish_audio(self, wav: bytes) -> None:
-        """Publish a finished clip on /tts/audio as base64 WAV for clients to play."""
+        """Publish one already-finalized clip on /tts/audio as base64 WAV."""
         if self.tts_audio_pub is None or not wav:
             return
         from std_msgs.msg import String
 
-        payload = base64.b64encode(_finalize_wav(wav)).decode("ascii")
+        payload = base64.b64encode(wav).decode("ascii")
         self.tts_audio_pub.publish(String(data=payload))
 
     def speak_text_async(
-        self, text: str, voice_config: dict[str, Any] | None = None, replace_pending: bool = False
-    ) -> None:
+        self,
+        text: str,
+        voice_config: dict[str, Any] | None = None,
+        replace_pending: bool = False,
+        on_start: Callable[[], None] | None = None,
+        on_done: Callable[[bool], None] | None = None,
+        reply_id: str | None = None,
+        protected: bool = False,
+    ) -> bool:
         """
         Queue text to be spoken. Utterances play in order, one at a time;
         nothing is dropped unless the queue is full. Returns immediately.
@@ -325,51 +394,135 @@ class TTSHandler:
         Args:
             text: Text to speak
             voice_config: Optional voice configuration override
-            replace_pending: Drop any not-yet-played utterances first. Used for
-                conversational replies, where a newer reply supersedes queued
-                older ones (playing a backlog is what makes the robot talk
-                over the conversation). The currently playing clip finishes.
+            replace_pending: Drop stale not-yet-played utterances first (a
+                queued backlog is what makes the robot talk over the
+                conversation). The reply being spoken keeps the floor: its
+                remaining sentences survive, see _survives_flush.
+            on_start: Optional callback invoked once, when playback begins.
+            on_done: Optional callback invoked once, after playback (and one
+                retry on failure) has finished.
+            reply_id: Groups the sentences of one streamed reply.
+            protected: Exempt from replace_pending flushes.
         """
         if not self.is_available():
             self.logger.debug("🔇 TTS not available, skipping async speech")
-            return
-        try:
+            return False
+        dropped_callbacks = []
+        with self._speech_cv:
             if replace_pending:
-                while True:
-                    try:
-                        stale, _ = self._speech_queue.get_nowait()
-                        self.logger.info(f"🔇 Dropping superseded speech: '{stale[:60]}'")
-                    except queue.Empty:
-                        break
-            self._speech_queue.put_nowait((text, voice_config))
-        except queue.Full:
+                kept = []
+                for stale in self._speech_queue:
+                    if stale is None or _survives_flush(stale, self._playing_reply_id):
+                        kept.append(stale)  # keep close()'s stop sentinel too
+                        continue
+                    self.logger.info(f"🔇 Dropping superseded speech: '{stale.text[:60]}'")
+                    if stale.on_done is not None:
+                        dropped_callbacks.append(stale.on_done)
+                self._speech_queue.clear()
+                self._speech_queue.extend(kept)
+            queued = len(self._speech_queue) < self._speech_queue_maxlen
+            if queued:
+                self._speech_queue.append(_Utterance(text, voice_config, on_start, on_done, reply_id, protected))
+                self._speech_cv.notify()
+        if not queued:
             self.logger.warning(f"🔇 Speech queue full, dropping: '{text[:60]}'")
+        for callback in dropped_callbacks:
+            callback(False)
+        return queued
+
+    def _drop_queued_reply(self, reply_id: str | None) -> None:
+        """Discard sibling sentences after their reply fails terminally."""
+        if reply_id is None:
+            return
+        dropped_callbacks = []
+        with self._speech_cv:
+            kept = []
+            for queued in self._speech_queue:
+                if queued is not None and queued.reply_id == reply_id:
+                    self.logger.info(f"🔇 Dropping remainder of failed reply: '{queued.text[:60]}'")
+                    if queued.on_done is not None:
+                        dropped_callbacks.append(queued.on_done)
+                    continue
+                kept.append(queued)
+            self._speech_queue.clear()
+            self._speech_queue.extend(kept)
+        for callback in dropped_callbacks:
+            callback(False)
+
+    def _once(self, callback: Callable[[], None] | None) -> Callable[[], None] | None:
+        """Guard a playback-start callback: fired at most once, never raising
+        into the synthesis path that calls it."""
+        if callback is None:
+            return None
+        fired = False
+
+        def guarded() -> None:
+            nonlocal fired
+            if fired:
+                return
+            fired = True
+            try:
+                callback()
+            except Exception as e:  # noqa: BLE001 -- a bad listener must not abort playback
+                self.logger.error(f"TTS start callback failed: {e}")
+
+        return guarded
+
+    def _floor_taken_on_start(self, reply_id: str | None, announce: Callable[[], None] | None) -> Callable[[], None]:
+        """Take the floor when the clip becomes audible -- the only moment that
+        earns a reply the right to keep its queued siblings."""
+
+        def taken() -> None:
+            self._set_playing_reply(reply_id)
+            if announce is not None:
+                announce()
+
+        return taken
+
+    def _set_playing_reply(self, reply_id: str | None) -> None:
+        with self._speech_cv:
+            self._playing_reply_id = reply_id
 
     def _speech_loop(self):
         """Single worker: plays queued utterances in order, retrying each once."""
         while True:
-            item = self._speech_queue.get()
+            with self._speech_cv:
+                while not self._speech_queue:
+                    self._speech_cv.wait()
+                item = self._speech_queue.popleft()
             if item is None:
                 break
-            text, voice_config = item
-            if not self.speak_text(text, voice_config):
+            # Synthesis runs before a word is audible, and a failed attempt is
+            # never audible at all. A reply holds the floor over those stretches
+            # only if it takes it when its audio starts -- otherwise a newer
+            # reply's flush spares siblings of speech nobody has heard, and they
+            # play ahead of the newer answer.
+            take_floor = self._floor_taken_on_start(item.reply_id, self._once(item.on_start))
+            success = self.speak_text(item.text, item.voice_config, take_floor)
+            if not success:
+                self._set_playing_reply(None)
                 self.logger.info("🔄 Retrying TTS after 1 second...")
                 time.sleep(1)
-                self.speak_text(text, voice_config)
+                success = self.speak_text(item.text, item.voice_config, take_floor)
+            if not success:
+                self._set_playing_reply(None)
+                self._drop_queued_reply(item.reply_id)
+            if item.on_done is not None:
+                try:
+                    item.on_done(success)
+                except Exception as e:
+                    self.logger.error(f"TTS completion callback failed: {e}")
 
     def close(self):
         """Clean up resources."""
-        # drop any queued backlog, then hand the worker its stop sentinel;
-        # a blocking put() could hang shutdown if the queue is full
-        try:
-            while True:
-                self._speech_queue.get_nowait()
-        except queue.Empty:
-            pass
-        try:
-            self._speech_queue.put_nowait(None)
-        except queue.Full:
-            pass
+        self._closing.set()  # cuts a sim playback wait short (_synthesize_to_topic)
+        with self._speech_cv:
+            dropped = [item.on_done for item in self._speech_queue if item is not None and item.on_done is not None]
+            self._speech_queue.clear()
+            self._speech_queue.append(None)
+            self._speech_cv.notify()
+        for callback in dropped:
+            callback(False)  # a dangling environment-speech ack would wait out its 30s watchdog
         if self._cartesia_client:
             self.logger.info("🔇 TTS handler closed")
             # Cartesia client doesn't need explicit cleanup in sync mode
@@ -392,3 +545,13 @@ def _finalize_wav(data: bytes) -> bytes:
     struct.pack_into("<I", out, 4, len(out) - 8)  # RIFF chunk size
     struct.pack_into("<I", out, data_idx + 4, len(out) - (data_idx + 8))  # data size
     return bytes(out)
+
+
+def _wav_duration_s(data: bytes) -> float:
+    """Duration of one complete WAV, or zero for an undecodable response."""
+    try:
+        with wave.open(io.BytesIO(data), "rb") as wav:
+            rate = wav.getframerate()
+            return wav.getnframes() / rate if rate > 0 else 0.0
+    except (EOFError, wave.Error):
+        return 0.0
