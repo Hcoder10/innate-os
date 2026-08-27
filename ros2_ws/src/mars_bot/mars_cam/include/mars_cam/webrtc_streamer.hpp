@@ -20,6 +20,7 @@
 #include <opencv2/opencv.hpp>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <memory>
@@ -44,7 +45,7 @@ class WebRTCStreamer;  // CameraEncoder back-references the node for the static 
 struct CameraEncoder {
     std::string name;
     std::string live_topic, replay_topic;
-    int pt = 96;      // RTP payload type, unique per camera (audio uses 98)
+    int pt = 96;      // RTP payload type, unique per camera (see cam_pt_for_index)
     int fps = 30;     // encoder framerate (appsrc caps)
     int width = 640;  // encode resolution (appsrc caps); incoming frames are resized to it
     int height = 480;
@@ -216,13 +217,20 @@ class WebRTCStreamer : public rclcpp::Node {
     void publish_status();        // /webrtc/active_streams snapshot at 0.5 Hz
 
     // ---- RTCP-driven sender adaptation (executor thread + webrtcbin stats callbacks) ----
-    // The viewers' RTCP receiver reports carry loss + RTT back to us; a 1 Hz poll turns the worst
-    // of them into two states. GOOD = full bitrate, keyframes on demand only (lowest latency).
-    // DEGRADED = ~60% bitrate + a periodic 1 Hz keyframe, so reference-chain corruption on an
-    // unrepairable link clears in bounded time instead of smearing until a PLI round-trip.
+    // The viewers' RTCP receiver reports carry loss back to us; a 1 Hz poll steers a three-rung
+    // ladder. Viewer loss means the path is overloaded or lossy, so DEGRADED sheds for real —
+    // 40% bitrate x full FEC is ~1200 kbps against GOOD's 1875 — and the climb back is one rung
+    // per clean window, because restoring full load in one step just re-congests the path.
+    enum class AdaptRung { kGood, kRecovering, kDegraded };
     void poll_network_adaptation();
-    static void on_peer_stats(GstPromise* promise, gpointer user_data);   // parses one get-stats reply
-    void apply_adaptation(bool degraded, int loss_promille, int rtt_ms);  // sets vp8enc bitrates + logs
+    static void on_peer_stats(GstPromise* promise, gpointer user_data);    // parses one get-stats reply
+    void apply_adaptation(AdaptRung rung, int loss_promille, int rtt_ms);  // sets vp8enc bitrates + FEC, logs
+    // Bottom-rung FEC is the measured value, not a scaling of the base: on a 4-5%-loss path, 100%
+    // cut frozen time from 17-29 s/min to 0.7 s where lighter FEC stayed keyframe-bound — and live
+    // burst loss persisted at 50% even after the bitrate was properly shed.
+    guint degraded_fec_pct() const {
+        return 100u;
+    }
 
     // ---- Local STUN helper ----
     // Minimal RFC 8489 Binding responder. This gives browsers a robot-local STUN server so their srflx
@@ -274,7 +282,10 @@ class WebRTCStreamer : public rclcpp::Node {
     // webrtcbin stats callbacks, read by the 1 Hz adaptation tick.
     std::atomic<int> rtcp_loss_promille_{-1};
     std::atomic<int> rtcp_rtt_ms_{-1};
-    std::atomic<bool> degraded_{false};  // adaptation state; also read on webrtcbin threads (on-new-transceiver)
+    // The current rung's FEC ladder value (set by apply_adaptation). Atomic because peers joining
+    // mid-rung read it on webrtcbin threads (on-new-transceiver) to start at the fleet's level.
+    std::atomic<guint> current_fec_pct_{25};
+    AdaptRung adapt_rung_ = AdaptRung::kGood;
     int adapt_bad_ticks_ = 0;
     int adapt_good_ticks_ = 0;
 

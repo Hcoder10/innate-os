@@ -357,10 +357,23 @@ select.skill-input {
   /* Short: the page mounts in ~0.4s on robot WiFi, so a 0.4s fade was half the
      perceived load. Long enough to not flash. */
   transition: opacity 0.2s ease;
+  /* Invisible for the first beat: a LAN mount (~0.4s) is removed before the splash
+     ever paints, so only genuinely slow loads (remote/tunneled) get one, fading in. */
+  animation: boot-appear 0.3s ease-out 0.4s backwards;
 }
 
-/* .is-leaving is set by router.js to fade out; then the element is removed. */
+@keyframes boot-appear {
+  from {
+    opacity: 0;
+  }
+}
+
+/* .is-leaving is set by router.js to fade out; then the element is removed.
+   animation: none drops boot-appear's backwards fill so the fade-out transition
+   owns opacity even when the mount lands mid-appear (router's 400ms fallback
+   removal covers the still-invisible case, where no transition fires). */
 .boot-splash.is-leaving {
+  animation: none;
   opacity: 0;
   pointer-events: none;
 }
@@ -397,23 +410,6 @@ select.skill-input {
   }
   100% {
     transform: translateX(350%);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .boot-splash__bar span {
-    animation: boot-pulse 1.4s ease-in-out infinite;
-    width: 100%;
-    transform: none;
-  }
-  @keyframes boot-pulse {
-    0%,
-    100% {
-      opacity: 0.25;
-    }
-    50% {
-      opacity: 0.8;
-    }
   }
 }
 
@@ -5224,6 +5220,23 @@ select.episodes-tool {
   *::after {
     animation: none !important;
     transition: none !important;
+  }
+
+  /* Exceptions: loading indicators are state, not decoration — frozen, a sweep
+     reads as a bar stuck at 100% and a status pulse reads as a hung page.
+     macOS's own progress indicators keep animating under Reduce Motion. These
+     re-declarations beat the star kill on specificity. */
+  .boot-splash {
+    animation: boot-appear 0.3s ease-out 0.4s backwards !important;
+  }
+  .boot-splash.is-leaving {
+    animation: none !important; /* hide instantly; the fade-out transition is killed */
+  }
+  .boot-splash__bar span {
+    animation: boot-sweep 1.1s ease-in-out infinite !important;
+  }
+  .video-status.waiting .video-status-text {
+    animation: breathe 2.2s ease-in-out infinite !important;
   }
 }
 
