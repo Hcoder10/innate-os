@@ -176,7 +176,7 @@ class InputDevice(ABC):
     @property
     def proxy(self) -> ProxyClient | None:
         """
-        Access to proxy services (Cartesia, OpenAI, etc.)
+        Access to proxy services (Cartesia, ElevenLabs, Gemini)
 
         Returns:
             ProxyClient instance or None if not configured

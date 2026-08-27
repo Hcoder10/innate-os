@@ -364,6 +364,26 @@ _migrate_extra_script_dirs() {
     done <<< "$plan"
 }
 
+# The 0.8 STT rework removed the OpenAI backend and the stt_realtime_* knobs.
+# Undeclared ROS params load with no warning at all, so a settings.yaml still
+# carrying them would silently lose its tuning — comment them out loudly here.
+_migrate_stt_settings() {
+    local settings="$1/config/settings.yaml"
+    [ -f "$settings" ] || return 0
+    if grep -qE '^\s*stt_backend:\s*"?openai"?\s*(#.*)?$' "$settings"; then
+        sed -i -E 's|^(\s*)stt_backend:\s*"?openai"?\s*(#.*)?$|\1stt_backend: "elevenlabs"  # was "openai" — backend removed in 0.8, migrated to Scribe realtime|' "$settings"
+        _mig_log "WARNING: settings.yaml pinned stt_backend: openai — that backend was removed; switched to 'elevenlabs' (Scribe realtime)."
+    fi
+    local key
+    for key in stt_realtime_vad_threshold stt_realtime_vad_silence_secs \
+        openai_realtime_model openai_realtime_url openai_transcribe_model; do
+        if grep -qE "^\s*${key}:" "$settings"; then
+            sed -i -E "s|^(\s*)(${key}:.*)$|\1# \2  # removed in 0.8 (vendor VAD retired; local endpointing uses stt_vad_*)|" "$settings"
+            _mig_log "WARNING: settings.yaml sets ${key}, which no longer exists — commented out (local endpointing is tuned by stt_vad_silence_secs / stt_vad_threshold)."
+        fi
+    done
+}
+
 run_user_data_migrations() {
     local repo="${1:?run_user_data_migrations: repo dir required}"
     _migrate_dir_into_workspace "$repo" agents     custom_agents
@@ -375,6 +395,7 @@ run_user_data_migrations() {
     _migrate_extra_script_dirs  "$repo"
     _migrate_primitives_models  "$repo"
     _migrate_nav_state          "$repo"
+    _migrate_stt_settings       "$repo"
 }
 
 # Execute when run directly (not when sourced).

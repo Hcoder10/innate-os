@@ -105,11 +105,14 @@ class SyncRealtimeConnection:
         self._task = None
         self._thread = None
 
-    def send_json(self, data: dict) -> None:
-        """Send a JSON payload (thread-safe)."""
+    def send_json(self, data: dict) -> bool:
+        """Send a JSON payload (thread-safe). False when the socket is down and
+        the payload was dropped — callers sending control frames must know."""
         if self._ws and self._loop and self._loop.is_running():
             raw = json.dumps(data)
             asyncio.run_coroutine_threadsafe(self._ws.send(raw), self._loop)
+            return True
+        return False
 
     def wait_until_connected(self, timeout: float = 10) -> bool:
         """Block until the websocket is open. Returns *True* on success."""

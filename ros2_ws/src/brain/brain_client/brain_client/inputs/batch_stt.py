@@ -120,6 +120,10 @@ class Endpointer:
         self._in_speech = False
         self._silence_bytes = 0
         self._voiced_bytes = 0
+        # True right after a close that discarded its clip (under MIN_VOICED_SECS)
+        # — a realtime caller has already streamed that audio and must still
+        # commit it out of the vendor buffer.
+        self.closed_discarded = False
 
     @property
     def in_speech(self) -> bool:
@@ -131,6 +135,7 @@ class Endpointer:
 
     def feed(self, chunk: bytes) -> bytes | None:
         """Consume one chunk; returns the finished utterance's PCM when one closes."""
+        self.closed_discarded = False
         voiced = self._is_voiced(chunk)
 
         if not self._in_speech:
@@ -162,6 +167,13 @@ class Endpointer:
         while self._pre_roll and self._pre_roll_bytes > PRE_ROLL_SECS * self._bytes_per_sec:
             self._pre_roll_bytes -= len(self._pre_roll.popleft())
 
+    def flush(self) -> bytes | None:
+        """Force-close an open utterance (duck boundary), same length gate as
+        a natural close; None when nothing is open or the clip was too short."""
+        if not self._in_speech:
+            return None
+        return self._close()
+
     def _close(self) -> bytes | None:
         utterance = bytes(self._utterance)
         long_enough = self._voiced_bytes / self._bytes_per_sec >= MIN_VOICED_SECS
@@ -171,6 +183,7 @@ class Endpointer:
         self._pre_roll_bytes = 0
         self._voiced_bytes = 0
         self._silence_bytes = 0
+        self.closed_discarded = not long_enough
         return utterance if long_enough else None
 
 

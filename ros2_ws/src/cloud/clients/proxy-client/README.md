@@ -23,8 +23,8 @@ for chunk in proxy.cartesia.tts.bytes_stream(
 resp = await proxy.request_async("openai", "/v1/chat/completions", json={...})
 
 # Realtime WebSocket (async)
-ws = await proxy.openai.realtime.connect(model="gpt-4o-realtime-preview")
-await ws.send(json.dumps({"type": "input_audio_buffer.append", "audio": "..."}))
+ws = proxy.elevenlabs.realtime.connect_sync(model_id="scribe_v2_realtime", commit_strategy="manual")
+ws.send_json({"message_type": "input_audio_chunk", "audio_base_64": "...", "commit": False})
 async for msg in ws:
     print(msg)
 await ws.close()
@@ -99,14 +99,14 @@ resp = await proxy.request_async("openai", "/v1/chat/completions", json={...})
 ### Cartesia adapter
 
 ```python
-proxy.cartesia.tts.bytes_stream(model_id, transcript, voice, output_format) -> Iterator[bytes]
+proxy.cartesia.tts.bytes_stream(model_id, transcript, voice, output_format, generation_config=None) -> Iterator[bytes]
 ```
 
-### OpenAI adapter
+### ElevenLabs adapter
 
 ```python
-# Async realtime WebSocket
-ws = await proxy.openai.realtime.connect(model, on_message)
+# Scribe realtime WebSocket (sync, callback-driven)
+ws = proxy.elevenlabs.realtime.connect_sync(model_id="scribe_v2_realtime", on_message=on_message)
 ```
 
 ## Error handling

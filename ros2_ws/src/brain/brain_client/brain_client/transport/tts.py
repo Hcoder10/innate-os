@@ -268,6 +268,11 @@ class TTSHandler:
             player.wait()
             t_play_done = time.perf_counter()
 
+            if total_bytes == 0:
+                # aplay -t raw exits 0 on an empty stream, unlike the old WAV
+                # path — a 200-with-no-body must fail so the retry fires.
+                self.logger.error("❌ TTS produced no audio")
+                return False
             if player.returncode == 0:
                 ttfb_ms = (t_first_chunk - t_api) * 1000 if t_first_chunk else 0
                 self.logger.info(

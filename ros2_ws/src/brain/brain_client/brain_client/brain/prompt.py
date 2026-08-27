@@ -48,6 +48,12 @@ that order: write the answer as text, then make the call. Never send the call al
 the answer for the next turn — the user hears silence, and the answer arrives twice as late. \
 If the turn makes more than one call, the one that does the work goes first.
 """
+# The closing paragraph is measured text — edit only with the A/B harness
+# (data/latency_bench/experiments/turn_policy on R7-27). Placement AFTER the
+# directive is load-bearing: 16/16 same-turn answers there vs 5/8 as a Rules
+# bullet. Softening it is a trap: appending an idle-turns exception clause
+# regressed it to 2/8, though it reads as a harmless clarification. Idle
+# silence itself is unharmed by the paragraph (verified 8/8 quiet).
 
 
 def build_system_prompt(directive_prompt: str | None) -> str:

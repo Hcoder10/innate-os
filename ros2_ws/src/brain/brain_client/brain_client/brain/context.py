@@ -73,6 +73,7 @@ class GeminiContext:
     def clear(self) -> None:
         self._history = []
         self._latest_only_turn = None
+        self.last_usage = {}
 
     @property
     def history_len(self) -> int:
@@ -110,9 +111,11 @@ class GeminiContext:
         ``latest_only_images`` mirrors :meth:`absorb`'s: when this message
         carries wrist frames, the previous turn's copies are masked out of the
         request here — absorb's durable prune runs only after the response, so
-        without this every request would ship two wrist frames. History is
-        masked via shallow copies, never mutated (an abandoned turn's orphaned
-        request may still be reading it).
+        without this every request would ship two wrist frames. The masking
+        HERE never mutates history — shallow copies only. Durable mutation
+        (absorb, _prune) runs on the loop thread strictly between generate
+        calls, by which point an abandoned turn's orphaned request has already
+        serialized its body.
         """
         contents = [*self._history, user_message]
         if latest_only_images and self._latest_only_turn is not None:
@@ -149,18 +152,19 @@ class GeminiContext:
                 parts.append(part)
                 if on_speech and part.get("text") and not part.get("thought"):
                     on_speech(part["text"])
-        self.last_usage = {
-            "prompt": usage.get("promptTokenCount", 0),
-            "cached": usage.get("cachedContentTokenCount", 0),
-            "output": usage.get("candidatesTokenCount", 0),
-        }
         if not parts:
             # A 200 stream with no content at all: a safety block, a malformed
             # function call, or an empty candidate. Committing it would record
             # a silent, answerless exchange — raise instead, so the turn's
             # retry path keeps the events queued and the failure is visible.
             raise RuntimeError(f"gemini returned no content: {_empty_stream_reason(last_chunk)}")
-        return {"candidates": [{"content": {"role": "model", "parts": _merged(parts)}}]}
+        # Usage rides the response and is committed by absorb, on the loop
+        # thread: writing self.last_usage here would let an abandoned turn's
+        # orphaned request overwrite the committed turn's counts.
+        return {
+            "candidates": [{"content": {"role": "model", "parts": _merged(parts)}}],
+            "usageMetadata": usage,
+        }
 
     def absorb(self, user_message: dict, response: dict, *, latest_only_images: list[int] | None = None) -> Decision:
         """Commit the exchange to history and distill the model's Decision.
@@ -176,6 +180,12 @@ class GeminiContext:
         prunes the previous turn's copy on the spot.
         """
         decision = _decision_from(response)
+        usage = response.get("usageMetadata") or {}
+        self.last_usage = {
+            "prompt": usage.get("promptTokenCount", 0),
+            "cached": usage.get("cachedContentTokenCount", 0),
+            "output": usage.get("candidatesTokenCount", 0),
+        }
         self._history.append(user_message)
         if latest_only_images:
             if self._latest_only_turn is not None:

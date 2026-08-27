@@ -118,13 +118,12 @@ ELEVENLABS_ERROR_TYPES = frozenset(
 def _scribe_previous_text(keyterms: "list[str]") -> str:
     """Vocabulary as free session context, greedy within Scribe's ~50-char
     guidance for previous_text."""
-    text = "Likely words:"
+    fitted: list[str] = []
     for term in keyterms:
-        grown = f"{text} {term},"
-        if len(grown) > 50:
-            break
-        text = grown
-    return text.rstrip(",") if ":" != text[-1] else ""
+        if len(f"Likely words: {', '.join([*fitted, term])}") > 50:
+            continue  # skip the long term — a shorter one later may still fit
+        fitted.append(term)
+    return f"Likely words: {', '.join(fitted)}" if fitted else ""
 
 
 class SlowAgc:
@@ -142,7 +141,10 @@ class SlowAgc:
 
     @property
     def gain(self) -> float:
-        return AGC_TARGET_PEAK / self._peak
+        # Clamped at unity: boost-only means sub-unity "gain" is never applied,
+        # and reporting it would make the energy detector divide a level UP for
+        # ~16 s after any loud sound.
+        return max(1.0, AGC_TARGET_PEAK / self._peak)
 
     @property
     def gain_db(self) -> float:
@@ -190,15 +192,19 @@ class MicroInput(InputDevice):
         self._scribe_context = ""
         self._scribe_first_chunk = True
         self._last_transcript = ""
-        self._stop_evt = threading.Event()
+        self._stop_evt = threading.Event()  # device shutdown only — never cleared mid-session
+        self._audio_stop: threading.Event | None = None  # current audio thread's own stop
         self._audio_thread = None
+        self._endpoint_lock = threading.Lock()  # endpointer is fed and flushed from two threads
         self._is_robot_talking = False  # For ducking (mic-specific)
         self._reconnect_thread = None
+        self._reconnect_lock = threading.Lock()
+        self._reconnecting = False
         self._is_connected = False
         self._reconnect_delay = 1  # Start with 1 second
         self._max_reconnect_delay = 30  # Max 30 seconds between retries
-        # Consecutive connects without a session_started; only that message
-        # proves success — the socket "connecting" is optimistic bookkeeping.
+        # Connects and closes without an intervening session_started (a close
+        # of a session that did start counts too — it consumed an attempt).
         self._connect_failures = 0
         # Initialize logger wrapper (will be updated when set_logger is called)
         self.logger = UniversalLogger(enabled=False)
@@ -222,7 +228,24 @@ class MicroInput(InputDevice):
         Args:
             is_playing: True if robot is speaking, False otherwise
         """
+        if is_playing and not self._is_robot_talking:
+            self._commit_before_duck()
         self._is_robot_talking = is_playing
+
+    def _commit_before_duck(self) -> None:
+        """The robot is about to talk over an utterance in flight: commit it now.
+
+        Left open, it would be committed mid-duck by the safety commit (the
+        sentence splits in two) or glued to the user's next sentence.
+        """
+        endpointer = self._endpointer
+        if self._backend in BATCH_BACKENDS or endpointer is None:
+            return
+        with self._endpoint_lock:
+            if not endpointer.in_speech:
+                return
+            endpointer.flush()
+        self._commit_scribe()
 
     def on_open(self):
         """Start the audio source and connect to the STT backend.
@@ -233,6 +256,7 @@ class MicroInput(InputDevice):
         if not self.proxy:
             raise RuntimeError("no STT configuration (the proxy client was never created)")
 
+        self._stop_evt.clear()  # a reopened device starts unstopped
         self._connect_failures = 0
         max_gain_db = float(self.proxy.config.get("stt_agc_max_db", DEFAULT_AGC_MAX_DB))
         self._agc = SlowAgc(max_gain_db, CHUNK_DURATION_SEC) if max_gain_db > 0 else None
@@ -442,7 +466,7 @@ class MicroInput(InputDevice):
             "engine": self._vad_engine,
             "last_transcript": self._last_transcript,
         }
-        status = self._endpointing_status()
+        status = self._endpointing_status(client)
         if detector is None or status is None:
             self.send_data(frame, data_type="telemetry")
             return
@@ -460,10 +484,14 @@ class MicroInput(InputDevice):
             data_type="telemetry",
         )
 
-    def _endpointing_status(self) -> "dict | None":
-        """Utterance counters for the panel; None until a session is connected."""
+    def _endpointing_status(self, client) -> "dict | None":
+        """Utterance counters for the panel; None until a session is connected.
+
+        ``client`` is the caller's captured reference — re-reading self.client
+        here would race the reconnect thread nulling it.
+        """
         if self._backend in BATCH_BACKENDS:
-            return self.client.status()
+            return client.status()
         if self._endpointer is None:
             return None
         return {
@@ -514,48 +542,74 @@ class MicroInput(InputDevice):
         return model
 
     def _realtime_keyterms(self) -> list[str]:
-        return [t for t in self._stt_keyterms() if len(t) <= REALTIME_KEYTERM_CHARS][:REALTIME_KEYTERM_MAX]
+        terms = self._stt_keyterms()
+        kept = [t for t in terms if len(t) <= REALTIME_KEYTERM_CHARS][:REALTIME_KEYTERM_MAX]
+        if len(kept) != len(terms):
+            dropped = sorted(set(terms) - set(kept))
+            self.logger.warning(
+                f"⚠️ Realtime Scribe caps keyterms at {REALTIME_KEYTERM_CHARS} chars — dropped: {dropped}"
+            )
+        return kept
 
     def _schedule_reconnect(self):
-        """Schedule a reconnection attempt in a background thread."""
-        if self._reconnect_thread and self._reconnect_thread.is_alive():
-            return  # Already reconnecting
+        """Schedule a reconnection attempt in a background thread.
+
+        The flag (not thread liveness) decides "already reconnecting": a close
+        landing while the previous loop is exiting would see a live thread and
+        be dropped, leaving the mic dead with no reconnect running. The loop's
+        finally re-checks and respawns instead.
+        """
+        with self._reconnect_lock:
+            if self._reconnecting:
+                return
+            self._reconnecting = True
 
         def reconnect_loop():
-            while not self._stop_evt.is_set() and not self._is_connected:
-                self.logger.info(f"🔄 Reconnecting to {self._backend} STT in {self._reconnect_delay}s...")
+            try:
+                while not self._stop_evt.is_set() and not self._is_connected:
+                    self.logger.info(f"🔄 Reconnecting to {self._backend} STT in {self._reconnect_delay}s...")
 
-                # Wait before reconnecting (interruptible)
-                if self._stop_evt.wait(timeout=self._reconnect_delay):
-                    break  # Stop event was set
+                    # Wait before reconnecting (interruptible)
+                    if self._stop_evt.wait(timeout=self._reconnect_delay):
+                        break  # Stop event was set
 
-                try:
-                    # Stop old client if exists
-                    if self.client:
-                        try:
-                            self.client.stop()
-                        except:  # noqa: E722
-                            pass
-                        self.client = None
+                    try:
+                        # Stop old client if exists
+                        if self.client:
+                            try:
+                                self.client.stop()
+                            except:  # noqa: E722
+                                pass
+                            self.client = None
 
-                    # Stop old audio thread
-                    self._stop_evt.set()
-                    if self._audio_thread and self._audio_thread.is_alive():
-                        self._audio_thread.join(timeout=1.0)
-                    self._stop_evt.clear()
+                        # Stop the old audio thread by its own event — the
+                        # device-wide _stop_evt stays untouched, so an on_close
+                        # racing this loop is never un-stopped.
+                        if self._audio_stop is not None:
+                            self._audio_stop.set()
+                        if self._audio_thread and self._audio_thread.is_alive():
+                            self._audio_thread.join(timeout=1.0)
+                        if self._stop_evt.is_set():
+                            break  # the device closed while we were tearing down
 
-                    # Reconnect
-                    self._connect_via_proxy(prefer_batch=self._connect_failures >= RECONNECTS_BEFORE_BATCH_FALLBACK)
+                        # Reconnect
+                        self._connect_via_proxy(prefer_batch=self._connect_failures >= RECONNECTS_BEFORE_BATCH_FALLBACK)
 
-                    if self._is_connected:
-                        self.logger.info("✅ Reconnection successful!")
-                        break
+                        if self._is_connected:
+                            self.logger.info("✅ Reconnection successful!")
+                            break
 
-                except Exception as e:
-                    self._connect_failures += 1
-                    self.logger.error(f"❌ Reconnection failed ({self._connect_failures}): {e}")
-                    # Exponential backoff
-                    self._reconnect_delay = min(self._reconnect_delay * 2, self._max_reconnect_delay)
+                    except Exception as e:
+                        self._connect_failures += 1
+                        self.logger.error(f"❌ Reconnection failed ({self._connect_failures}): {e}")
+                        # Exponential backoff
+                        self._reconnect_delay = min(self._reconnect_delay * 2, self._max_reconnect_delay)
+            finally:
+                with self._reconnect_lock:
+                    self._reconnecting = False
+                    respawn = not self._is_connected and not self._stop_evt.is_set()
+            if respawn:
+                self._schedule_reconnect()  # a close landed during our last lines
 
         self._reconnect_thread = threading.Thread(target=reconnect_loop, daemon=True)
         self._reconnect_thread.start()
@@ -572,7 +626,13 @@ class MicroInput(InputDevice):
         self._send_scribe_audio(chunk, commit=False)
         if self._endpointer is None:
             return
-        if self._endpointer.feed(chunk) is not None:
+        with self._endpoint_lock:
+            closed = self._endpointer.feed(chunk)
+            discarded = self._endpointer.closed_discarded
+        # A discarded close (cough, click — under MIN_VOICED_SECS) was still
+        # streamed, so commit it out of the vendor buffer too, or it comes back
+        # glued to the front of the next real transcript.
+        if closed is not None or discarded:
             self._commit_scribe()
         elif self._safety_commit_due() and not self._vad_detector.voiced:
             # Any unvoiced chunk will do: waiting for the utterance to close
@@ -580,7 +640,7 @@ class MicroInput(InputDevice):
             # split at a pause cannot cut mid-word.
             self._commit_scribe()
 
-    def _send_scribe_audio(self, chunk: bytes, commit: bool) -> None:
+    def _send_scribe_audio(self, chunk: bytes, commit: bool) -> bool:
         message = {
             "message_type": "input_audio_chunk",
             "audio_base_64": base64.b64encode(chunk).decode("ascii"),
@@ -588,16 +648,23 @@ class MicroInput(InputDevice):
             "sample_rate": DEFAULT_SAMPLE_RATE,
         }
         # Only the session's first chunk may carry context — later chunks with
-        # previous_text are rejected outright.
+        # previous_text are rejected outright (so a keep-warm silence frame that
+        # happens to open the session must spend it; the vendor gives no other slot).
         if self._scribe_first_chunk:
             self._scribe_first_chunk = False
             if self._scribe_context:
                 message["previous_text"] = self._scribe_context
-        self.client.send_json(message)
+        sent = self.client.send_json(message)
         self._streamed_bytes += len(chunk)
+        return sent
 
     def _commit_scribe(self) -> None:
-        self._send_scribe_audio(b"", commit=True)
+        if not self._send_scribe_audio(b"", commit=True):
+            # The socket died under us. The vendor buffer dies with the session,
+            # so the utterance is unrecoverable — say so instead of losing it
+            # silently, and leave the counters for the reconnect to reset.
+            self.logger.error("❌ Scribe commit could not be sent (socket down) — utterance lost")
+            return
         self._commit_at = time.monotonic()
         self._streamed_bytes = 0
 
@@ -607,20 +674,28 @@ class MicroInput(InputDevice):
     def _keep_warm(self, nbytes: int) -> None:
         # The endpointer is deliberately not fed here: a paused stream must not
         # count as silence (the batch endpointer holds the same invariant).
+        # in_speech is False during a duck — _commit_before_duck closed any open
+        # utterance — so this can never commit mid-sentence; the guard is belt.
         if self._backend in BATCH_BACKENDS or self.client is None:
             return
         self._send_scribe_audio(b"\x00" * nbytes, commit=False)
-        if self._safety_commit_due():
+        if self._safety_commit_due() and (self._endpointer is None or not self._endpointer.in_speech):
             self._commit_scribe()
 
     def _start_audio_thread(self):
-        """Start the audio streaming thread."""
-        self._stop_evt.clear()
+        """Start the audio streaming thread.
+
+        Each thread gets its own stop event: a predecessor that outlived its
+        join stays stopped instead of being resurrected by a shared flag.
+        """
+        stop = self._audio_stop = threading.Event()
 
         def audio_loop():
             if not self.client.wait_until_connected(timeout=10):
                 self.logger.error("WebSocket didn't connect in time")
                 return
+            if stop.is_set() or self._stop_evt.is_set():
+                return  # stopped while we waited on the handshake
 
             self.logger.info("🎧 Audio streaming thread started")
 
@@ -628,7 +703,7 @@ class MicroInput(InputDevice):
             chunks_seen = 0
             empty_count = 0
             ducking_logged = False
-            while not self._stop_evt.is_set():
+            while not stop.is_set() and not self._stop_evt.is_set():
                 try:
                     chunk = self.mic.queue.get(timeout=0.1)
                     empty_count = 0  # Reset on successful get
@@ -680,13 +755,17 @@ class MicroInput(InputDevice):
     def on_close(self):
         """Stop microphone and disconnect."""
         self._stop_evt.set()
+        if self._audio_stop is not None:
+            self._audio_stop.set()
         self._is_connected = False  # Prevent reconnection attempts
+
+        # Reconnect thread first — it may still be creating the audio thread
+        # this method is about to join.
+        if self._reconnect_thread:
+            self._reconnect_thread.join(timeout=2.0)
 
         if self._audio_thread:
             self._audio_thread.join(timeout=1.0)
-
-        if self._reconnect_thread:
-            self._reconnect_thread.join(timeout=1.0)
 
         if self.mic:
             try:

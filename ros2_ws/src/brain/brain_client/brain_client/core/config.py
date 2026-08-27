@@ -46,7 +46,7 @@ class BrainConfig:
     idle_turn_interval: float  # seconds between looks when no skill is running
     supervision_turn_interval: float  # seconds between looks while a skill runs
     history_max_entries: int  # conversation entries kept for the model
-    history_max_image_turns: int  # newest turns keeping head-camera frames (wrist keeps only the newest)
+    history_max_image_turns: int  # frame-turn floor: compaction keeps 1-2x this many (wrist keeps only the newest)
 
     # --- Timing ---
     scan_stale_after_sec: float

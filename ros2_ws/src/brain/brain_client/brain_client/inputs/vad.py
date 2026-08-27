@@ -72,6 +72,13 @@ class SileroModel:
         self._context = window[-CONTEXT_SAMPLES:]
         return float(prob[0, 0])
 
+    def reset(self) -> None:
+        """Zero the RNN state and context: a new audio stream must not score its
+        first windows against the previous stream's hidden state (measured: stale
+        state marks ~0.3 s of room tone as speech — a phantom utterance)."""
+        self._state = np.zeros((2, 1, 128), dtype=np.float32)
+        self._context = np.zeros(CONTEXT_SAMPLES, dtype=np.float32)
+
 
 class SileroDetector:
     """Chunk-level voiced decision: resample mic PCM to the model rate, window, hysteresis.
@@ -115,6 +122,7 @@ def silero_detector(
         return None
     try:
         model = _shared_model(model_path)
+        model.reset()  # the cached session still carries the last stream's RNN state
     except Exception as e:  # noqa: BLE001 — a missing runtime must degrade to energy VAD, not kill the mic
         logger.error(f"Silero VAD unavailable ({e}) — falling back to energy VAD")
         return None
