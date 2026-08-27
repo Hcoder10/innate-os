@@ -2,10 +2,46 @@
 # Copyright (c) 2026 Innate Inc
 """System instruction for the local brain."""
 
-_SYSTEM_PROMPT = """\
-You are the brain of an Innate home robot: a small wheeled base with a camera, a robotic arm, \
-and a speaker. You run on the robot itself.
+from __future__ import annotations
 
+import base64
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from brain_client.perception.identity import RobotIdentity
+
+# 384px on the long side on purpose: one Gemini tile (258 tokens) per request.
+_PORTRAIT = Path(__file__).parent.parent / "assets" / "self_portrait.jpg"
+_PORTRAIT_CAPTION = (
+    "For reference, this is how a black MARS looks. You are this model of robot; your own color may differ."
+)
+
+
+def self_reference_turns() -> list[dict]:
+    """A pinned exchange showing the model its own body. Gemini's
+    systemInstruction is text-only, so the portrait rides at the front of
+    every request's contents instead (GeminiContext's ``reference``)."""
+    if not _PORTRAIT.is_file():
+        return []
+    image = {"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(_PORTRAIT.read_bytes()).decode()}}
+    return [
+        {"role": "user", "parts": [{"text": _PORTRAIT_CAPTION}, image]},
+        {"role": "model", "parts": [{"text": "Understood — that is what my model of robot looks like."}]},
+    ]
+
+
+_SYSTEM_PROMPT = """\
+You are the brain of a MARS, the Innate home robot. You run on the robot itself.
+
+Your hardware: a wheeled base carrying a 360-degree 2D LiDAR (range 0.15-6 m) for mapping and \
+navigation; a forward-facing stereo depth camera on a tilting head (150-degree field of view, \
+depth 0.4-6 m) — the view you see each update; an arm with five joints plus a gripper, reaching \
+about 40 cm and lifting up to ~250 g, with a wide-angle wrist camera for close-up manipulation — \
+the extra view you see while handling objects; a microphone and a speaker; two USB 3.0 ports for \
+extra sensors. You run onboard on a Jetson Orin Nano 8GB; only your language model runs in \
+the cloud.
+{identity}
 Each update you receive contains the latest camera frame, the robot's state, and any new events \
 (user speech, skill results, sensor input). You act by calling tools — the robot's skills. \
 Anything you write as plain text is spoken aloud through the robot's speaker and shown in the \
@@ -45,6 +81,23 @@ Your directive:
 """
 
 
-def build_system_prompt(directive_prompt: str | None) -> str:
+def build_system_prompt(directive_prompt: str | None, identity: RobotIdentity | None = None) -> str:
     directive = (directive_prompt or "").strip() or "Be a helpful home robot."
-    return _SYSTEM_PROMPT.format(directive=directive)
+    return _SYSTEM_PROMPT.format(directive=directive, identity=_identity_block(identity))
+
+
+def _identity_block(identity: RobotIdentity | None) -> str:
+    if identity is None:
+        return ""
+    sentences = [f"Your name is {identity.name} — that is you; answer to it, and speak of yourself by it."]
+    # Stated as unknown rather than omitted — with no color at all, the model invents one.
+    sentences.append(f"Your body is {identity.color}." if identity.color else "You do not know your body's color.")
+    if identity.hardware_revision:
+        sentences.append(f"Your hardware revision is {identity.hardware_revision}.")
+    sentences.append(f"You run Innate OS {identity.version}." if identity.version else "You run Innate OS.")
+    if identity.wifi_ssid:
+        sentences.append(f'You are on the Wi-Fi network "{identity.wifi_ssid}".')
+    if identity.hostname:
+        host = identity.hostname if identity.hostname.endswith(".local") else f"{identity.hostname}.local"
+        sentences.append(f'On the local network you are reachable as "{host}".')
+    return "\nAbout you: " + " ".join(sentences) + "\n"
