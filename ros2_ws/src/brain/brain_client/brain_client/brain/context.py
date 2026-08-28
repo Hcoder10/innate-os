@@ -51,13 +51,23 @@ class GeminiContext:
     """Bounded model context for Gemini: one generate() per agent turn."""
 
     def __init__(
-        self, transport: Transport, *, model: str, thinking_level: str, max_history: int, max_image_turns: int
+        self,
+        transport: Transport,
+        *,
+        model: str,
+        thinking_level: str,
+        max_history: int,
+        max_image_turns: int,
+        reference: list[dict] | None = None,
     ):
         self._transport = transport
         self._model = model
         self._thinking_level = thinking_level
         self._max_history = max_history
         self._max_image_turns = max_image_turns
+        # Pinned turns (the robot's self-portrait) prepended to every request
+        # but never stored in history — immune to pruning and clear().
+        self._reference = reference or []
         self._history: list[dict] = []
         # The one history turn still carrying latest-only frames (wrist camera),
         # as (content, part indexes) — absorbing a newer set prunes these.
@@ -117,7 +127,7 @@ class GeminiContext:
         calls, by which point an abandoned turn's orphaned request has already
         serialized its body.
         """
-        contents = [*self._history, user_message]
+        contents = [*self._reference, *self._history, user_message]
         if latest_only_images and self._latest_only_turn is not None:
             stale, indexes = self._latest_only_turn
             masked = {

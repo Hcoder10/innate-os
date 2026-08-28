@@ -123,14 +123,21 @@ std::string WebRTCStreamer::video_encode_branch(const CameraEncoder& cam) const 
            "videoconvert ! "
            "vp8enc name=enc_" +
            cam.name + " deadline=1 target-bitrate=" + std::to_string(cam.bitrate_kbps * 1000) +
-           " cpu-used=4 error-resilient=partitions keyframe-max-dist=" + std::to_string(cam.fps * 4) +
+           // error-resilient=default is libvpx's loss-resilience mode (partitions only splits token
+           // partitions — a no-op with one partition). max-intra-bitrate caps an IDR at 3x the per-frame
+           // budget so a recovery keyframe can't eat the 600 ms CBR buffer and slam the quantizer.
+           " cpu-used=4 error-resilient=default max-intra-bitrate=300 keyframe-max-dist=" +
+           std::to_string(cam.fps * 4) +
            " end-usage=cbr buffer-size=600 buffer-initial-size=400 buffer-optimal-size=500 ! "
            // picture-id-mode is required for browsers: without picture IDs Chrome can't prove frame
            // continuity after loss and discards every delta frame until the next keyframe — NACK/RTX
            // repair lands and is thrown away (measured: 5 fps + keyframe cycling at 5% loss).
+           // mtu sized for tunneled paths (Tailscale/WireGuard: 1280 - 28 IP/UDP = 1252 on the wire):
+           // media +1 RED +10 SRTP and the ~14-bytes-bigger FEC packets must all fit. The 1400 default
+           // fragmented every full packet, and either lost fragment kills it — measured ~2x native loss.
            "rtpvp8pay name=pay_" +
            cam.name + " pt=" + std::to_string(cam.pt) + " ssrc=" + std::to_string(cam.ssrc) +
-           " picture-id-mode=15-bit ! "
+           " picture-id-mode=15-bit mtu=1200 ! "
            "appsink name=sink_" +
            cam.name + " emit-signals=true sync=false async=false max-buffers=2 drop=true ";
 }
@@ -353,13 +360,15 @@ bool WebRTCStreamer::build_audio_pipeline() {
         src += " device=\"" + audio_capture_device_ + "\"";
     }
     // mic -> opus -> rtp -> appsink (the fan-out tap). Encoded once for all peers; matches the RTP caps
-    // each peer's transport audio appsrc declares (OPUS/48000/pt98).
+    // each peer's transport audio appsrc declares (OPUS/48000, kAudioPt).
     std::string desc = src +
                        " do-timestamp=true ! "
                        "queue leaky=downstream max-size-buffers=10 max-size-time=0 max-size-bytes=0 ! "
                        "audioconvert ! audioresample ! audio/x-raw,rate=48000,channels=1 ! "
                        "opusenc bitrate=24000 audio-type=voice ! "
-                       "rtpopuspay name=pay_audio pt=98 ! "
+                       "rtpopuspay name=pay_audio pt=" +
+                       std::to_string(kAudioPt) +
+                       " ! "
                        "appsink name=sink_audio emit-signals=true sync=false async=false max-buffers=4 drop=true ";
     GError* error = nullptr;
     audio_pipeline_ = gst_parse_launch(desc.c_str(), &error);

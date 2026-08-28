@@ -232,7 +232,7 @@ export function createMap(root, opts = {}) {
   const backBtn = makeButton(ICONS.back, "");
   backBtn.classList.add("map-btn-compact");
   backBtn.title = "Back";
-  const locateBtn = makeButton(ICONS.locate, "Locate", "auto or manual");
+  const locateBtn = makeButton(ICONS.locate, "Relocate", "auto or manual");
   locateBtn.title = `${LOCALIZE_SERVICE} · ${SET_INITIAL_POSE_SERVICE}`;
   const autoBtn = makeButton(ICONS.auto, "Auto", "match lidar to the map");
   autoBtn.title = LOCALIZE_SERVICE;

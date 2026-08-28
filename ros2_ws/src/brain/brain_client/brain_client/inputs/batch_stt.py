@@ -41,6 +41,14 @@ if TYPE_CHECKING:
 Transcriber = Callable[[bytes], str]
 """WAV bytes -> transcript text; "" when nothing was said."""
 
+Keyterms = Sequence[str] | Callable[[], Sequence[str]]
+"""A fixed bias vocabulary, or a supplier re-read per utterance — so a robot
+rename reaches the next transcription without restarting the session."""
+
+
+def _resolve_keyterms(keyterms: Keyterms) -> Sequence[str]:
+    return keyterms() if callable(keyterms) else keyterms
+
 
 class VoicedDetector(Protocol):
     """One PCM chunk -> does it contain speech?
@@ -251,6 +259,14 @@ def sanitize_keyterms(terms: Iterable[str] | str) -> list[str]:
     return kept[:1000]
 
 
+def keyterms_with_name(terms: Sequence[str], name: str | None) -> list[str]:
+    """The vocabulary with the robot's live name biased first. An empty
+    vocabulary stays empty — it means biasing (and its surcharge) is off."""
+    if not terms or not name:
+        return list(terms)
+    return sanitize_keyterms([name, f"hey {name}", *terms])
+
+
 # ---------- ElevenLabs Scribe batch ----------
 
 ELEVENLABS_PROXY_ENDPOINT = "v1/speech-to-text"
@@ -274,22 +290,23 @@ def _wav_to_scribe_pcm(wav: bytes) -> bytes:
     return np.clip(samples * 32768.0, -32768, 32767).astype(np.int16).tobytes()
 
 
-def elevenlabs_proxy_transcriber(
-    proxy: ProxyClient, model: str, language: str, keyterms: Sequence[str] = ()
-) -> Transcriber:
-    form: dict[str, Any] = {
+def elevenlabs_proxy_transcriber(proxy: ProxyClient, model: str, language: str, keyterms: Keyterms = ()) -> Transcriber:
+    base_form: dict[str, Any] = {
         "model_id": model,
         "language_code": language,
         "file_format": "pcm_s16le_16",
         "timestamps_granularity": "none",
         "tag_audio_events": "false",
     }
-    if keyterms:
-        # One repeated form field per term — the vendor SDK passes keyterms as a
-        # raw list, unlike its other list params, which it JSON-encodes.
-        form["keyterms"] = list(keyterms)
 
     def transcribe(wav: bytes) -> str:
+        # Copied per call, not mutated: a rename can empty the vocabulary, and a
+        # keyterms key left over from an earlier utterance would outlive it.
+        form = dict(base_form)
+        if terms := _resolve_keyterms(keyterms):
+            # One repeated form field per term — the vendor SDK passes keyterms as a
+            # raw list, unlike its other list params, which it JSON-encodes.
+            form["keyterms"] = list(terms)
         files = {"file": ("utterance.raw", _wav_to_scribe_pcm(wav), "application/octet-stream")}
         with proxy.request_stream(
             "elevenlabs", ELEVENLABS_PROXY_ENDPOINT, files=files, form=form, timeout=TRANSCRIBE_TIMEOUT_SECS
@@ -322,11 +339,11 @@ def _says_no_speech(text: str) -> bool:
     return text.strip("'\".,!? \t") == NO_SPEECH
 
 
-def gemini_transcriber(rest: GeminiRest, model: str, language: str, keyterms: Sequence[str] = ()) -> Transcriber:
-    hint = f" These words are likely, so prefer them over similar-sounding ones: {', '.join(keyterms)}."
-    prompt = _GEMINI_PROMPT.format(language=language, keyterms=hint if keyterms else "")
-
+def gemini_transcriber(rest: GeminiRest, model: str, language: str, keyterms: Keyterms = ()) -> Transcriber:
     def transcribe(wav: bytes) -> str:
+        terms = _resolve_keyterms(keyterms)
+        hint = f" These words are likely, so prefer them over similar-sounding ones: {', '.join(terms)}."
+        prompt = _GEMINI_PROMPT.format(language=language, keyterms=hint if terms else "")
         body: dict[str, Any] = {
             "contents": [
                 {

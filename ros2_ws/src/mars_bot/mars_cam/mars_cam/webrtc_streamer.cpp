@@ -108,6 +108,7 @@ WebRTCStreamer::WebRTCStreamer(const rclcpp::NodeOptions& options)
     video_nack_ = this->get_parameter("video_nack").as_bool();
     video_fec_percentage_ =
         static_cast<guint>(std::clamp(this->get_parameter("video_fec_percentage").as_int(), int64_t{0}, int64_t{100}));
+    current_fec_pct_ = video_fec_percentage_;
     enable_local_stun_ = this->get_parameter("enable_local_stun").as_bool();
     local_stun_port_ = static_cast<int>(this->get_parameter("local_stun_port").as_int());
     rtcp_inactivity_timeout_s_ = this->get_parameter("rtcp_inactivity_timeout_s").as_double();
@@ -186,6 +187,11 @@ void WebRTCStreamer::configure_cameras() {
     };
     const auto names = this->declare_parameter<std::vector<std::string>>("cameras", {"main", "arm"});
     for (const auto& name : names) {
+        if (cameras_.size() >= kMaxCameras) {
+            RCLCPP_ERROR(this->get_logger(), "Camera '%s' dropped: the RTP payload-type space fits %zu cameras",
+                         name.c_str(), kMaxCameras);
+            continue;
+        }
         std::string def_live, def_replay;
         int def_fps = 30;
         if (auto it = kDefaults.find(name); it != kDefaults.end()) {
@@ -339,9 +345,11 @@ void WebRTCStreamer::on_peer_stats(GstPromise* promise, gpointer user_data) {
                 type != GST_WEBRTC_STATS_REMOTE_INBOUND_RTP) {
                 return TRUE;
             }
-            // rb-fractionlost is the RR's 0-255 fraction; round-trip-time is seconds (double).
-            if (guint fl = 0; gst_structure_get_uint(s, "rb-fractionlost", &fl)) {
-                const int promille = static_cast<int>(fl * 1000 / 255);
+            // fraction-lost is the RR's loss as a double in [0,1); round-trip-time is seconds (double).
+            // (rb-fractionlost exists only on webrtcbin's INTERNAL input stats, never in this reply —
+            // reading it here left the controller loss-blind, adapting on RTT alone.)
+            if (gdouble fl = 0.0; gst_structure_get_double(s, "fraction-lost", &fl)) {
+                const int promille = static_cast<int>(fl * 1000.0);
                 if (promille > self->rtcp_loss_promille_.load(std::memory_order_relaxed)) {
                     self->rtcp_loss_promille_.store(promille, std::memory_order_relaxed);
                 }
@@ -358,22 +366,28 @@ void WebRTCStreamer::on_peer_stats(GstPromise* promise, gpointer user_data) {
     gst_promise_unref(promise);
 }
 
-void WebRTCStreamer::apply_adaptation(bool degraded, int loss_promille, int rtt_ms) {
-    degraded_ = degraded;
+void WebRTCStreamer::apply_adaptation(AdaptRung rung, int loss_promille, int rtt_ms) {
+    adapt_rung_ = rung;
+    // Shedding is the point: the old DEGRADED (60% bitrate x 100% FEC) offered 1800 kbps against
+    // GOOD's 1875 — a 4% cut with double the packets, feeding the congestion it answered.
+    const int tenths = rung == AdaptRung::kDegraded ? 4 : rung == AdaptRung::kRecovering ? 7 : 10;
     for (auto& cam : cameras_) {
         GstElement* enc = gst_bin_get_by_name(GST_BIN(encode_pipeline_), ("enc_" + cam->name).c_str());
         if (!enc) {
             continue;
         }
-        const int bps = cam->bitrate_kbps * 1000 * (degraded ? 6 : 10) / 10;
+        const int bps = cam->bitrate_kbps * 1000 * tenths / 10;
         g_object_set(enc, "target-bitrate", bps, nullptr);
         gst_object_unref(enc);
     }
-    // FEC strength follows the state: webrtcbin binds the transceiver's fec-percentage to the live
-    // rtpulpfecenc, so full protection is only paid for while a viewer needs it (measured: 100%
-    // took a 4-5%-loss path from 17-29 s frozen/min to 0.7 s; 25% stayed keyframe-bound).
+    // FEC is graduated down the ladder: full at the bottom (see degraded_fec_pct — residual burst
+    // loss on the remote leg is what FEC exists for, and 100% of a 40% bitrate is still cheap),
+    // 2x base while RECOVERING probes upward, base at GOOD.
+    const guint pct = rung == AdaptRung::kDegraded     ? degraded_fec_pct()
+                      : rung == AdaptRung::kRecovering ? std::min(100u, video_fec_percentage_ * 2)
+                                                       : video_fec_percentage_;
+    current_fec_pct_ = pct;
     if (video_fec_percentage_ > 0) {
-        const guint pct = degraded ? 100u : video_fec_percentage_;
         std::lock_guard<std::mutex> lock(peers_mutex_);
         for (auto& kv : peers_) {
             for (size_t i = 0; i < kv.second->videos.size(); ++i) {
@@ -386,13 +400,16 @@ void WebRTCStreamer::apply_adaptation(bool degraded, int loss_promille, int rtt_
             }
         }
     }
-    const char* state = degraded ? "DEGRADED: 60% bitrate + 1 Hz keyframes + full FEC"
-                                 : "GOOD: full bitrate, on-demand keyframes, base FEC";
+    const char* state = rung == AdaptRung::kDegraded     ? "DEGRADED: 40% bitrate + full FEC"
+                        : rung == AdaptRung::kRecovering ? "RECOVERING: 70% bitrate + 2x FEC"
+                                                         : "GOOD: full bitrate + base FEC";
     if (loss_promille < 0 && rtt_ms < 0) {
         RCLCPP_INFO(this->get_logger(), "Network adaptation -> %s (no viewer reports)", state);
+    } else if (loss_promille < 0) {
+        RCLCPP_INFO(this->get_logger(), "Network adaptation -> %s (viewer loss n/a, rtt %d ms)", state, rtt_ms);
     } else {
         RCLCPP_INFO(this->get_logger(), "Network adaptation -> %s (viewer loss %.1f%%, rtt %d ms)", state,
-                    loss_promille < 0 ? 0.0 : loss_promille / 10.0, rtt_ms);
+                    loss_promille / 10.0, rtt_ms);
     }
 }
 
@@ -414,41 +431,36 @@ void WebRTCStreamer::poll_network_adaptation() {
         }
     }
 
-    // Last viewer gone: back to GOOD now, so the next peer (LAN included) isn't served a DEGRADED
-    // state frozen from a link that no longer exists.
+    // Last viewer gone: back to GOOD now, so the next peer (LAN included) isn't served a rung
+    // frozen from a link that no longer exists.
     if (!any_peers) {
         adapt_bad_ticks_ = 0;
         adapt_good_ticks_ = 0;
-        if (degraded_) {
-            apply_adaptation(false, loss, rtt);
+        if (adapt_rung_ != AdaptRung::kGood) {
+            apply_adaptation(AdaptRung::kGood, loss, rtt);
         }
         return;
     }
 
-    // Enter DEGRADED fast (2 s of trouble), leave slowly (15 s without it) — flapping re-keyframes
-    // hurt more than staying conservative. clean is exactly !bad: any value band between the two
-    // would freeze the exit counter and make DEGRADED permanent (e.g. a steady 200 ms RTT path).
-    // A tick with no report leaves the counters unchanged (get-stats answers land between ticks).
-    const bool report = loss >= 0 || rtt >= 0;
-    const bool bad = loss >= 30 || rtt >= 250;
+    // Drop to the bottom rung fast (2 s of loss), climb ONE rung per 15 clean s — a one-step
+    // DEGRADED→GOOD exit doubles the offered load at once and re-congests the path (measured:
+    // 34 flips/hour on a tunneled link). Loss-only: RTT is a property of the path, not damage;
+    // a tick without a loss measurement leaves the counters unchanged (RTT alone can't prove
+    // the link clean). Recovery keyframes stay purely PLI-driven on every rung — a forced IDR
+    // is the most expensive burst a congested link can be handed. Note get-stats repeats the last
+    // RR's fraction-lost until the next RR lands, so on sparse-RTCP paths the 2-tick entry can be
+    // one bad report sampled twice — a floor, not two independent reports.
+    const bool report = loss >= 0;
+    const bool bad = loss >= 30;
     if (report) {
         adapt_bad_ticks_ = bad ? adapt_bad_ticks_ + 1 : 0;
         adapt_good_ticks_ = bad ? 0 : adapt_good_ticks_ + 1;
     }
-    if (!degraded_ && adapt_bad_ticks_ >= 2) {
-        apply_adaptation(true, loss, rtt);
-    } else if (degraded_ && adapt_good_ticks_ >= 15) {
-        apply_adaptation(false, loss, rtt);
-    }
-
-    // Bounded corruption age while DEGRADED: a keyframe per second per flowing camera, no PLI
-    // round-trip needed. maybe_force_keyframe's 500 ms throttle also coalesces this with real PLIs.
-    if (degraded_) {
-        for (auto& cam : cameras_) {
-            if (cam->want.load(std::memory_order_relaxed) > 0) {
-                maybe_force_keyframe(cam->name);
-            }
-        }
+    if (adapt_bad_ticks_ >= 2 && adapt_rung_ != AdaptRung::kDegraded) {
+        apply_adaptation(AdaptRung::kDegraded, loss, rtt);
+    } else if (adapt_good_ticks_ >= 15 && adapt_rung_ != AdaptRung::kGood) {
+        adapt_good_ticks_ = 0;  // the next rung needs its own clean window
+        apply_adaptation(adapt_rung_ == AdaptRung::kDegraded ? AdaptRung::kRecovering : AdaptRung::kGood, loss, rtt);
     }
 }
 

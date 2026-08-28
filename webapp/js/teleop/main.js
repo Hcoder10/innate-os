@@ -43,7 +43,7 @@ const dbg = { ros, drive, session: null };
 // Resolved once at import time (the router's dynamic import awaits it):
 // WebRTC for real robots, the Three.js SimSession in simulation (see
 // robotSession.js).
-const { createSession, createStage } = await robotSessionFactory();
+const { createSession, releaseSession, createStage } = await robotSessionFactory();
 
 /** @param {HTMLElement} stage */
 export function mount(stage) {
@@ -55,6 +55,10 @@ export function mount(stage) {
  * @returns {{ destroy: () => void }}
  */
 function buildCockpit(root) {
+  // Hardware shows the telemetry card in the map's top-left corner; expose the
+  // mode to CSS so map controls can clear it without moving the sim layout.
+  root.classList.toggle("teleop-hardware", !config.simControls);
+
   const session = createSession();
   dbg.session = session;
 
@@ -107,7 +111,7 @@ function buildCockpit(root) {
       // navigating away doesn't leave one floating over the next page.
       dismissAllConfirms();
       for (const part of parts) part.destroy();
-      session.destroy();
+      releaseSession(session);
       root.innerHTML = "";
     },
   };

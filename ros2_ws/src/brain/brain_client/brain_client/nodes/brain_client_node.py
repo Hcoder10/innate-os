@@ -40,6 +40,7 @@ from brain_client.memory.store import MemoryStore
 from brain_client.perception.battery import BatteryMonitor
 from brain_client.perception.camera import CameraCapture
 from brain_client.perception.gaze_control import GazeController
+from brain_client.perception.identity import IdentityMonitor
 from brain_client.perception.pose_tracking import PoseTracker
 from brain_client.perception.scan_health import ScanHealthMonitor
 from brain_client.robot.arm_recovery import ArmRecovery
@@ -48,7 +49,7 @@ from brain_client.skills.hot_reload import ReloadCoordinator
 from brain_client.skills.roster import SkillRoster
 from brain_client.skills.runner import PrimitiveRunner
 from brain_client.skills.workspace_import import format_load_error, unique_key
-from brain_client.transport.chat import ChatManager
+from brain_client.transport.chat import ChatManager, Sender
 from brain_client.transport.tts import TTSHandler
 
 LATCHED_QOS = QoSProfile(
@@ -172,6 +173,7 @@ class BrainClientNode(Node):
         self.pose_tracker = PoseTracker(self, odom_topic=cfg.odom_topic, nav_mode_topic=cfg.current_nav_mode_topic)
         self.scan_health = ScanHealthMonitor(self, scan_topic=cfg.scan_topic, stale_after_sec=cfg.scan_stale_after_sec)
         self.battery = BatteryMonitor(self, self.chat, lambda: state.is_brain_active)
+        self.identity = IdentityMonitor(self)
         # Spatial memory: the recorder builds it whenever the robot drives well-
         # localized (brain active or not); skills recall over it through the
         # /brain/search_memory action — the agent itself knows nothing of it.
@@ -224,6 +226,7 @@ class BrainClientNode(Node):
             proxy=self._proxy,
             scan_health=self.scan_health,
             battery=self.battery,
+            identity=self.identity,
             trace=lambda payload: self.brain_trace_pub.publish(String(data=payload)),
         )
         # Heavy traces (request bodies, frames — hundreds of KB per turn) are
@@ -373,6 +376,9 @@ class BrainClientNode(Node):
                 "[BrainClient] Ignoring /brain/chat_in: payload must be a JSON object with a 'text' field."
             )
             return
+        if data.get("sender") == "environment_speech":
+            self._on_environment_speech(data)
+            return
         if not self.state.is_brain_active:
             self.get_logger().warn("[BrainClient] Brain is not active. Skipping chat_in message.")
             return
@@ -397,6 +403,50 @@ class BrainClientNode(Node):
         if text and text.strip():
             self.get_logger().info(f"TTS request received: {text[:50]}...")
             self.chat.speak(text)
+
+    def _on_environment_speech(self, payload: dict) -> None:
+        """Speak a simulated character: the line reaches the chat as the voice
+        starts and the agent only once it stops, so the robot does not answer a
+        resident who is still talking."""
+        if not self.config.simulator_mode:
+            # /brain/chat_in is an open bus: without this gate, anything that
+            # can publish there could drive a real robot's speaker in any voice.
+            self.get_logger().warning("Ignoring environment speech request: only the simulator may send it")
+            return
+        try:
+            text = payload["text"]
+            voice_id = payload["voice_id"]
+            if not all(isinstance(value, str) and value.strip() for value in (text, voice_id)):
+                raise ValueError("text and voice_id must be non-empty strings")
+        except (KeyError, ValueError) as exc:
+            self.get_logger().warning(f"Ignoring invalid environment speech request: {exc}")
+            return
+
+        shown = threading.Event()
+
+        def show() -> None:
+            if not shown.is_set():
+                shown.set()
+                self.chat.emit(Sender.USER, text, speak=False)
+
+        def deliver(_success: bool) -> None:
+            show()  # a clip that never played still leaves its line on screen
+            if self.state.is_brain_active:
+                self.brain.on_user_message(text)
+
+        if self._tts_handler is None:
+            self.get_logger().warning("Environment speech requested while TTS is unavailable")
+            deliver(False)
+            return
+        queued = self._tts_handler.speak_text_async(
+            text,
+            voice_config={"mode": "id", "id": voice_id},
+            on_start=show,
+            on_done=deliver,
+            protected=True,  # another character's line: agent flushes must not cancel it
+        )
+        if not queued:
+            deliver(False)
 
     def _on_set_directive(self, msg: String) -> None:
         self.lifecycle.set_directive(msg.data)
