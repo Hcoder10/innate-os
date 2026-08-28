@@ -5603,6 +5603,41 @@ select.episodes-tool {
   flex: 0 0 auto;
 }
 
+/* Bar-level interrupt, shown only while a skill runs with the popup closed.
+   Out of flow, hanging off the bar's right edge — appearing must not shift
+   the centered bar. */
+.skills-stop-btn {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  padding: 0 16px;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--danger);
+  background: var(--ctl-glass);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--danger);
+  border-radius: 999px;
+  box-shadow: var(--ctl-sheen);
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.skills-stop-btn:hover:not(:disabled) {
+  background: var(--ctl-glass-hover);
+}
+
+.skills-stop-btn:disabled {
+  opacity: 0.6;
+}
+
 .skills-menu-btn {
   display: flex;
   align-items: center;
@@ -5674,6 +5709,24 @@ select.episodes-tool {
   color: var(--text);
 }
 
+/* Shortcut hint at the button's far edge, beside the chevron it shares a job
+   with. Dim at rest, full on hover. */
+.skills-menu-kbd {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  font-size: 10px;
+  letter-spacing: 0;
+  color: var(--muted);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  opacity: 0.55;
+  transition: opacity 150ms ease;
+}
+
+.skills-menu-btn:hover .skills-menu-kbd {
+  opacity: 1;
+}
+
 .skills-menu-chevron {
   flex: 0 0 auto;
   font-size: 11px;
@@ -5694,7 +5747,7 @@ select.episodes-tool {
   bottom: calc(100% + 10px);
   right: 0;
   width: 280px;
-  max-height: min(52vh, 460px);
+  max-height: min(75vh, 720px);
   display: none;
   flex-direction: column;
   overflow: hidden;
@@ -5715,6 +5768,42 @@ select.episodes-tool {
   min-height: 0;
   overflow-y: auto;
   padding: 6px;
+}
+
+.skills-pop-search {
+  position: relative;
+  margin: 8px 8px 0;
+}
+
+.skills-pop-search-input {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 56px 0 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: rgb(0 0 0 / 38%);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  outline: 0;
+}
+
+.skills-pop-search-input:focus {
+  border-color: var(--accent-dim);
+}
+
+/* Shortcut hint, riding inside the search field's right edge. */
+.skills-pop-search-kbd {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  transform: translateY(-50%);
+  padding: 2px 5px;
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  pointer-events: none;
 }
 
 .skills-pop-list {
@@ -5794,6 +5883,11 @@ select.episodes-tool {
   border-radius: 10px;
 }
 
+/* The extern-run banner is a status-only card with no head above it. */
+.skills-pop-row.expanded > .skills-pop-status:first-child {
+  padding-top: 10px;
+}
+
 .skills-pop-item {
   display: flex;
   align-items: center;
@@ -5814,17 +5908,26 @@ select.episodes-tool {
   background: rgb(255 255 255 / 7%);
 }
 
+.skills-pop-item.selected:not(:disabled) {
+  background: var(--accent-faint);
+  box-shadow: 0 0 0 1px var(--accent-dim) inset;
+}
+
 .skills-pop-item:disabled {
   color: var(--muted);
   cursor: not-allowed;
 }
 
+/* Launcher layout: dot then name flush left, digit hint and chevron in fixed
+   columns at the right edge, aligned across rows by the name's flex. */
 .skills-pop-name {
+  flex: 1;
   font-size: 13px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-align: left;
 }
 
 /* Skill-type indicator: learned (trained policy) / replay (recorded trajectory) /
@@ -5865,7 +5968,7 @@ select.episodes-tool {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 0 12px 10px;
+  padding: 6px 12px 10px;
   font-size: 11px;
   line-height: 1.35;
   color: var(--muted);
@@ -5946,6 +6049,51 @@ select.skill-input {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+  outline: 0;
+}
+
+.skill-bool:focus {
+  outline: 1px solid var(--accent-dim);
+  outline-offset: 3px;
+  border-radius: 9px;
+}
+
+/* Enum pill group: one tab stop, arrows cycle, Enter runs (see renderChoice). */
+.skill-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  outline: 0;
+}
+
+.skill-choice:focus {
+  border-color: var(--accent-dim);
+}
+
+.skill-choice-opt {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: rgb(0 0 0 / 45%);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
+}
+
+.skill-choice-opt:hover {
+  color: var(--text);
+}
+
+.skill-choice-opt.on {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: var(--accent-faint);
 }
 
 .skill-bool-opt {
@@ -6003,6 +6151,60 @@ select.skill-input {
   border: 1px solid rgb(64 31 251 / 60%);
   border-radius: 8px;
   transition: opacity 150ms ease, background 150ms ease, border-color 150ms ease;
+}
+
+/* Inside an already-bordered pill the hint is a plain glyph — a boxed kbd
+   there reads as a third nested border next to the row's digit badge. */
+.skill-run-kbd {
+  margin-left: 8px;
+  font-size: 12px;
+  letter-spacing: 0;
+  opacity: 0.9;
+}
+
+/* In-row Stop: the full-size pill crowds a one-line status readout. */
+.skill-confirm.compact {
+  min-height: 28px;
+  padding: 0 14px;
+  font-size: 10px;
+}
+
+/* 1-9 digit hint before the chevron, kbd-styled like the other shortcut
+   badges (a bare digit there would read as a count, like the group tails).
+   Filled only while digits are live (empty search), see render(); the blank
+   slot stays so the columns hold. */
+.skills-pop-num {
+  flex: 0 0 auto;
+  min-width: 16px;
+  padding: 1px 4px;
+  font-size: 10px;
+  color: var(--muted);
+  text-align: center;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  opacity: 0.8;
+}
+
+.skills-pop-num:empty {
+  visibility: hidden;
+}
+
+/* Fixed tail width so the chevron column aligns across rows and headers. */
+.skills-pop-item .skills-pop-tail,
+.skills-pop-group .skills-pop-tail {
+  flex: 0 0 12px;
+  text-align: right;
+}
+
+/* Collapsed-folder count, hugging the folder name (the tail is auto-pushed
+   to the far edge). */
+.skills-pop-group-count {
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+
+.skills-pop-group .skills-pop-tail {
+  margin-left: auto;
 }
 
 .skill-confirm:hover:not(:disabled) {
