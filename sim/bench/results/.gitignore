@@ -1,0 +1,4 @@
+progress/
+*.json
+!README.md
+frames/
