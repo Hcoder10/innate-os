@@ -300,6 +300,7 @@ class BrainAgent:
         system = build_system_prompt(
             directive.get_prompt() if directive else None,
             identity=self._identity.current if self._identity is not None else None,
+            running_guidance=self._running_guidance(self._state.primitive_running),
         )
         if self._state.log_everything:
             self._logger.info(f"[Brain] Turn input:\n{text}")
@@ -441,7 +442,6 @@ class BrainAgent:
             pose=self._pose_at_capture,
             battery=self._battery.current if self._battery is not None else None,
             running_skill=running.primitive_name if running else None,
-            guidance=self._running_guidance(running),
             events=events,
             has_wrist_frame=arm_jpeg is not None,
         )
@@ -696,6 +696,7 @@ class BrainAgent:
             streak=self._error_streak,
             running=running.primitive_name if running else None,
             history=self._context.history_len if self._context else 0,
+            tokens=self._context.last_usage if self._context else {},
             uptime=round(time.monotonic() - self._activated_at, 0) if self._state.is_brain_active else 0,
             motion=round(self._camera.motion_peak(), 4),
         )

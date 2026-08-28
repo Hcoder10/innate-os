@@ -8,19 +8,22 @@ Connects to a microphone and a speech-to-text backend to get voice transcripts.
 The microphone is the machine's ALSA capture device, or — on a machine that has
 none, i.e. the sim — a client pushing PCM over ROS (``RosPcmStreamer``).
 
-Four backends, selected by the ``stt_backend`` setting:
+Three backends, selected by the ``stt_backend`` setting:
 
-- ``elevenlabs_batch`` — ElevenLabs Scribe batch, one POST per utterance (default)
+- ``elevenlabs``       — ElevenLabs Scribe realtime WebSocket (default)
+- ``elevenlabs_batch`` — ElevenLabs Scribe batch, one POST per utterance
 - ``gemini``           — Gemini generateContent, one call per utterance
-- ``elevenlabs``       — ElevenLabs Scribe realtime WebSocket
-- ``openai``           — OpenAI Realtime transcription sessions
 
-The realtime backends stream audio over a WebSocket and let the vendor do the
-voice-activity detection; the batch backends detect utterances locally — Silero
-VAD by default, an RMS energy threshold as fallback (``stt_vad_engine``) — and
-ship each one whole (see ``brain_client.inputs.batch_stt``), biased toward the
-``stt_keyterms`` vocabulary. The microphone, ducking, and reconnect machinery is
-shared.
+Scribe realtime streams over a warm WebSocket and commits utterances from the
+same local endpointing the batch backends use — Silero VAD by default, an RMS
+energy threshold as fallback (``stt_vad_engine``). Measured 2026-08 on this
+mic: vendor-side VAD lands transcripts ~0.6 s later at any silence setting
+and trims real words on noisy audio, so every backend endpoints locally.
+Batch backends ship each utterance whole (see
+``brain_client.inputs.batch_stt``) and are the automatic fallback when the
+realtime socket will not come back. Every ElevenLabs path biases toward the
+``stt_keyterms`` vocabulary. The microphone, slow-AGC gain, ducking, and
+reconnect machinery is shared.
 
 Uses proxy services via self.proxy (injected by InputManager).
 """
@@ -34,11 +37,14 @@ import subprocess
 import threading
 import time
 
+import numpy as np
+
 from brain_client.brain.transport import pick_rest
 from brain_client.common.logging import UniversalLogger
 from brain_client.inputs.batch_stt import (
     DEFAULT_KEYTERMS,
     BatchSttSession,
+    Endpointer,
     EnergyDetector,
     Transcriber,
     VoicedDetector,
@@ -62,17 +68,36 @@ ELEVENLABS_AUDIO_FORMAT = f"pcm_{DEFAULT_SAMPLE_RATE}"
 # std_msgs/String of base64 PCM16 mono at DEFAULT_SAMPLE_RATE.
 MIC_AUDIO_TOPIC = "/mic/audio"
 
-STT_BACKENDS = frozenset({"elevenlabs_batch", "gemini", "elevenlabs", "openai"})
+STT_BACKENDS = frozenset({"elevenlabs_batch", "gemini", "elevenlabs"})
 BATCH_BACKENDS = frozenset({"elevenlabs_batch", "gemini"})
-DEFAULT_STT_BACKEND = "elevenlabs_batch"
+# Scribe realtime since 2026-08: ~0.75 s after the last word vs ~1.1 s for
+# batch, same accuracy. Rollback is stt_backend: "elevenlabs_batch" in settings.
+DEFAULT_STT_BACKEND = "elevenlabs"
 
 VAD_ENGINES = frozenset({"silero", "energy"})
 DEFAULT_VAD_ENGINE = "silero"
-# Reported to the webapp when the vendor endpoints server-side (realtime backends).
-VENDOR_VAD_ENGINE = "vendor"
 
 # One vad_status frame per this many mic chunks (20 ms each) — 5 Hz on the wire.
 VAD_STATUS_EVERY_CHUNKS = 10
+
+# Slow AGC: the far-field capture runs ~-36 dB RMS, and normalizing it was worth
+# 3-11 WER points across every engine benchmarked (2026-08).
+AGC_TARGET_PEAK = 0.5  # -6 dBFS
+# +6 dB of gain per half-life: full 24 dB recovery in ~16 s, +3 dB drift across
+# a 2 s speech pause — slow enough not to pump, fast enough to catch the next
+# utterance after a loud event.
+AGC_RELEASE_HALF_LIFE_S = 4.0
+DEFAULT_AGC_MAX_DB = 24.0
+
+# The realtime Scribe session caps keyterms harder than batch: 50 terms, 20 chars.
+REALTIME_KEYTERM_MAX = 50
+REALTIME_KEYTERM_CHARS = 20
+# The vendor force-commits around 36 s of buffered audio; committing first,
+# during silence, means that cut can never land mid-word.
+SAFETY_COMMIT_SECS = 30.0
+# Failed realtime reconnects before the loop settles for the batch backend —
+# a robot must keep hearing even when the streaming socket will not come back.
+RECONNECTS_BEFORE_BATCH_FALLBACK = 3
 
 ELEVENLABS_ERROR_TYPES = frozenset(
     {
@@ -90,6 +115,55 @@ ELEVENLABS_ERROR_TYPES = frozenset(
         "transcriber_error",
     }
 )
+
+
+def _scribe_previous_text(keyterms: "list[str]") -> str:
+    """Vocabulary as free session context, greedy within Scribe's ~50-char
+    guidance for previous_text."""
+    fitted: list[str] = []
+    for term in keyterms:
+        if len(f"Likely words: {', '.join([*fitted, term])}") > 50:
+            continue  # skip the long term — a shorter one later may still fit
+        fitted.append(term)
+    return f"Likely words: {', '.join(fitted)}" if fitted else ""
+
+
+class SlowAgc:
+    """Software gain for the quiet far-field mic: instant attack (a loud onset
+    can never be pushed past the target), slow release (~16 s back to full
+    gain) so speech pauses don't pump. Boost-only — a hot signal passes
+    through and int16 saturation is the limiter. Ducked chunks must not pass
+    through here: the robot's own voice would slam the gain floor down.
+    """
+
+    def __init__(self, max_gain_db: float, chunk_secs: float):
+        self._floor = AGC_TARGET_PEAK / 10 ** (max_gain_db / 20)
+        self._decay = 0.5 ** (chunk_secs / AGC_RELEASE_HALF_LIFE_S)
+        self._peak = AGC_TARGET_PEAK  # unity gain until the room says otherwise
+
+    @property
+    def gain(self) -> float:
+        # Clamped at unity: boost-only means sub-unity "gain" is never applied,
+        # and reporting it would make the energy detector divide a level UP for
+        # ~16 s after any loud sound.
+        return max(1.0, AGC_TARGET_PEAK / self._peak)
+
+    @property
+    def gain_db(self) -> float:
+        return float(20 * np.log10(self.gain))
+
+    def __call__(self, chunk: bytes) -> bytes:
+        samples = np.frombuffer(chunk[: len(chunk) - len(chunk) % 2], dtype=np.int16)
+        if samples.size == 0:
+            return chunk
+        # int32 before abs: |int16 -32768| wraps back to -32768.
+        peak = float(np.abs(samples.astype(np.int32)).max()) / 32768.0
+        self._peak = max(peak, self._peak * self._decay, self._floor)
+        gain = self.gain
+        if gain <= 1.001:
+            return chunk
+        boosted = np.clip(samples.astype(np.float32) * gain, -32768, 32767)
+        return boosted.astype(np.int16).tobytes()
 
 
 class MicroInput(InputDevice):
@@ -110,14 +184,30 @@ class MicroInput(InputDevice):
         self._backend = DEFAULT_STT_BACKEND
         self._vad_engine = DEFAULT_VAD_ENGINE
         self._vad_detector = None
+        self._agc: SlowAgc | None = None
+        self._endpointer: Endpointer | None = None
+        self._commit_at = 0.0
+        self._streamed_bytes = 0
+        self._utterance_count = 0
+        self._failure_count = 0
+        self._sent_keyterms: list[str] = []
+        self._scribe_context = ""
+        self._scribe_first_chunk = True
         self._last_transcript = ""
-        self._stop_evt = threading.Event()
+        self._stop_evt = threading.Event()  # device shutdown only — never cleared mid-session
+        self._audio_stop: threading.Event | None = None  # current audio thread's own stop
         self._audio_thread = None
+        self._endpoint_lock = threading.Lock()  # endpointer is fed and flushed from two threads
         self._is_robot_talking = False  # For ducking (mic-specific)
         self._reconnect_thread = None
+        self._reconnect_lock = threading.Lock()
+        self._reconnecting = False
         self._is_connected = False
         self._reconnect_delay = 1  # Start with 1 second
         self._max_reconnect_delay = 30  # Max 30 seconds between retries
+        # Connects and closes without an intervening session_started (a close
+        # of a session that did start counts too — it consumed an attempt).
+        self._connect_failures = 0
         self._identity = None  # IdentityMonitor, created on first open (needs the node)
         self._warned_dropped_keyterms = False
         # Initialize logger wrapper (will be updated when set_logger is called)
@@ -142,7 +232,24 @@ class MicroInput(InputDevice):
         Args:
             is_playing: True if robot is speaking, False otherwise
         """
+        if is_playing and not self._is_robot_talking:
+            self._commit_before_duck()
         self._is_robot_talking = is_playing
+
+    def _commit_before_duck(self) -> None:
+        """The robot is about to talk over an utterance in flight: commit it now.
+
+        Left open, it would be committed mid-duck by the safety commit (the
+        sentence splits in two) or glued to the user's next sentence.
+        """
+        endpointer = self._endpointer
+        if self._backend in BATCH_BACKENDS or endpointer is None:
+            return
+        with self._endpoint_lock:
+            if not endpointer.in_speech:
+                return
+            endpointer.flush()
+        self._commit_scribe()
 
     def on_open(self):
         """Start the audio source and connect to the STT backend.
@@ -155,9 +262,17 @@ class MicroInput(InputDevice):
         if self._identity is None and self.node is not None:
             self._identity = IdentityMonitor(self.node)
 
+        self._stop_evt.clear()  # a reopened device starts unstopped
+        self._connect_failures = 0
+        max_gain_db = float(self.proxy.config.get("stt_agc_max_db", DEFAULT_AGC_MAX_DB))
+        self._agc = SlowAgc(max_gain_db, CHUNK_DURATION_SEC) if max_gain_db > 0 else None
+
         try:
             self.mic = self._start_audio_source()
-            self.logger.info(f"🎙️ Microphone started (rate: {DEFAULT_SAMPLE_RATE}, channels: {DEFAULT_CHANNELS})")
+            self.logger.info(
+                f"🎙️ Microphone started (rate: {DEFAULT_SAMPLE_RATE}, channels: {DEFAULT_CHANNELS}, "
+                f"agc: {'off' if self._agc is None else f'≤+{max_gain_db:g} dB'})"
+            )
             self._connect_via_proxy()
         except Exception as e:
             self.logger.error(f"❌ Failed to start microphone: {e}")
@@ -191,15 +306,27 @@ class MicroInput(InputDevice):
 
         if etype == "committed_transcript":
             text = event.get("text", "")
+            if text:
+                self._utterance_count += 1
+                latency = f"{round((time.monotonic() - self._commit_at) * 1000)} ms" if self._commit_at else "n/a"
+                self.logger.info(f"🎤 Scribe committed in {latency}: {text[:80]!r}")
             if text and self.is_active():
                 self._on_transcript(text)
         elif etype == "partial_transcript":
             pass  # interim result — only the committed transcript reaches chat
         elif etype == "session_started":
+            self._connect_failures = 0
             self.logger.info(f"📋 Scribe session started: {event.get('config', {})}")
+            echoed = event.get("config", {}).get("keyterms") or []
+            if len(echoed) < len(self._sent_keyterms):
+                self.logger.warning(
+                    f"⚠️ Proxy relay collapsed keyterms: {len(echoed)}/{len(self._sent_keyterms)} reached "
+                    f"Scribe — previous_text carries the vocabulary until the relay forwards repeated params"
+                )
         elif etype == "insufficient_audio_activity":
             pass  # expected whenever the room is quiet — not worth a log line
         elif etype in ELEVENLABS_ERROR_TYPES:
+            self._failure_count += 1
             self.logger.error(f"❌ ElevenLabs error ({etype}): {event.get('error', event)}")
         else:
             self.logger.info(f"📨 ElevenLabs event: {etype}")
@@ -208,81 +335,16 @@ class MicroInput(InputDevice):
         """Scribe takes its whole session config in the connect URL — nothing to send."""
         self.logger.info("📤 WebSocket opened (Scribe session configured via query params)")
 
-    def _on_openai_message(self, ws, message: str):
-        """Handle incoming messages from OpenAI Realtime API."""
-        try:
-            event = json.loads(message)
-        except Exception:
-            self.logger.error(f"Failed to parse message: {message[:200]}")
-            return
-
-        etype = event.get("type")
-
-        # Event type to handler mapping
-        event_handlers = {
-            "session.updated": lambda e: self.logger.info(
-                f"📋 Session updated - transcription: {e.get('session', {}).get('input_audio_transcription', {})}, "
-                f"turn_detection: {e.get('session', {}).get('turn_detection', {})}"
-            ),
-            "input_audio_buffer.speech_started": lambda e: self.logger.info("🎤 Speech detected"),
-            "input_audio_buffer.speech_stopped": lambda e: self.logger.info("🔇 Speech stopped"),
-            "conversation.item.input_audio_transcription.completed": lambda e: (
-                self._on_transcript(e.get("transcript", "")) if e.get("transcript") and self.is_active() else None
-            ),
-            "error": lambda e: (
-                self.logger.error(
-                    f"❌ OpenAI error: {e.get('error', {}).get('code', '')} - "
-                    f"{e.get('error', {}).get('message', '')} "
-                    f"(param: {e.get('error', {}).get('param', '')})"
-                )
-                if e.get("error", {}).get("code") != "input_audio_buffer_commit_empty"
-                else None
-            ),
-        }
-
-        # Execute handler if exists, otherwise log unknown event type
-        handler = event_handlers.get(etype)
-        if handler:
-            handler(event)
-        else:
-            self.logger.info(f"📨 OpenAI event: {etype}")
-
-    def _on_openai_open(self):
-        """Handle WebSocket open event - send session configuration."""
-        cfg = self.proxy.config
-        transcribe_model = cfg.get("openai_transcribe_model", "gpt-4o-mini-transcribe")
-        language = self._stt_language()
-        vad_threshold = float(cfg.get("stt_realtime_vad_threshold", 0.3))
-        silence_secs = float(cfg.get("stt_realtime_vad_silence_secs", 0.7))
-
-        self.logger.info("📤 WebSocket opened, sending session.update...")
-        session_update = {
-            "type": "session.update",
-            "session": {
-                "input_audio_format": "pcm16",
-                "input_audio_transcription": {"model": transcribe_model, "language": language},
-                "turn_detection": {
-                    "type": "server_vad",
-                    "threshold": vad_threshold,
-                    "prefix_padding_ms": 300,
-                    "silence_duration_ms": int(silence_secs * 1000),
-                    "create_response": False,
-                },
-                "instructions": "Transcribe user audio only; do not reply.",
-            },
-        }
-        self.logger.info(f"📤 Session config: model={transcribe_model}, vad_threshold={vad_threshold}")
-        self.client.send_json(session_update)
-        self.logger.info("📤 session.update sent")
-
     def _on_ws_error(self, error):
         """Handle WebSocket error event."""
+        self._failure_count += 1
         self.logger.error(f"[ws error] {error}")
 
     def _on_ws_close(self):
         """Handle WebSocket close event - trigger reconnection."""
         self.logger.warning("WebSocket closed")
         self._is_connected = False
+        self._connect_failures += 1
 
         # Don't reconnect if we're shutting down
         if self._stop_evt.is_set():
@@ -307,7 +369,7 @@ class MicroInput(InputDevice):
         identity = self._identity.current if self._identity is not None else None
         return keyterms_with_name(terms, identity.name if identity else None)
 
-    def _connect_via_proxy(self):
+    def _connect_via_proxy(self, prefer_batch: bool = False):
         """Connect to the configured STT backend via proxy."""
         backend = str(self.proxy.config.get("stt_backend") or DEFAULT_STT_BACKEND).strip().lower()
         if backend not in STT_BACKENDS:
@@ -315,6 +377,11 @@ class MicroInput(InputDevice):
                 f"❌ Unknown stt_backend {backend!r} — using {DEFAULT_STT_BACKEND!r} (options: {sorted(STT_BACKENDS)})"
             )
             backend = DEFAULT_STT_BACKEND
+        if prefer_batch and backend == "elevenlabs":
+            # The realtime socket would not come back; batch keeps the robot
+            # hearing until the next voice-session open retries realtime.
+            self.logger.warning("⚠️ Falling back to 'elevenlabs_batch' after repeated realtime failures")
+            backend = "elevenlabs_batch"
         if not self.proxy.is_available() and backend != "gemini":
             self.logger.error(
                 f"❌ {backend!r} needs the Innate proxy (INNATE_SERVICE_KEY) — falling back to 'gemini' (GEMINI_API_KEY)"
@@ -326,8 +393,6 @@ class MicroInput(InputDevice):
             model = self._connect_elevenlabs_batch()
         elif self._backend == "gemini":
             model = self._connect_gemini()
-        elif self._backend == "openai":
-            model = self._connect_openai()
         else:
             model = self._connect_elevenlabs()
 
@@ -388,16 +453,18 @@ class MicroInput(InputDevice):
             if detector is None:
                 engine = "energy"  # silero_detector logged why
         if detector is None:
-            detector = EnergyDetector(float(cfg.get("stt_energy_threshold", 0.01)))
+            detector = EnergyDetector(float(cfg.get("stt_energy_threshold", 0.01)), gain=self._agc_gain)
         self._vad_detector, self._vad_engine = detector, engine
         return detector, engine
+
+    def _agc_gain(self) -> float:
+        return self._agc.gain if self._agc else 1.0
 
     def _send_vad_status(self) -> None:
         """One vad_status frame for the webapp's voice panel.
 
-        Realtime backends have no local detector — they still send a frame so
-        the panel can say the vendor owns endpointing instead of sitting on
-        "waiting for VAD telemetry" forever.
+        Every backend endpoints locally now; a frame with no detector fields
+        only happens in the moment before a session finishes connecting.
         """
         client, detector = self.client, self._vad_detector
         if client is None:
@@ -408,9 +475,12 @@ class MicroInput(InputDevice):
             "engine": self._vad_engine,
             "last_transcript": self._last_transcript,
         }
-        if self._backend not in BATCH_BACKENDS or detector is None:
-            self.send_data({**frame, "engine": VENDOR_VAD_ENGINE}, data_type="telemetry")
+        status = self._endpointing_status(client)
+        if detector is None or status is None:
+            self.send_data(frame, data_type="telemetry")
             return
+        if self._agc is not None:
+            frame["gain_db"] = round(self._agc.gain_db, 1)
         self.send_data(
             {
                 **frame,
@@ -418,31 +488,61 @@ class MicroInput(InputDevice):
                 "level": round(detector.level, 4),
                 "voiced": detector.voiced,
                 "ducking": self._is_robot_talking,
-                **client.status(),
+                **status,
             },
             data_type="telemetry",
         )
 
+    def _endpointing_status(self, client) -> "dict | None":
+        """Utterance counters for the panel; None until a session is connected.
+
+        ``client`` is the caller's captured reference — re-reading self.client
+        here would race the reconnect thread nulling it.
+        """
+        if self._backend in BATCH_BACKENDS:
+            return client.status()
+        if self._endpointer is None:
+            return None
+        return {
+            "utterance_open": self._endpointer.in_speech,
+            "utterance_secs": round(self._endpointer.utterance_secs, 2),
+            "utterances": self._utterance_count,
+            "failures": self._failure_count,
+        }
+
     def _connect_elevenlabs(self) -> str:
-        """Open a Scribe realtime session. Returns the model id."""
+        """Open a Scribe realtime session committed by the local endpointer. Returns the model id."""
         self.logger.info("🔗 Connecting to ElevenLabs Scribe via proxy...")
 
         cfg = self.proxy.config
         model = cfg.get("elevenlabs_stt_model", "scribe_v2_realtime")
-        vad_threshold = float(cfg.get("stt_realtime_vad_threshold", 0.3))
-        silence_secs = float(cfg.get("stt_realtime_vad_silence_secs", 0.7))
+        silence_secs = float(cfg.get("stt_vad_silence_secs", 0.5))
+        filter_background = bool(cfg.get("stt_filter_background_audio", True))
+        keyterms = self._realtime_keyterms()
+
+        is_voiced, engine = self._make_vad(cfg)
+        # Recreated on every (re)connect: a half-open utterance must not leak
+        # across sockets.
+        self._endpointer = Endpointer(sample_rate=DEFAULT_SAMPLE_RATE, is_voiced=is_voiced, silence_secs=silence_secs)
+        self._streamed_bytes = 0
+        self._commit_at = 0.0
+        self._sent_keyterms = keyterms
+        # previous_text is body content, so it survives the proxy relay that
+        # currently collapses the repeated keyterms query params to one.
+        self._scribe_context = _scribe_previous_text(keyterms)
+        self._scribe_first_chunk = True
 
         self.logger.info(
-            f"📤 Scribe config: model={model}, audio_format={ELEVENLABS_AUDIO_FORMAT}, "
-            f"vad_threshold={vad_threshold}, silence={silence_secs}s"
+            f"📤 Scribe config: model={model}, commit=manual/{engine}, silence={silence_secs}s, "
+            f"keyterms={len(keyterms)}, filter_background={filter_background}"
         )
         self.client = self.proxy.elevenlabs.realtime.connect_sync(
             model_id=model,
             audio_format=ELEVENLABS_AUDIO_FORMAT,
             language_code=self._stt_language(),
-            commit_strategy="vad",
-            vad_threshold=vad_threshold,
-            vad_silence_threshold_secs=silence_secs,
+            commit_strategy="manual",
+            keyterms=keyterms,
+            filter_background_audio=filter_background,
             on_message=self._on_elevenlabs_message,
             on_open=self._on_elevenlabs_open,
             on_error=self._on_ws_error,
@@ -450,60 +550,75 @@ class MicroInput(InputDevice):
         )
         return model
 
-    def _connect_openai(self) -> str:
-        """Open an OpenAI Realtime transcription session. Returns the model id."""
-        self.logger.info("🔗 Connecting to OpenAI via proxy...")
-
-        model = self.proxy.config.get("openai_realtime_model", "gpt-4o-realtime-preview")
-
-        self.client = self.proxy.openai.realtime.connect_sync(
-            model=model,
-            on_message=self._on_openai_message,
-            on_open=self._on_openai_open,
-            on_error=self._on_ws_error,
-            on_close=self._on_ws_close,
-        )
-        return model
+    def _realtime_keyterms(self) -> list[str]:
+        terms = self._stt_keyterms()
+        kept = [t for t in terms if len(t) <= REALTIME_KEYTERM_CHARS][:REALTIME_KEYTERM_MAX]
+        if len(kept) != len(terms):
+            dropped = sorted(set(terms) - set(kept))
+            self.logger.warning(
+                f"⚠️ Realtime Scribe caps keyterms at {REALTIME_KEYTERM_CHARS} chars — dropped: {dropped}"
+            )
+        return kept
 
     def _schedule_reconnect(self):
-        """Schedule a reconnection attempt in a background thread."""
-        if self._reconnect_thread and self._reconnect_thread.is_alive():
-            return  # Already reconnecting
+        """Schedule a reconnection attempt in a background thread.
+
+        The flag (not thread liveness) decides "already reconnecting": a close
+        landing while the previous loop is exiting would see a live thread and
+        be dropped, leaving the mic dead with no reconnect running. The loop's
+        finally re-checks and respawns instead.
+        """
+        with self._reconnect_lock:
+            if self._reconnecting:
+                return
+            self._reconnecting = True
 
         def reconnect_loop():
-            while not self._stop_evt.is_set() and not self._is_connected:
-                self.logger.info(f"🔄 Reconnecting to {self._backend} STT in {self._reconnect_delay}s...")
+            try:
+                while not self._stop_evt.is_set() and not self._is_connected:
+                    self.logger.info(f"🔄 Reconnecting to {self._backend} STT in {self._reconnect_delay}s...")
 
-                # Wait before reconnecting (interruptible)
-                if self._stop_evt.wait(timeout=self._reconnect_delay):
-                    break  # Stop event was set
+                    # Wait before reconnecting (interruptible)
+                    if self._stop_evt.wait(timeout=self._reconnect_delay):
+                        break  # Stop event was set
 
-                try:
-                    # Stop old client if exists
-                    if self.client:
-                        try:
-                            self.client.stop()
-                        except:  # noqa: E722
-                            pass
-                        self.client = None
+                    try:
+                        # Stop old client if exists
+                        if self.client:
+                            try:
+                                self.client.stop()
+                            except:  # noqa: E722
+                                pass
+                            self.client = None
 
-                    # Stop old audio thread
-                    self._stop_evt.set()
-                    if self._audio_thread and self._audio_thread.is_alive():
-                        self._audio_thread.join(timeout=1.0)
-                    self._stop_evt.clear()
+                        # Stop the old audio thread by its own event — the
+                        # device-wide _stop_evt stays untouched, so an on_close
+                        # racing this loop is never un-stopped.
+                        if self._audio_stop is not None:
+                            self._audio_stop.set()
+                        if self._audio_thread and self._audio_thread.is_alive():
+                            self._audio_thread.join(timeout=1.0)
+                        if self._stop_evt.is_set():
+                            break  # the device closed while we were tearing down
 
-                    # Reconnect
-                    self._connect_via_proxy()
+                        # Reconnect
+                        self._connect_via_proxy(prefer_batch=self._connect_failures >= RECONNECTS_BEFORE_BATCH_FALLBACK)
 
-                    if self._is_connected:
-                        self.logger.info("✅ Reconnection successful!")
-                        break
+                        if self._is_connected:
+                            self.logger.info("✅ Reconnection successful!")
+                            break
 
-                except Exception as e:
-                    self.logger.error(f"❌ Reconnection failed: {e}")
-                    # Exponential backoff
-                    self._reconnect_delay = min(self._reconnect_delay * 2, self._max_reconnect_delay)
+                    except Exception as e:
+                        self._connect_failures += 1
+                        self.logger.error(f"❌ Reconnection failed ({self._connect_failures}): {e}")
+                        # Exponential backoff
+                        self._reconnect_delay = min(self._reconnect_delay * 2, self._max_reconnect_delay)
+            finally:
+                with self._reconnect_lock:
+                    self._reconnecting = False
+                    respawn = not self._is_connected and not self._stop_evt.is_set()
+            if respawn:
+                self._schedule_reconnect()  # a close landed during our last lines
 
         self._reconnect_thread = threading.Thread(target=reconnect_loop, daemon=True)
         self._reconnect_thread.start()
@@ -517,21 +632,79 @@ class MicroInput(InputDevice):
         if self._backend in BATCH_BACKENDS:
             self.client.feed(chunk)
             return
-        audio = base64.b64encode(chunk).decode("ascii")
-        if self._backend == "openai":
-            frame = {"type": "input_audio_buffer.append", "audio": audio}
-        else:
-            frame = {"message_type": "input_audio_chunk", "audio_base_64": audio}
-        self.client.send_json(frame)
+        self._send_scribe_audio(chunk, commit=False)
+        if self._endpointer is None:
+            return
+        with self._endpoint_lock:
+            closed = self._endpointer.feed(chunk)
+            discarded = self._endpointer.closed_discarded
+        # A discarded close (cough, click — under MIN_VOICED_SECS) was still
+        # streamed, so commit it out of the vendor buffer too, or it comes back
+        # glued to the front of the next real transcript.
+        if closed is not None or discarded:
+            self._commit_scribe()
+        elif self._safety_commit_due() and not self._vad_detector.voiced:
+            # Any unvoiced chunk will do: waiting for the utterance to close
+            # could put the buffer past the vendor's ~36 s force-commit, and a
+            # split at a pause cannot cut mid-word.
+            self._commit_scribe()
+
+    def _send_scribe_audio(self, chunk: bytes, commit: bool) -> bool:
+        message = {
+            "message_type": "input_audio_chunk",
+            "audio_base_64": base64.b64encode(chunk).decode("ascii"),
+            "commit": commit,
+            "sample_rate": DEFAULT_SAMPLE_RATE,
+        }
+        # Only the session's first chunk may carry context — later chunks with
+        # previous_text are rejected outright (so a keep-warm silence frame that
+        # happens to open the session must spend it; the vendor gives no other slot).
+        if self._scribe_first_chunk:
+            self._scribe_first_chunk = False
+            if self._scribe_context:
+                message["previous_text"] = self._scribe_context
+        sent = self.client.send_json(message)
+        self._streamed_bytes += len(chunk)
+        return sent
+
+    def _commit_scribe(self) -> None:
+        if not self._send_scribe_audio(b"", commit=True):
+            # The socket died under us. The vendor buffer dies with the session,
+            # so the utterance is unrecoverable — say so instead of losing it
+            # silently, and leave the counters for the reconnect to reset.
+            self.logger.error("❌ Scribe commit could not be sent (socket down) — utterance lost")
+            return
+        self._commit_at = time.monotonic()
+        self._streamed_bytes = 0
+
+    def _safety_commit_due(self) -> bool:
+        return self._streamed_bytes > SAFETY_COMMIT_SECS * DEFAULT_SAMPLE_RATE * 2
+
+    def _keep_warm(self, nbytes: int) -> None:
+        # The endpointer is deliberately not fed here: a paused stream must not
+        # count as silence (the batch endpointer holds the same invariant).
+        # in_speech is False during a duck — _commit_before_duck closed any open
+        # utterance — so this can never commit mid-sentence; the guard is belt.
+        if self._backend in BATCH_BACKENDS or self.client is None:
+            return
+        self._send_scribe_audio(b"\x00" * nbytes, commit=False)
+        if self._safety_commit_due() and (self._endpointer is None or not self._endpointer.in_speech):
+            self._commit_scribe()
 
     def _start_audio_thread(self):
-        """Start the audio streaming thread."""
-        self._stop_evt.clear()
+        """Start the audio streaming thread.
+
+        Each thread gets its own stop event: a predecessor that outlived its
+        join stays stopped instead of being resurrected by a shared flag.
+        """
+        stop = self._audio_stop = threading.Event()
 
         def audio_loop():
             if not self.client.wait_until_connected(timeout=10):
                 self.logger.error("WebSocket didn't connect in time")
                 return
+            if stop.is_set() or self._stop_evt.is_set():
+                return  # stopped while we waited on the handshake
 
             self.logger.info("🎧 Audio streaming thread started")
 
@@ -539,7 +712,7 @@ class MicroInput(InputDevice):
             chunks_seen = 0
             empty_count = 0
             ducking_logged = False
-            while not self._stop_evt.is_set():
+            while not stop.is_set() and not self._stop_evt.is_set():
                 try:
                     chunk = self.mic.queue.get(timeout=0.1)
                     empty_count = 0  # Reset on successful get
@@ -561,15 +734,18 @@ class MicroInput(InputDevice):
                     if chunks_seen % VAD_STATUS_EVERY_CHUNKS == 0:
                         self._send_vad_status()
 
-                    # Skip sending while ducking (robot is speaking)
+                    # While ducking (robot is speaking), real audio is dropped —
+                    # but the Scribe socket still gets silence so the warm
+                    # session never goes cold mid-conversation.
                     if self._is_robot_talking:
                         if not ducking_logged:
                             self.logger.info("🔇 Ducking active - not sending audio")
                         ducking_logged = True
+                        self._keep_warm(len(chunk))
                         continue
                     ducking_logged = False
 
-                    self._send_chunk(chunk)
+                    self._send_chunk(chunk if self._agc is None else self._agc(chunk))
                     chunks_sent += 1
 
                     # Log periodically (much less frequently)
@@ -588,13 +764,17 @@ class MicroInput(InputDevice):
     def on_close(self):
         """Stop microphone and disconnect."""
         self._stop_evt.set()
+        if self._audio_stop is not None:
+            self._audio_stop.set()
         self._is_connected = False  # Prevent reconnection attempts
+
+        # Reconnect thread first — it may still be creating the audio thread
+        # this method is about to join.
+        if self._reconnect_thread:
+            self._reconnect_thread.join(timeout=2.0)
 
         if self._audio_thread:
             self._audio_thread.join(timeout=1.0)
-
-        if self._reconnect_thread:
-            self._reconnect_thread.join(timeout=1.0)
 
         if self.mic:
             try:

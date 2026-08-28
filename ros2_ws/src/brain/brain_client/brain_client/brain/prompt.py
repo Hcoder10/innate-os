@@ -78,12 +78,37 @@ directive and the user's requests drive action — noticing an object is not a r
 
 Your directive:
 {directive}
+
+Answer in the turn you are asked. A reply and a tool call are two parts of ONE response, in \
+that order: write the answer as text, then make the call. Never send the call alone and leave \
+the answer for the next turn — the user hears silence, and the answer arrives twice as late. \
+If the turn makes more than one call, the one that does the work goes first.
+"""
+# The closing paragraph is measured text — edit only with the A/B harness
+# (data/latency_bench/experiments/turn_policy on R7-27). Placement AFTER the
+# directive is load-bearing: 16/16 same-turn answers there vs 5/8 as a Rules
+# bullet. Softening it is a trap: appending an idle-turns exception clause
+# regressed it to 2/8, though it reads as a harmless clarification. Idle
+# silence itself is unharmed by the paragraph (verified 8/8 quiet).
+
+# Skill guidance lives here, not in each turn's observation text: per turn it
+# would be re-billed in every history entry for the life of the conversation
+# (~27 tokens x up to 1000 turns). Changing it on skill start/stop costs no
+# extra cache misses — the tools block already changes the prefix there.
+_RUNNING_GUIDANCE = """
+A skill is running right now. Guidance while it runs:
+{guidance}
 """
 
 
-def build_system_prompt(directive_prompt: str | None, identity: RobotIdentity | None = None) -> str:
+def build_system_prompt(
+    directive_prompt: str | None, identity: RobotIdentity | None = None, running_guidance: str = ""
+) -> str:
     directive = (directive_prompt or "").strip() or "Be a helpful home robot."
-    return _SYSTEM_PROMPT.format(directive=directive, identity=_identity_block(identity))
+    prompt = _SYSTEM_PROMPT.format(directive=directive, identity=_identity_block(identity))
+    if running_guidance:
+        prompt += _RUNNING_GUIDANCE.format(guidance=running_guidance)
+    return prompt
 
 
 def _identity_block(identity: RobotIdentity | None) -> str:

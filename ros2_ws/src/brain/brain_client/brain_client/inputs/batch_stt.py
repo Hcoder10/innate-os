@@ -2,14 +2,14 @@
 # Copyright (c) 2026 Innate Inc
 """Batch speech-to-text: local endpointing, one blocking API call per utterance.
 
-The realtime backends (Scribe, OpenAI) do voice-activity detection server-side;
-a batch backend has no session to do it in, so the endpointing moves onto the
-robot. :class:`Endpointer` runs a voiced/unvoiced detector — Silero VAD
+:class:`Endpointer` runs a voiced/unvoiced detector — Silero VAD
 (``brain_client.inputs.vad``) or the energy fallback — over the PCM stream and
-closes an utterance after enough silence; :class:`BatchSttSession` then ships
-the whole clip as WAV through a vendor transcriber — ElevenLabs Scribe batch or
-Gemini ``generateContent``. Both bias toward the ``keyterms`` vocabulary: Scribe
-takes a parameter, Gemini gets the words in its prompt.
+closes an utterance after enough silence. It also drives the realtime Scribe
+backend's manual commits (``workspace/inputs/micro_input.py``); here,
+:class:`BatchSttSession` ships each closed utterance whole through a vendor
+transcriber — ElevenLabs Scribe batch or Gemini ``generateContent``. Both bias
+toward the ``keyterms`` vocabulary: Scribe takes a parameter, Gemini gets the
+words in its prompt.
 """
 
 from __future__ import annotations
@@ -26,7 +26,10 @@ from collections import deque
 from collections.abc import Callable, Iterable, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
+import numpy as np
+
 from brain_client.brain.transport import GENERATE_PATH
+from brain_client.inputs.vad import MIC_SAMPLE_RATE, pcm16_to_f32, resample_24k_to_16k
 
 if TYPE_CHECKING:
     from brain_client.brain.transport import GeminiRest
@@ -80,15 +83,20 @@ def rms_level(chunk: bytes) -> float:
 
 
 class EnergyDetector:
-    """Voiced = RMS above a fixed threshold; `level` is the last chunk's RMS."""
+    """Voiced = RMS above a fixed threshold; `level` is the last chunk's RMS.
 
-    def __init__(self, threshold: float):
+    ``gain`` reports an upstream software AGC's current boost; dividing it back
+    out keeps boosted room tone under a threshold tuned on the raw mic.
+    """
+
+    def __init__(self, threshold: float, gain: Callable[[], float] | None = None):
         self.threshold = threshold
         self.level = 0.0
         self.voiced = False
+        self._gain = gain
 
     def __call__(self, chunk: bytes) -> bool:
-        self.level = rms_level(chunk)
+        self.level = rms_level(chunk) / (self._gain() if self._gain else 1.0)
         self.voiced = self.level >= self.threshold
         return self.voiced
 
@@ -120,6 +128,10 @@ class Endpointer:
         self._in_speech = False
         self._silence_bytes = 0
         self._voiced_bytes = 0
+        # True right after a close that discarded its clip (under MIN_VOICED_SECS)
+        # — a realtime caller has already streamed that audio and must still
+        # commit it out of the vendor buffer.
+        self.closed_discarded = False
 
     @property
     def in_speech(self) -> bool:
@@ -131,6 +143,7 @@ class Endpointer:
 
     def feed(self, chunk: bytes) -> bytes | None:
         """Consume one chunk; returns the finished utterance's PCM when one closes."""
+        self.closed_discarded = False
         voiced = self._is_voiced(chunk)
 
         if not self._in_speech:
@@ -162,6 +175,13 @@ class Endpointer:
         while self._pre_roll and self._pre_roll_bytes > PRE_ROLL_SECS * self._bytes_per_sec:
             self._pre_roll_bytes -= len(self._pre_roll.popleft())
 
+    def flush(self) -> bytes | None:
+        """Force-close an open utterance (duck boundary), same length gate as
+        a natural close; None when nothing is open or the clip was too short."""
+        if not self._in_speech:
+            return None
+        return self._close()
+
     def _close(self) -> bytes | None:
         utterance = bytes(self._utterance)
         long_enough = self._voiced_bytes / self._bytes_per_sec >= MIN_VOICED_SECS
@@ -171,6 +191,7 @@ class Endpointer:
         self._pre_roll_bytes = 0
         self._voiced_bytes = 0
         self._silence_bytes = 0
+        self.closed_discarded = not long_enough
         return utterance if long_enough else None
 
 
@@ -251,14 +272,42 @@ def keyterms_with_name(terms: Sequence[str], name: str | None) -> list[str]:
 ELEVENLABS_PROXY_ENDPOINT = "v1/speech-to-text"
 
 
+SCRIBE_UPLOAD_RATE = 16_000
+
+
+def _wav_to_scribe_pcm(wav: bytes) -> bytes:
+    """WAV -> raw 16 kHz mono PCM, Scribe's documented low-latency upload form
+    (file_format=pcm_s16le_16). Measured 2026-08: the raw upload plus skipping
+    timestamps and audio-event tagging takes the round trip from ~1.1 s to
+    ~0.45 s on the same route."""
+    with wave.open(io.BytesIO(wav), "rb") as reader:
+        pcm, rate = reader.readframes(reader.getnframes()), reader.getframerate()
+    if rate == SCRIBE_UPLOAD_RATE:
+        return pcm
+    if rate != MIC_SAMPLE_RATE:
+        raise ValueError(f"no resampler for {rate} Hz -> Scribe upload (mic captures at {MIC_SAMPLE_RATE} Hz)")
+    samples = resample_24k_to_16k(pcm16_to_f32(pcm))
+    return np.clip(samples * 32768.0, -32768, 32767).astype(np.int16).tobytes()
+
+
 def elevenlabs_proxy_transcriber(proxy: ProxyClient, model: str, language: str, keyterms: Keyterms = ()) -> Transcriber:
+    base_form: dict[str, Any] = {
+        "model_id": model,
+        "language_code": language,
+        "file_format": "pcm_s16le_16",
+        "timestamps_granularity": "none",
+        "tag_audio_events": "false",
+    }
+
     def transcribe(wav: bytes) -> str:
-        form: dict[str, Any] = {"model_id": model, "language_code": language}
+        # Copied per call, not mutated: a rename can empty the vocabulary, and a
+        # keyterms key left over from an earlier utterance would outlive it.
+        form = dict(base_form)
         if terms := _resolve_keyterms(keyterms):
             # One repeated form field per term — the vendor SDK passes keyterms as a
             # raw list, unlike its other list params, which it JSON-encodes.
             form["keyterms"] = list(terms)
-        files = {"file": ("utterance.wav", wav, "audio/wav")}
+        files = {"file": ("utterance.raw", _wav_to_scribe_pcm(wav), "application/octet-stream")}
         with proxy.request_stream(
             "elevenlabs", ELEVENLABS_PROXY_ENDPOINT, files=files, form=form, timeout=TRANSCRIBE_TIMEOUT_SECS
         ) as resp:

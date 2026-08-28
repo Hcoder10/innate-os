@@ -90,11 +90,12 @@ def observation_text(
     pose: Pose | None,
     battery: Battery | None,
     running_skill: str | None,
-    guidance: str,
     events: list[Event],
     has_wrist_frame: bool,
 ) -> str:
-    """The text half of a turn input: robot status, guidance, and new events."""
+    """The text half of a turn input: robot status and new events. Running-skill
+    guidance rides the system instruction, not here — stored per turn it would
+    be re-billed in every history entry (see brain/prompt.py)."""
     status = f"[{clock_text(now)} | t+{uptime_s}s]"
     if pose is not None:
         status += f" pose: x={pose[0]:.2f}m y={pose[1]:.2f}m heading={math.degrees(pose[2]):.0f}°"
@@ -103,8 +104,6 @@ def observation_text(
     if running_skill:
         status += f" | running skill: {running_skill}"
     lines = [status]
-    if guidance:
-        lines.append(f"(guidance while this skill runs: {guidance})")
     lines += [f"- {event.text}" for event in events]
     if has_wrist_frame:
         lines.append("(second image is the arm wrist camera)")

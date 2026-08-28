@@ -55,31 +55,43 @@ class ProxyElevenLabsClient:
         def _build_ws_url(self, params: dict[str, Any]) -> str:
             proxy_url = self._ec._get_proxy_url()
             ws_url = proxy_url.replace("https://", "wss://").replace("http://", "ws://")
-            query = urlencode({k: v for k, v in params.items() if v is not None})
-            return f"{ws_url}/v1/services/elevenlabs/{REALTIME_ENDPOINT}?{query}"
+            # Scribe takes array parameters (keyterms) as repeated keys, and
+            # spells booleans lowercase.
+            pairs: list[tuple[str, Any]] = []
+            for key, value in params.items():
+                if value is None:
+                    continue
+                for item in value if isinstance(value, (list, tuple)) else [value]:
+                    pairs.append((key, str(item).lower() if isinstance(item, bool) else item))
+            return f"{ws_url}/v1/services/elevenlabs/{REALTIME_ENDPOINT}?{urlencode(pairs)}"
 
         def connect_sync(
             self,
             model_id: str = "scribe_v2_realtime",
             audio_format: str = "pcm_24000",
             language_code: str | None = None,
-            commit_strategy: str = "vad",
-            vad_threshold: float | None = None,
-            vad_silence_threshold_secs: float | None = None,
+            commit_strategy: str = "manual",
+            keyterms: list[str] | None = None,
+            filter_background_audio: bool | None = None,
             on_message: Callable | None = None,
             on_open: Callable | None = None,
             on_error: Callable | None = None,
             on_close: Callable | None = None,
         ) -> SyncRealtimeConnection:
-            """Return a :class:`SyncRealtimeConnection` (call ``.start()`` to connect)."""
+            """Return a :class:`SyncRealtimeConnection` (call ``.start()`` to connect).
+
+            Vendor-VAD commit params are gone on purpose: server endpointing
+            measured ~0.6 s slower and trims words on this mic — every caller
+            endpoints locally and commits manually.
+            """
             ws_url = self._build_ws_url(
                 {
                     "model_id": model_id,
                     "audio_format": audio_format,
                     "language_code": language_code,
                     "commit_strategy": commit_strategy,
-                    "vad_threshold": vad_threshold,
-                    "vad_silence_threshold_secs": vad_silence_threshold_secs,
+                    "keyterms": keyterms or None,
+                    "filter_background_audio": filter_background_audio,
                 }
             )
             return SyncRealtimeConnection(

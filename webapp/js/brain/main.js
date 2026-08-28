@@ -23,7 +23,7 @@ import { ros } from "../rosClient.js";
 import { isTypingContext } from "../shell.js";
 
 const CAM_TOPIC = "/mars/main_camera/left/image_raw/compressed";
-const HIST_MAX = 60; // brain_client default history_max_entries
+const HIST_MAX = 2000; // brain_client default history_max_entries
 
 /** @type {Record<string, string>} */
 const PHASE_LABEL = {
@@ -247,13 +247,8 @@ export function createBrainMonitor(root, opts = {}) {
     if (d.kind !== "vad_status" || d.input_device !== "micro") return;
     vadAt = performance.now();
     if (d.last_transcript) $(".br-vad-heard").textContent = d.last_transcript;
-    // Realtime backends endpoint server-side: there is no local level to plot.
-    const vendorVad = d.engine === "vendor";
-    $(".br-panel-voice").classList.toggle("no-vad", vendorVad);
-    $(".br-vad-sub").textContent = vendorVad
-      ? `${d.backend} endpoints server-side`
-      : `${d.engine} vad · ${d.backend}`;
-    if (vendorVad) return;
+    const agc = d.gain_db > 0 ? ` · mic +${d.gain_db} dB` : "";
+    $(".br-vad-sub").textContent = `${d.engine} vad · ${d.backend}${agc}`;
     const threshold = d.threshold ?? 0;
     $(".br-vad-fill").style.width = (Math.min(1, d.level ?? 0) * 100).toFixed(1) + "%";
     $(".br-vad-tick").style.left = (Math.min(1, threshold) * 100).toFixed(1) + "%";

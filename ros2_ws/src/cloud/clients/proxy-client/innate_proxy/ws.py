@@ -2,8 +2,8 @@
 # Copyright (c) 2026 Innate Inc
 """Sync wrapper around an async proxy WebSocket.
 
-Shared by the realtime adapters (OpenAI Realtime, ElevenLabs Scribe) — the
-transport is identical, only the URL and the frame vocabulary differ.
+The transport under the realtime adapters (ElevenLabs Scribe) — the adapter
+supplies the URL and the frame vocabulary.
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ class SyncRealtimeConnection:
 
     Presents the callback-based API expected by existing consumers::
 
-        conn = proxy.openai.realtime.connect_sync(
-            model=model,
+        conn = proxy.elevenlabs.realtime.connect_sync(
+            model_id=model,
             on_message=my_handler,   # (ws, message_str)
             on_open=on_open_cb,      # ()
             on_error=on_error_cb,    # (error)
@@ -105,11 +105,14 @@ class SyncRealtimeConnection:
         self._task = None
         self._thread = None
 
-    def send_json(self, data: dict) -> None:
-        """Send a JSON payload (thread-safe)."""
+    def send_json(self, data: dict) -> bool:
+        """Send a JSON payload (thread-safe). False when the socket is down and
+        the payload was dropped — callers sending control frames must know."""
         if self._ws and self._loop and self._loop.is_running():
             raw = json.dumps(data)
             asyncio.run_coroutine_threadsafe(self._ws.send(raw), self._loop)
+            return True
+        return False
 
     def wait_until_connected(self, timeout: float = 10) -> bool:
         """Block until the websocket is open. Returns *True* on success."""

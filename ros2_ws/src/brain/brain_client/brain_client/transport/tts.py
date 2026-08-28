@@ -214,19 +214,32 @@ class TTSHandler:
 
         return success
 
-    def _stream_tts_bytes(self, text: str, voice: dict[str, Any]):
-        """Yield raw WAV bytes from Cartesia as they stream in."""
+    # Raw PCM for the speaker path: headerless (aplay is told the format), 16 kHz
+    # (TTFB is unchanged but the stream is 2.7x smaller), and speed 1.5 so the
+    # clip itself is ~10% shorter — the mic un-ducks sooner after each reply.
+    SPEAKER_SAMPLE_RATE = 16000
+    SPEAKER_SPEED = 1.5
+
+    def _stream_tts_bytes(self, text: str, voice: dict[str, Any], for_speaker: bool):
+        """Yield audio bytes from Cartesia as they stream in.
+
+        The speaker path gets raw PCM; the sim path keeps WAV — browser decoders
+        need the container.
+        """
         if self._cartesia_client is None:
             raise RuntimeError("Cartesia client unavailable (is_available() gates all callers)")
+        if for_speaker:
+            output_format = {"container": "raw", "encoding": "pcm_s16le", "sample_rate": self.SPEAKER_SAMPLE_RATE}
+            generation_config = {"speed": self.SPEAKER_SPEED}
+        else:
+            output_format = {"container": "wav", "encoding": "pcm_s16le", "sample_rate": 44100}
+            generation_config = None
         return self._cartesia_client.tts.bytes_stream(
             model_id="sonic-3.5",
             transcript=text,
             voice=voice,
-            output_format={
-                "container": "wav",
-                "encoding": "pcm_s16le",
-                "sample_rate": 44100,
-            },
+            output_format=output_format,
+            generation_config=generation_config,
         )
 
     def _synthesize_to_aplay(
@@ -241,7 +254,7 @@ class TTSHandler:
         # Volume is managed system-wide by app.cpp via
         # amixer sset Master, so aplay just uses the default.
         player = subprocess.Popen(
-            ["aplay", "-q"],
+            ["aplay", "-q", "-t", "raw", "-f", "S16_LE", "-r", str(self.SPEAKER_SAMPLE_RATE), "-c", "1"],
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
@@ -275,7 +288,7 @@ class TTSHandler:
             t_first_chunk = None
 
             t_api = time.perf_counter()
-            for chunk in self._stream_tts_bytes(text, voice):
+            for chunk in self._stream_tts_bytes(text, voice, for_speaker=True):
                 if not chunk:
                     continue
                 chunk_count += 1
@@ -301,6 +314,11 @@ class TTSHandler:
             player.wait()
             t_play_done = time.perf_counter()
 
+            if total_bytes == 0:
+                # aplay -t raw exits 0 on an empty stream, unlike the old WAV
+                # path — a 200-with-no-body must fail so the retry fires.
+                self.logger.error("❌ TTS produced no audio")
+                return False
             if player.returncode == 0:
                 ttfb_ms = (t_first_chunk - t_api) * 1000 if t_first_chunk else 0
                 self.logger.info(
@@ -339,7 +357,7 @@ class TTSHandler:
         t_api = time.perf_counter()
         buf = bytearray()
         t_first_chunk = None
-        for chunk in self._stream_tts_bytes(text, voice):
+        for chunk in self._stream_tts_bytes(text, voice, for_speaker=False):
             if not chunk:
                 continue
             if t_first_chunk is None:

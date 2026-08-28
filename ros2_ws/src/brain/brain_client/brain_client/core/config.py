@@ -46,7 +46,7 @@ class BrainConfig:
     idle_turn_interval: float  # seconds between looks when no skill is running
     supervision_turn_interval: float  # seconds between looks while a skill runs
     history_max_entries: int  # conversation entries kept for the model
-    history_max_image_turns: int  # newest turns keeping head-camera frames (wrist keeps only the newest)
+    history_max_image_turns: int  # frame-turn floor: compaction keeps 1-2x this many (wrist keeps only the newest)
 
     # --- Timing ---
     scan_stale_after_sec: float
@@ -112,7 +112,14 @@ _PARAM_DEFAULTS: dict[str, str | bool | int | float] = {
     "gemini_thinking_level": "minimal",
     "idle_turn_interval": 3.0,
     "supervision_turn_interval": 5.0,
-    "history_max_entries": 60,
+    # Compaction evicts to half the cap, so depth rides 1000-2000 entries. A silent
+    # supervision turn stores TWO entries (~50 tokens: status text + masked-frame
+    # placeholders + an EMPTY model turn), a tool-call turn three — so 2000 entries
+    # is ~700-1000 turns of memory and ~25-50k prompt tokens of text. Masking
+    # rewrites frame turns near the tail, so ~94% of each request still hits the
+    # cache and full-price spend is flat in this cap — depth costs cached-rate
+    # carry, not latency.
+    "history_max_entries": 2000,
     "history_max_image_turns": 3,
     # --- Timing ---
     "scan_stale_after_sec": 10.0,

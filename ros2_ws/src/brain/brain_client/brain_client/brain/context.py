@@ -5,8 +5,10 @@
 The native API — unlike the OpenAI-compatible layer — returns *thought
 summaries* (parts flagged ``thought: true``), which the agent surfaces in the
 app chat as robot thoughts. A response is distilled into a plain
-:class:`Decision` the agent loop acts on, and the bounded content history
-prunes old camera frames so requests stay small.
+:class:`Decision` the agent loop acts on, and the bounded content history is
+compacted in chunks — old camera frames masked, oldest turns evicted — so
+requests stay small while consecutive requests keep the shared byte prefix
+Gemini's implicit prompt cache needs (see :meth:`GeminiContext._prune`).
 
 Threading contract: :meth:`GeminiContext.generate` is the only blocking network
 call and only *reads* the history, so the agent awaits it on a worker thread
@@ -74,10 +76,14 @@ class GeminiContext:
         # goes on the wire (from generate's thread). The body must be treated
         # as read-only — it shares structure with the live history.
         self.on_request: Callable[[dict], None] | None = None
+        # usageMetadata of the newest response — prompt/cached/output token
+        # counts, surfaced on the trace snapshot (cache-hit observability).
+        self.last_usage: dict[str, int] = {}
 
     def clear(self) -> None:
         self._history = []
         self._latest_only_turn = None
+        self.last_usage = {}
 
     @property
     def history_len(self) -> int:
@@ -115,9 +121,11 @@ class GeminiContext:
         ``latest_only_images`` mirrors :meth:`absorb`'s: when this message
         carries wrist frames, the previous turn's copies are masked out of the
         request here — absorb's durable prune runs only after the response, so
-        without this every request would ship two wrist frames. History is
-        masked via shallow copies, never mutated (an abandoned turn's orphaned
-        request may still be reading it).
+        without this every request would ship two wrist frames. The masking
+        HERE never mutates history — shallow copies only. Durable mutation
+        (absorb, _prune) runs on the loop thread strictly between generate
+        calls, by which point an abandoned turn's orphaned request has already
+        serialized its body.
         """
         contents = [*self._reference, *self._history, user_message]
         if latest_only_images and self._latest_only_turn is not None:
@@ -144,8 +152,11 @@ class GeminiContext:
             self.on_request(body)
         parts: list[dict] = []
         last_chunk: dict = {}
+        usage: dict = {}
         for chunk in self._transport(self._model, body):
             last_chunk = chunk
+            if "usageMetadata" in chunk:
+                usage = chunk["usageMetadata"]
             content = _model_content(chunk) or {}
             for part in content.get("parts") or []:
                 parts.append(part)
@@ -157,7 +168,13 @@ class GeminiContext:
             # a silent, answerless exchange — raise instead, so the turn's
             # retry path keeps the events queued and the failure is visible.
             raise RuntimeError(f"gemini returned no content: {_empty_stream_reason(last_chunk)}")
-        return {"candidates": [{"content": {"role": "model", "parts": _merged(parts)}}]}
+        # Usage rides the response and is committed by absorb, on the loop
+        # thread: writing self.last_usage here would let an abandoned turn's
+        # orphaned request overwrite the committed turn's counts.
+        return {
+            "candidates": [{"content": {"role": "model", "parts": _merged(parts)}}],
+            "usageMetadata": usage,
+        }
 
     def absorb(self, user_message: dict, response: dict, *, latest_only_images: list[int] | None = None) -> Decision:
         """Commit the exchange to history and distill the model's Decision.
@@ -173,6 +190,12 @@ class GeminiContext:
         prunes the previous turn's copy on the spot.
         """
         decision = _decision_from(response)
+        usage = response.get("usageMetadata") or {}
+        self.last_usage = {
+            "prompt": usage.get("promptTokenCount", 0),
+            "cached": usage.get("cachedContentTokenCount", 0),
+            "output": usage.get("candidatesTokenCount", 0),
+        }
         self._history.append(user_message)
         if latest_only_images:
             if self._latest_only_turn is not None:
@@ -206,23 +229,35 @@ class GeminiContext:
         self._history.append({"role": "user", "parts": parts})
 
     def _prune(self) -> None:
+        """Compact the history in chunks, never one entry per turn.
+
+        Gemini's implicit prompt cache only hits when a prior request is a
+        byte prefix of the new one, so evicting or masking anything every turn
+        forfeits the cache on every request. The history therefore grows
+        append-only until a budget trips, and one compaction then evicts down
+        to half the cap and masks old frames in the same step — a single cache
+        miss per window instead of one per turn.
+        """
         history = self._history
-        while len(history) > self._max_history:
-            history.pop(0)
-        # The history must start with a plain user turn: a leading model turn or
-        # an orphaned function response (whose call was just pruned) is rejected.
-        while history and (
-            history[0].get("role") != "user" or any("functionResponse" in p for p in history[0].get("parts") or [])
-        ):
-            history.pop(0)
-        # A pruned turn must not stay pinned as the latest-only holder: absorb
-        # would "prune" an orphan dict nothing reads, and the reference would
-        # keep its base64 wrist frame alive for as long as the arm feed is stale.
-        if self._latest_only_turn is not None and not any(c is self._latest_only_turn[0] for c in history):
-            self._latest_only_turn = None
-        # Keep camera frames only in the newest few user turns (none at all if
-        # the configured keep-count is zero or nonsensical).
         keep = max(self._max_image_turns, 0)
+        if len(history) > self._max_history:
+            del history[: len(history) - self._max_history // 2]
+            # The history must start with a plain user turn: a leading model turn or
+            # an orphaned function response (whose call was just evicted) is rejected.
+            while history and (
+                history[0].get("role") != "user" or any("functionResponse" in p for p in history[0].get("parts") or [])
+            ):
+                history.pop(0)
+            # An evicted turn must not stay pinned as the latest-only holder: absorb
+            # would "prune" an orphan dict nothing reads, and the reference would
+            # keep its base64 wrist frame alive for as long as the arm feed is stale.
+            if self._latest_only_turn is not None and not any(c is self._latest_only_turn[0] for c in history):
+                self._latest_only_turn = None
+        elif self.image_turn_count <= 2 * keep:
+            return  # under both budgets: stay append-only, the cache is warm
+        # Mask down to the newest few frame turns (none at all if the keep-count
+        # is zero or nonsensical). Until a compaction, older frames ride the
+        # cached prefix at a tenth of the input price — cheap to carry.
         image_turns = [
             c for c in history if c.get("role") == "user" and any("inlineData" in p for p in c.get("parts") or [])
         ]
