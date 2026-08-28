@@ -23,7 +23,7 @@ import { ros } from "../rosClient.js";
 import { isTypingContext } from "../shell.js";
 
 const CAM_TOPIC = "/mars/main_camera/left/image_raw/compressed";
-const HIST_MAX = 60; // brain_client default history_max_entries
+const HIST_MAX = 2000; // brain_client default history_max_entries
 
 /** @type {Record<string, string>} */
 const PHASE_LABEL = {
