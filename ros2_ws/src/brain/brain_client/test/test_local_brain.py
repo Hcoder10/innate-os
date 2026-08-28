@@ -1011,7 +1011,9 @@ def test_suppressed_reply_tells_the_model_it_went_unspoken(agent_factory):
 def test_running_skill_guidance_reads_registry_metadata(agent_factory):
     # Regression: registry.primitives holds plain metadata dicts (not stub
     # objects) since the SkillRegistry slimming — the supervision turn must
-    # read guidance with dict access, not a method call.
+    # read guidance with dict access, not a method call. The guidance rides
+    # the system instruction, never the per-turn observation text (stored per
+    # turn it would be re-billed in every history entry).
     from brain_client.skills.registry import SkillRegistry
 
     agent, state = agent_factory()
@@ -1019,8 +1021,17 @@ def test_running_skill_guidance_reads_registry_metadata(agent_factory):
         [{**WAVE_SKILL, "type": "code", "guidelines_when_running": "  do not block the arm  "}]
     )
     state.primitive_running = RunningSkill(primitive_name="wave", skill_id="local/wave", primitive_id="p1")
-    text, images = agent._look([])
-    assert "(guidance while this skill runs: do not block the arm)" in text
+    bodies = []
+
+    def transport(model, body):
+        bodies.append(body)
+        return iter([model_response({"text": "ok"})])
+
+    agent._context._transport = transport
+    run_turn(agent)
+    (body,) = bodies
+    assert "do not block the arm" in body["systemInstruction"]["parts"][0]["text"]
+    assert "do not block the arm" not in body["contents"][-1]["parts"][0]["text"]
 
 
 def test_a_turn_bug_backs_off_instead_of_killing_the_loop(agent_factory, monkeypatch):
