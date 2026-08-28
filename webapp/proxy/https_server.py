@@ -88,8 +88,9 @@ WORLD_STATE_URL = f"ws://{_WORLD_HOST}:8800"
 # Ping both legs of every relay so a peer that vanishes without a FIN (a robot's
 # WiFi dropping mid-teleop) is reaped in ~heartbeat seconds instead of lingering
 # until the kernel's TCP timeout and leaking upstream rosbridge subscriptions.
-# The old websockets library defaulted to a 20s ping; aiohttp defaults to none.
-WS_HEARTBEAT = 20.0
+# aiohttp derives the pong deadline as heartbeat/2, so this allows 30s: at 20s
+# the 10s deadline was closing healthy sockets that share WiFi with the streams.
+WS_HEARTBEAT = 60.0
 
 
 def _quiet_benign_disconnects() -> None:

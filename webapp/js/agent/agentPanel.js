@@ -228,28 +228,23 @@ export function createAgentPanel(root, rosClient, agentState, opts) {
 
   // ---- history backfill ---------------------------------------------------
   // Live topics only carry messages from after we subscribe, so a fresh page
-  // load starts blank. The brain keeps the full conversation; pull it once on
-  // connect and replay it through the same renderers, then keep appending live.
-  let historyLoaded = false;
+  // load starts blank and every dropped socket leaves a hole the live stream
+  // never fills. The brain keeps the full conversation: refetch it on *every*
+  // connect and replay through the same renderers, then keep appending live.
+  let loadingHistory = false;
 
   async function loadHistory() {
-    if (historyLoaded) return;
-    let res;
+    if (loadingHistory) return;
+    loadingHistory = true;
     try {
-      res = await rosClient.callService(GET_CHAT_HISTORY_SERVICE, {});
+      const res = await rosClient.callService(GET_CHAT_HISTORY_SERVICE, {});
+      const entries = JSON.parse(res?.history ?? "[]");
+      if (Array.isArray(entries) && entries.length) chat.replay(entries);
     } catch {
-      return; // best-effort — the live stream still works without it
+      // best-effort — the live stream still works without the backfill
+    } finally {
+      loadingHistory = false;
     }
-    /** @type {any[]} */
-    let entries;
-    try {
-      entries = JSON.parse(res?.history ?? "[]");
-    } catch {
-      return;
-    }
-    historyLoaded = true;
-    if (!Array.isArray(entries) || entries.length === 0) return;
-    chat.replay(entries);
   }
 
   const unsubConn = rosClient.onStateChange((s) => {
