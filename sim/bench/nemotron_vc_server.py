@@ -33,7 +33,14 @@ import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-sys.path.insert(0, "/home/sarta/Speech")
+# NeMo's speechlm2 examples tree, which is not an installable package.
+# Set NVC_SPEECH_ROOT to wherever the NeMo Speech checkout lives.
+_SPEECH_ROOT = os.environ.get("NVC_SPEECH_ROOT")
+if not _SPEECH_ROOT:
+    raise SystemExit(
+        "NVC_SPEECH_ROOT is not set: point it at a NeMo Speech checkout (the tree containing examples/speechlm2)."
+    )
+sys.path.insert(0, _SPEECH_ROOT)
 
 from nemo.collections.speechlm2.inference.utils.offline_voicechat import (  # noqa: E402
     build_model,
@@ -43,8 +50,11 @@ from nemo.collections.speechlm2.inference.utils.offline_voicechat import (  # no
     run_offline_inference,
 )
 
-CHECKPOINT = os.environ.get("NVC_CHECKPOINT", "/home/sarta/models/NemotronLabs-VoiceChat-11B")
-TEMPLATE = os.environ.get("NVC_TEMPLATE", "/home/sarta/Speech/examples/speechlm2/function_calling/template.jinja")
+CHECKPOINT = os.environ.get("NVC_CHECKPOINT", "nvidia/NemotronLabs-VoiceChat-11B")
+TEMPLATE = os.environ.get(
+    "NVC_TEMPLATE",
+    str(Path(_SPEECH_ROOT) / "examples/speechlm2/function_calling/template.jinja"),
+)
 
 # The 7 blind-harness actions (no "look" -- this model has no camera) as
 # tool definitions in the shape the FC template renders. Names and argument
@@ -130,7 +140,7 @@ SYSTEM_MESSAGE = (
 # markup for every espeak input, long or short. edge-tts needs network
 # (Microsoft's TTS endpoint); a failure raises and surfaces as a 500 on
 # that turn rather than silently feeding the model unparseable audio.
-EDGE_TTS = os.environ.get("NVC_EDGE_TTS", "/home/sarta/nemotron-voicechat-dl-venv/bin/edge-tts")
+EDGE_TTS = os.environ.get("NVC_EDGE_TTS", "edge-tts")
 TTS_VOICE = "en-US-AriaNeural"
 
 

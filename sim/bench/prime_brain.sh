@@ -41,7 +41,8 @@
 # Nothing here is a physical property of the robot; it is which of its
 # capabilities are actually wired up. The roster is printed per run so the
 # scores always say which one produced them.
-cd "$HOME/innate-os" || exit 1
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$REPO" || exit 1
 
 RESET=0
 [ "${1:-}" = "--reset" ] && RESET=1
@@ -61,7 +62,7 @@ env_value() {
   local key="$1"
   local from_shell="${!key:-}"
   if [ -n "$from_shell" ]; then echo "$from_shell"; return; fi
-  grep -E "^${key}=" "$HOME/innate-os/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r'
+  grep -E "^${key}=" "$REPO/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r'
 }
 
 SERVICE_KEY="$(env_value INNATE_SERVICE_KEY)"

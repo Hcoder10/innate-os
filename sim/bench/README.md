@@ -45,11 +45,11 @@ load fine but report in the uncategorised bucket, so they are opt-in rather
 than silently padding "everything".
 
 The **live benchmark** — innate's own stack, Docker + nav + brain, scored by
-the same engine — is one command from the home directory:
+the same engine — is one command, from anywhere in a clone:
 
 ```bash
-bash ~/run_eval.sh              # all 8 maps; backend picked from .env
-bash ~/run_eval.sh counter      # one map
+bash sim/bench/run_eval.sh              # all 8 maps; backend picked from .env
+bash sim/bench/run_eval.sh counter      # one map
 ```
 
 Those scripts are checked in verbatim under `sim/bench/` (`run_eval.sh`,

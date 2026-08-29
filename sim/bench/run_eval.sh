@@ -15,7 +15,12 @@
 # ever needed. A challenge cut off by the cap is scored as a failure, and that
 # is a harness decision, so the cap is recorded next to the score.
 set -uo pipefail
-cd "$HOME/innate-os" || exit 1
+# Resolve the repo from this script's own location, so the one command
+# works from any clone. It used to be `cd "$HOME/innate-os"`, which meant
+# the documented invocation only worked for a checkout at exactly that
+# path, with these scripts copied into $HOME.
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$REPO" || exit 1
 
 CAP_1=180
 CAP_2=300
@@ -32,7 +37,7 @@ echo "=== caps: cat1 ${CAP_1}s, cat2 ${CAP_2}s, cat3 ${CAP_3}s" | tee -a "$LOG"
 rm -f workspace/gemini_usage.jsonl
 
 for BUNDLE in $BUNDLES; do
-  ASSETS="$HOME/innate-os/sim/bundles/$BUNDLE"
+  ASSETS="$REPO/sim/bundles/$BUNDLE"
   [ -d "$ASSETS" ] || { echo "no bundle at $ASSETS" | tee -a "$LOG"; continue; }
 
   echo "" | tee -a "$LOG"
@@ -76,7 +81,7 @@ for BUNDLE in $BUNDLES; do
 
   echo "--- map" | tee -a "$LOG"
   ( cd sim && VIRTUAL_MARS_ASSETS="$ASSETS" MUJOCO_GL=osmesa \
-      "$HOME/.local/bin/uv" run bench/export_nav_map.py 2>&1 | tail -1 ) | tee -a "$LOG"
+      "$(command -v uv || echo "$HOME/.local/bin/uv")" run bench/export_nav_map.py 2>&1 | tail -1 ) | tee -a "$LOG"
   if ! ./sim/.venv/bin/python sim/bench/lint_navmap.py sim/assets/map/sim_apartment.yaml \
        2>&1 | tail -2 | tee -a "$LOG" | grep -q '^OK'; then
     echo "    map failed its lint -- skipping $BUNDLE" | tee -a "$LOG"
@@ -88,10 +93,10 @@ for BUNDLE in $BUNDLES; do
   # rather than hardcoding, so this keeps working either way.
   OS_CONTAINER=""
   echo "--- restart" | tee -a "$LOG"
-  timeout 300 bash "$HOME/innate_up.sh" down >/dev/null 2>&1
+  timeout 300 bash "$REPO/sim/bench/innate_up.sh" down >/dev/null 2>&1
   sleep 2
   export VIRTUAL_MARS_ASSETS="$ASSETS"
-  timeout 900 bash "$HOME/innate_up.sh" up --offline 2>&1 | grep -cE '✓' \
+  timeout 900 bash "$REPO/sim/bench/innate_up.sh" up --offline 2>&1 | grep -cE '✓' \
     | xargs echo "    checks passed:" | tee -a "$LOG"
   OS_CONTAINER=$(docker ps --format '{{.Names}}' | grep -E '^innate-dev' | head -1)
   if [ -z "$OS_CONTAINER" ]; then

@@ -54,8 +54,11 @@ DEFAULT_PRICE = (0.75e-6, 3.75e-6)
 DEFAULT_URL = "ws://127.0.0.1:8800"
 DEFAULT_ROSBRIDGE = "ws://127.0.0.1:9090"
 CHAT_IN = "/brain/chat_in"
-PRIME_SH = Path.home() / "prime_brain.sh"
-SAY_SH = Path.home() / "say_brief.sh"
+# The helpers live beside this file in the repo. They were read from $HOME,
+# which silently used whatever stale copy happened to be there.
+_BENCH = Path(__file__).resolve().parent
+PRIME_SH = _BENCH / "prime_brain.sh"
+SAY_SH = _BENCH / "say_brief.sh"
 
 
 def prime(reset: bool = False) -> str:
