@@ -44,7 +44,6 @@ from _zones import (  # noqa: E402
     TOWELS,
     burns,
 )
-
 from mars_sim_driver.challenges import Challenge, Cue, Drop, Goal, InRect  # noqa: E402
 
 CHALLENGE = Challenge(

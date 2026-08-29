@@ -27,14 +27,25 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "ros2_ws" / "src" / "mars_bot" / "mars_sim_driver"))
 
 from mars_sim_driver.challenges import (  # noqa: E402
-    AllOf, After, AnyOf, Answered, Challenge, Hold, InCircle, InRect, Near, Predicate, Said, SkillDone,
+    After,
+    AllOf,
+    Answered,
+    AnyOf,
+    Challenge,
+    Hold,
+    InCircle,
+    InRect,
+    Near,
+    Predicate,
+    Said,
+    SkillDone,
 )
 
 # What an agent needs to satisfy a goal, worst case over its predicates.
-NAV_ONLY = "nav"        # drive somewhere
-CARRY = "carry"         # move a prop somewhere (abstracted; no arm)
-NEEDS_ARM = "arm"       # a skill completion: real manipulation
-UNKNOWN = "unknown"     # a predicate shape this planner does not model
+NAV_ONLY = "nav"  # drive somewhere
+CARRY = "carry"  # move a prop somewhere (abstracted; no arm)
+NEEDS_ARM = "arm"  # a skill completion: real manipulation
+UNKNOWN = "unknown"  # a predicate shape this planner does not model
 
 
 def _unwrap(p: Predicate) -> tuple[Predicate, float]:

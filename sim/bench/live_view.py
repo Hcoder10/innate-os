@@ -84,10 +84,14 @@ def pump(feed: Feed) -> None:
     """Reconnect forever. The viewer must survive a runtime restart, since
     restarting the stack between maps is the normal way to run this bench."""
     subs = [
-        {"op": "subscribe", "topic": CAM, "type": "sensor_msgs/CompressedImage",
-         "throttle_rate": THROTTLE_MS, "queue_length": 1},
-        {"op": "subscribe", "topic": ODOM, "type": "nav_msgs/Odometry",
-         "throttle_rate": 200, "queue_length": 1},
+        {
+            "op": "subscribe",
+            "topic": CAM,
+            "type": "sensor_msgs/CompressedImage",
+            "throttle_rate": THROTTLE_MS,
+            "queue_length": 1,
+        },
+        {"op": "subscribe", "topic": ODOM, "type": "nav_msgs/Odometry", "throttle_rate": 200, "queue_length": 1},
         {"op": "subscribe", "topic": CHAT, "type": "std_msgs/String"},
         {"op": "subscribe", "topic": SKILL, "type": "std_msgs/String"},
     ]
@@ -111,8 +115,7 @@ def pump(feed: Feed) -> None:
                         raw = ws.recv(timeout=RECV_TIMEOUT_S)
                     except TimeoutError:
                         if time.time() - last_data > STALE_AFTER_S:
-                            raise TimeoutError(
-                                f"no data for {STALE_AFTER_S:.0f}s") from None
+                            raise TimeoutError(f"no data for {STALE_AFTER_S:.0f}s") from None
                         continue
                     last_data = time.time()
                     frame = json.loads(raw)
@@ -127,8 +130,7 @@ def pump(feed: Feed) -> None:
                     elif topic == ODOM:
                         p = msg["pose"]["pose"]
                         with feed.lock:
-                            feed.pose = (p["position"]["x"], p["position"]["y"],
-                                         _yaw(p["orientation"]))
+                            feed.pose = (p["position"]["x"], p["position"]["y"], _yaw(p["orientation"]))
                     elif topic == CHAT:
                         said = json.loads(msg["data"])
                         who = said.get("sender") or "system"
@@ -198,11 +200,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._stream()
         if self.path.startswith("/state"):
             with self.feed.lock:
-                body = json.dumps({
-                    "x": self.feed.pose[0], "y": self.feed.pose[1],
-                    "yaw": self.feed.pose[2], "frames": self.feed.frames,
-                    "log": list(self.feed.log),
-                }).encode()
+                body = json.dumps(
+                    {
+                        "x": self.feed.pose[0],
+                        "y": self.feed.pose[1],
+                        "yaw": self.feed.pose[2],
+                        "frames": self.feed.frames,
+                        "log": list(self.feed.log),
+                    }
+                ).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -219,8 +225,7 @@ class Handler(BaseHTTPRequestHandler):
     def _stream(self) -> None:
         self.send_response(200)
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Type",
-                         "multipart/x-mixed-replace; boundary=frame")
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
         self.end_headers()
         sent = -1
         try:
@@ -231,9 +236,10 @@ class Handler(BaseHTTPRequestHandler):
                     time.sleep(0.03)
                     continue
                 sent = seq
-                self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n"
-                                 b"Content-Length: " + str(len(jpeg)).encode()
-                                 + b"\r\n\r\n" + jpeg + b"\r\n")
+                self.wfile.write(
+                    b"--frame\r\nContent-Type: image/jpeg\r\n"
+                    b"Content-Length: " + str(len(jpeg)).encode() + b"\r\n\r\n" + jpeg + b"\r\n"
+                )
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             pass  # the tab was closed

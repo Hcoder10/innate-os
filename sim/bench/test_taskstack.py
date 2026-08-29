@@ -24,6 +24,7 @@ def _ids(stack: _TaskStack) -> list:
 
 # 1. Partial goal re-list does NOT drop the goal that was omitted.
 
+
 def _after_partial_relist() -> _TaskStack:
     s = _TaskStack()
     s.apply({"goals": [{"id": "gate1", "side": "R"}, {"id": "gate2", "side": "L"}]})
@@ -46,6 +47,7 @@ def test_partial_relist_duplicates_nothing() -> None:
 
 # 2. Explicit "done" DOES remove a goal, even with no "goals" key at all.
 
+
 def test_explicit_done_removes_exactly_that_goal_without_a_goals_key() -> None:
     s = _after_partial_relist()
     s.apply({"done": ["gate1"]})
@@ -53,6 +55,7 @@ def test_explicit_done_removes_exactly_that_goal_without_a_goals_key() -> None:
 
 
 # 3. done accepted as a bare id, not only a list.
+
 
 def test_bare_string_done_also_removes_the_goal() -> None:
     s = _after_partial_relist()
@@ -65,6 +68,7 @@ def test_bare_string_done_also_removes_the_goal() -> None:
 #    earlier version of this fix introduced (strict isinstance(id, str)
 #    meant a model emitting numeric ids lost every goal forever, which is
 #    WORSE than the destructive-replace bug being fixed).
+
 
 def test_numeric_id_is_coerced_and_kept() -> None:
     s = _TaskStack()
@@ -80,6 +84,7 @@ def test_numeric_id_also_matches_on_the_done_side() -> None:
 
 
 # 5. Goals with no usable id are dropped AND counted, not silently vanished.
+
 
 def _after_malformed_entries() -> tuple[_TaskStack, int]:
     s = _TaskStack()
@@ -100,6 +105,7 @@ def test_dropped_counter_increments_for_each_unusable_entry() -> None:
 
 # 6. Non-dict update to apply() itself is a safe no-op.
 
+
 def test_non_dict_update_is_a_safe_noop() -> None:
     s, _ = _after_malformed_entries()
     s.apply("not a dict at all")
@@ -107,6 +113,7 @@ def test_non_dict_update_is_a_safe_noop() -> None:
 
 
 # 7. facts still merge (unchanged behavior), never dropped by an unrelated update.
+
 
 def test_facts_survive_an_unrelated_goals_only_update() -> None:
     s = _TaskStack()
@@ -119,6 +126,7 @@ def test_facts_survive_an_unrelated_goals_only_update() -> None:
 #    refreshes position instead of aging out under first-occurrence order.
 #    This is the exact bug class being fixed, reintroduced in miniature by
 #    a naive first pass at this same fix -- caught before shipping.
+
 
 def _after_reasserting_every_round() -> _TaskStack:
     s = _TaskStack()
@@ -145,6 +153,7 @@ def test_constraints_deduplicated() -> None:
 # 9. A constraint that stops being re-mentioned DOES eventually age out
 #    (append-only does not mean unbounded -- the cap still does its job).
 
+
 def test_an_unrepeated_constraint_ages_out_past_the_cap() -> None:
     s = _TaskStack()
     s.apply({"constraints": ["stale one"]})
@@ -155,6 +164,7 @@ def test_an_unrepeated_constraint_ages_out_past_the_cap() -> None:
 
 # 10. note_released writes a fact mechanically, independent of apply(), and
 #     records position and time when given them.
+
 
 def test_note_released_writes_a_fact_with_position_and_time() -> None:
     s = _TaskStack()
@@ -170,6 +180,7 @@ def test_note_released_degrades_gracefully_with_no_pose_or_time() -> None:
 
 # 11. Goal count backstop: pathological growth (e.g. runaway id drift)
 #     cannot grow the goal list without bound.
+
 
 def _after_runaway_ids() -> _TaskStack:
     s = _TaskStack()
@@ -194,6 +205,7 @@ def test_the_most_recent_goal_survives_the_cap() -> None:
 # turn must survive, while a pile of newer-but-never-touched stale ids
 # (simulating id-drift duplicates) are the ones that should get evicted.
 
+
 def _after_updating_the_oldest_every_round() -> _TaskStack:
     s = _TaskStack()
     s.apply({"goals": [{"id": "alive", "note": "v0"}]})
@@ -214,6 +226,7 @@ def test_its_latest_update_value_is_preserved() -> None:
 # 13. bool and empty-string ids are rejected as malformed (not silently
 # accepted and collapsed together -- bool is a subtype of int in Python,
 # and an empty string looks valid but is not a real id).
+
 
 def _after_bool_and_empty_ids() -> tuple[_TaskStack, int]:
     s = _TaskStack()

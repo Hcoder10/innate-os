@@ -40,4 +40,3 @@ class RandomAgent:
             self._cmd = (self.rng.uniform(-0.1, V_MAX), self.rng.uniform(-W_MAX, W_MAX))
             self._until = t + self.hold_s
         mars.set_cmd_vel(*self._cmd)
-

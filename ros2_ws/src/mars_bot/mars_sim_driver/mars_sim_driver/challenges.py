@@ -195,8 +195,10 @@ class InRect(Predicate):
         p = state.pos(self.target)
         if p is None:
             return False
-        if not (min(self.x0, self.x1) <= p[0] <= max(self.x0, self.x1)
-                and min(self.y0, self.y1) <= p[1] <= max(self.y0, self.y1)):
+        if not (
+            min(self.x0, self.x1) <= p[0] <= max(self.x0, self.x1)
+            and min(self.y0, self.y1) <= p[1] <= max(self.y0, self.y1)
+        ):
             return False
         if self.min_z is None:
             return True
@@ -987,8 +989,7 @@ class ChallengeEngine:
                     heights = {name: float(p[2]) for name, p in self.sim.object_poses().items()}
                 except Exception:  # noqa: BLE001 -- judging must not depend on this
                     heights = {}
-                state = WorldState(t=t, robot=pose, centers=centers, elapsed=self.elapsed_s,
-                                   heights=heights)
+                state = WorldState(t=t, robot=pose, centers=centers, elapsed=self.elapsed_s, heights=heights)
                 self._measure(pose, events, centers)
                 # Before judging: every goal sees every batch. A goal asserting
                 # something about the whole run cannot be judged from the
@@ -1033,7 +1034,9 @@ class ChallengeEngine:
                                 elif isinstance(reply, str):
                                     payload = {"sender": "user", "text": reply, "timestamp": time.time()}
                                 else:
-                                    raise TypeError("challenge runtime replies must be strings or EnvironmentReply values")
+                                    raise TypeError(
+                                        "challenge runtime replies must be strings or EnvironmentReply values"
+                                    )
                                 self._queue_chat_input(payload)
                             if runtime_result.replies:
                                 self._chat_ready.notify_all()
@@ -1063,13 +1066,19 @@ class ChallengeEngine:
                             while end < len(challenge.goals) and challenge.goals[end].parallel_group == group:
                                 end += 1
                             for sibling in range(start, end):
-                                if not self.goal_done[sibling] and challenge.goals[sibling].predicate.update(state, events):
+                                if not self.goal_done[sibling] and challenge.goals[sibling].predicate.update(
+                                    state, events
+                                ):
                                     self.goal_done[sibling] = True
                                     progressed = True
                             if not all(self.goal_done[start:end]):
                                 break
 
-                        if first is not None and not progressed and any(ev.get("status") == "completed" for ev in events):
+                        if (
+                            first is not None
+                            and not progressed
+                            and any(ev.get("status") == "completed" for ev in events)
+                        ):
                             # Nothing took them, and ordered goals do not defer:
                             # these completions are gone. Say so, or a challenge
                             # author watches a run die on the clock with both tasks

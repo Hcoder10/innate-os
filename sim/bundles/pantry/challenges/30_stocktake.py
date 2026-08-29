@@ -51,7 +51,6 @@ from _bays import (  # noqa: E402
     TIN_LARGE,
     TIN_SMALL,
 )
-
 from mars_sim_driver.challenges import Answered, Challenge, Cue, Drop, Goal, InCircle, InRect  # noqa: E402
 
 CHALLENGE = Challenge(

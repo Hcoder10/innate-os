@@ -25,7 +25,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "ros2_ws/src/mars_bot/mars_sim_driver"))
 
-from bench_common import CATEGORY_NAMES, CATEGORY_ORDER, VERDICTS, format_scorecard, gate_verdict, scorecard  # noqa: E402
+from bench_common import (  # noqa: E402
+    CATEGORY_NAMES,
+    CATEGORY_ORDER,
+    VERDICTS,
+    format_scorecard,
+    gate_verdict,
+    scorecard,
+)
 
 RESULTS = Path(__file__).resolve().parent / "results"
 
@@ -39,8 +46,7 @@ def main() -> int:
     # skipped loudly; when it is all there is, it is used as-is.
     per_map = [f for f in files if f.name != "bench_results.json"]
     if per_map and len(per_map) != len(files):
-        print("skipping bench_results.json (main.py's default --out): "
-              "per-map files cover the same challenges")
+        print("skipping bench_results.json (main.py's default --out): per-map files cover the same challenges")
         files = per_map
     if not files:
         print(f"no bench_*.json in {RESULTS}")
@@ -56,7 +62,6 @@ def main() -> int:
     # Categories come from the challenge files, not from the results, so a
     # results file written before categories existed still reports correctly.
     from mars_sim_driver.challenges import load_challenges
-
     from runner import sources
 
     cat = {}
@@ -103,8 +108,7 @@ def main() -> int:
         eps_all = [e for e in rows if e["agent"] == agent and e["challenge"] in valid]
         blind = [e for e in eps_all if e.get("camera_errors", 0)]
         if blind:
-            print(f"  !! {len(blind)} episode(s) had CAMERA FAILURES -- those scores are "
-                  f"not perception results:")
+            print(f"  !! {len(blind)} episode(s) had CAMERA FAILURES -- those scores are not perception results:")
             for e in sorted(blind, key=lambda x: x["challenge"])[:6]:
                 print(f"       {e['challenge']:<28} {e['camera_errors']} failed frame(s)")
 

@@ -68,11 +68,16 @@ def can_reach(robot_xy: tuple[float, float], target_xyz: tuple[float, float, flo
     tx, ty, tz = target_xyz
     d = math.hypot(tx - robot_xy[0], ty - robot_xy[1])
     if tz > ARM_Z_MAX_M:
-        return Verdict(False, round(d, 3), round(tz, 3),
-                        f"{tz:.2f} m up -- arm reaches below {ARM_Z_MAX_M:.2f} m regardless of distance")
+        return Verdict(
+            False,
+            round(d, 3),
+            round(tz, 3),
+            f"{tz:.2f} m up -- arm reaches below {ARM_Z_MAX_M:.2f} m regardless of distance",
+        )
     if d > PICK_REACH_M:
-        return Verdict(False, round(d, 3), round(tz, 3),
-                        f"{d:.2f} m away -- outside the {PICK_REACH_M:.2f} m pick radius")
+        return Verdict(
+            False, round(d, 3), round(tz, 3), f"{d:.2f} m away -- outside the {PICK_REACH_M:.2f} m pick radius"
+        )
     return Verdict(True, round(d, 3), round(tz, 3), "in reach")
 
 
@@ -88,4 +93,3 @@ def standoff_for(target_xy: tuple[float, float], target_z: float) -> Standoff | 
     # edge, which is what a caller re-planning an approach actually wants.
     r = MIN_STANDOFF_M
     return Standoff(x=target_xy[0], y=target_xy[1] + r, distance_from_target_m=r)
-

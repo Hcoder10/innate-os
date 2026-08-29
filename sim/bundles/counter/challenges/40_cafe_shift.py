@@ -64,8 +64,7 @@ CHALLENGE = Challenge(
         # Lands as the robot reaches the first cup: the second order arrives
         # while its hands are already full.
         Cue(
-            "While you're up -- the blue one goes to the middle seat as well, "
-            "when you've done that one.",
+            "While you're up -- the blue one goes to the middle seat as well, when you've done that one.",
             after_goal=0,
         ),
         # Two people, not talking to the robot. Named object, plausible action,

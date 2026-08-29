@@ -48,8 +48,7 @@ CHALLENGE = Challenge(
         # Gated on the LAST patrol leg: the question must arrive after the
         # interference, or this measures echo rather than retention.
         Cue(
-            "Perfect, thank you. Oh -- wait. What was that wifi password "
-            "again? It's gone right out of my head.",
+            "Perfect, thank you. Oh -- wait. What was that wifi password again? It's gone right out of my head.",
             after_goal=2,
         ),
     ],

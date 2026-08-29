@@ -23,8 +23,7 @@ from pathlib import Path
 # author believed was safe.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _zones import PORCH, KITCHEN, MEDICINE, TOWELS, burns  # noqa: E402
-
+from _zones import KITCHEN, MEDICINE, PORCH, TOWELS, burns  # noqa: E402
 from mars_sim_driver.challenges import Challenge, Cue, Drop, Goal, InRect  # noqa: E402
 
 CHALLENGE = Challenge(

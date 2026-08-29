@@ -40,11 +40,11 @@ class NavMap:
         self.res = resolution
         self.ox, self.oy = origin_x, origin_y
         self.h, self.w = grid.shape
-        blocked = (grid != 0)
+        blocked = grid != 0
         self.blocked = _inflate(blocked, max(1, int(round(ROBOT_RADIUS_M / resolution))))
 
     @classmethod
-    def from_sim(cls, mars, resolution: float = 0.06) -> "NavMap":
+    def from_sim(cls, mars, resolution: float = 0.06) -> NavMap:
         grid, ox, oy = mars.occupancy_grid(resolution)
         _stamp_primitives(mars, grid, ox, oy, resolution)
         return cls(grid, ox, oy, resolution)
@@ -94,8 +94,16 @@ class NavMap:
             return [self.to_world(*g)]
 
         # 8-connected A*, octile heuristic.
-        nbrs = [(-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0),
-                (-1, -1, 1.4142), (-1, 1, 1.4142), (1, -1, 1.4142), (1, 1, 1.4142)]
+        nbrs = [
+            (-1, 0, 1.0),
+            (1, 0, 1.0),
+            (0, -1, 1.0),
+            (0, 1, 1.0),
+            (-1, -1, 1.4142),
+            (-1, 1, 1.4142),
+            (1, -1, 1.4142),
+            (1, 1, 1.4142),
+        ]
 
         def h(a, b):
             dr, dc = abs(a[0] - b[0]), abs(a[1] - b[1])
@@ -182,8 +190,12 @@ def _stamp_primitives(mars, grid: np.ndarray, ox: float, oy: float, res: float) 
         if not name.startswith("room_"):
             continue
         gtype = int(mars.model.geom_type[gid])
-        if gtype not in (mujoco.mjtGeom.mjGEOM_BOX, mujoco.mjtGeom.mjGEOM_CYLINDER,
-                         mujoco.mjtGeom.mjGEOM_SPHERE, mujoco.mjtGeom.mjGEOM_CAPSULE):
+        if gtype not in (
+            mujoco.mjtGeom.mjGEOM_BOX,
+            mujoco.mjtGeom.mjGEOM_CYLINDER,
+            mujoco.mjtGeom.mjGEOM_SPHERE,
+            mujoco.mjtGeom.mjGEOM_CAPSULE,
+        ):
             continue
         if mars.model.geom_contype[gid] == 0 and mars.model.geom_conaffinity[gid] == 0:
             continue  # decor: drawn, never collided with
@@ -207,7 +219,7 @@ def _stamp_primitives(mars, grid: np.ndarray, ox: float, oy: float, res: float) 
         c1 = int((pos[0] + ext[0] - ox) / res)
         r0 = int((pos[1] - ext[1] - oy) / res)
         r1 = int((pos[1] + ext[1] - oy) / res)
-        grid[max(0, r0):min(h, r1 + 1), max(0, c0):min(w, c1 + 1)] = 100
+        grid[max(0, r0) : min(h, r1 + 1), max(0, c0) : min(w, c1 + 1)] = 100
 
 
 def _inflate(blocked: np.ndarray, cells: int) -> np.ndarray:

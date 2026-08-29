@@ -37,9 +37,8 @@ import socket
 import threading
 from http.server import ThreadingHTTPServer
 
-import pytest
-
 import gemini_shim
+import pytest
 
 EVENTS = [b'data: {"seg": 0}\n\n', b'data: {"seg": 1}\n\n']
 
@@ -69,9 +68,7 @@ class DyingUpstream(threading.Thread):
     def _serve(self, conn: socket.socket) -> None:
         try:
             conn.recv(65536)
-            conn.sendall(b"HTTP/1.1 200 OK\r\n"
-                         b"Content-Type: text/event-stream\r\n"
-                         b"Transfer-Encoding: chunked\r\n\r\n")
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n")
             for event in EVENTS:
                 conn.sendall(f"{len(event):X}\r\n".encode() + event + b"\r\n")
             # and then it dies: no terminating "0\r\n\r\n"
@@ -98,8 +95,10 @@ def raw_response(host: str, port: int, path: str) -> tuple[bytes, bytes]:
     """
     sock = socket.create_connection((host, port), timeout=20)
     try:
-        sock.sendall(f"POST {path} HTTP/1.1\r\nHost: {host}\r\n"
-                     f"Content-Length: 2\r\nContent-Type: application/json\r\n\r\n{{}}".encode())
+        sock.sendall(
+            f"POST {path} HTTP/1.1\r\nHost: {host}\r\n"
+            f"Content-Length: 2\r\nContent-Type: application/json\r\n\r\n{{}}".encode()
+        )
         buffer = b""
         while True:
             try:
@@ -129,8 +128,7 @@ def relayed() -> tuple[bytes, bytes]:
         gemini_shim.UPSTREAM = f"http://127.0.0.1:{upstream.port}"
         gemini_shim.Handler.api_key = "test-key-not-real"
         serving.start()
-        yield raw_response("127.0.0.1", server.server_port,
-                           "/v1beta/models/m:streamGenerateContent?alt=sse")
+        yield raw_response("127.0.0.1", server.server_port, "/v1beta/models/m:streamGenerateContent?alt=sse")
     finally:
         server.shutdown()
         server.server_close()

@@ -19,7 +19,6 @@ if __name__ == "__main__":  # run directly: let pytest collect this file (confte
     raise SystemExit(pytest.main([__file__] + sys.argv[1:]))
 
 import pytest
-
 from backends import EchoBackend
 from brain_agent import BrainAgent
 from runner import Episode, run_episode

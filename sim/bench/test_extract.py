@@ -15,7 +15,6 @@ if __name__ == "__main__":  # run directly: let pytest collect this file (confte
     raise SystemExit(pytest.main([__file__] + sys.argv[1:]))
 
 import pytest
-
 from backends import _coerce, _last_json_object
 
 CASES = [
@@ -52,8 +51,7 @@ CASES = [
 ]
 
 
-@pytest.mark.parametrize(("raw", "want"), [(raw, want) for _, raw, want in CASES],
-                         ids=[name for name, _, _ in CASES])
+@pytest.mark.parametrize(("raw", "want"), [(raw, want) for _, raw, want in CASES], ids=[name for name, _, _ in CASES])
 def test_parser_case(raw: str, want: dict) -> None:
     obj = _last_json_object(raw)
     got = _coerce(obj) if obj else None

@@ -90,9 +90,7 @@ class NemotronVoiceChatBackend:
     # gets synthesized to speech would just lengthen the audio for nothing.
     def decide(self, obs, menu) -> dict:  # noqa: ARG002
         body = json.dumps({"observation_text": obs.as_text()}).encode()
-        req = urllib.request.Request(
-            f"{self.base}/decide", data=body, headers={"Content-Type": "application/json"}
-        )
+        req = urllib.request.Request(f"{self.base}/decide", data=body, headers={"Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
                 data = json.loads(resp.read())

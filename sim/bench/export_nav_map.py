@@ -81,7 +81,7 @@ def outer_wall_bbox(grid: np.ndarray) -> tuple[int, int, int, int] | None:
         return None
     seen = np.zeros(grid.shape, dtype=bool)
     best: list[tuple[int, int]] = []
-    for r, c in zip(*np.nonzero(occupied)):
+    for r, c in zip(*np.nonzero(occupied), strict=True):
         if seen[r, c]:
             continue
         queue, cells = deque([(int(r), int(c))]), []
@@ -92,8 +92,7 @@ def outer_wall_bbox(grid: np.ndarray) -> tuple[int, int, int, int] | None:
             for dy in (-1, 0, 1):
                 for dx in (-1, 0, 1):
                     ny, nx = y + dy, x + dx
-                    if (0 <= ny < grid.shape[0] and 0 <= nx < grid.shape[1]
-                            and occupied[ny, nx] and not seen[ny, nx]):
+                    if 0 <= ny < grid.shape[0] and 0 <= nx < grid.shape[1] and occupied[ny, nx] and not seen[ny, nx]:
                         seen[ny, nx] = True
                         queue.append((ny, nx))
         if len(cells) > len(best):
@@ -130,12 +129,13 @@ def main() -> int:
         return 1
     r0, r1, c0, c1 = envelope
     if not (r0 <= seed[0] <= r1 and c0 <= seed[1] <= c1):
-        print(f"ERROR: robot cell {seed} is outside the wall envelope "
-              f"rows {r0}-{r1} cols {c0}-{c1}; refusing to export")
+        print(
+            f"ERROR: robot cell {seed} is outside the wall envelope rows {r0}-{r1} cols {c0}-{c1}; refusing to export"
+        )
         return 1
     bounded = grid.copy()
     outside = np.ones(grid.shape, dtype=bool)
-    outside[r0:r1 + 1, c0:c1 + 1] = False
+    outside[r0 : r1 + 1, c0 : c1 + 1] = False
     bounded[outside] = -1  # the apron is not part of the building
     reach = reachable_from(bounded, seed)
     if not reach.any():
@@ -159,7 +159,7 @@ def main() -> int:
     keep = np.zeros(grid.shape, dtype=bool)
     for dr in (0, 1, 2):
         for dc in (0, 1, 2):
-            keep |= padded[dr:dr + grid.shape[0], dc:dc + grid.shape[1]]
+            keep |= padded[dr : dr + grid.shape[0], dc : dc + grid.shape[1]]
     grid[(grid == 100) & ~keep] = -1
 
     # map_server PGM: 254 free, 0 occupied, 205 unknown; row 0 at the TOP.
@@ -172,9 +172,11 @@ def main() -> int:
         f"origin: [{ox:.4f}, {oy:.4f}, 0.0]\nnegate: 0\noccupied_thresh: 0.65\nfree_thresh: {FREE_THRESH}\n"
     )
     free = int((grid == 0).sum())
-    print(f"wrote {out}/sim_apartment.yaml ({grid.shape[1]}x{grid.shape[0]} @ {RESOLUTION}m): "
-          f"{free} free, {int((grid == 100).sum())} occupied, {int((grid == -1).sum())} unknown "
-          f"({dropped} unreachable cells returned to unknown)")
+    print(
+        f"wrote {out}/sim_apartment.yaml ({grid.shape[1]}x{grid.shape[0]} @ {RESOLUTION}m): "
+        f"{free} free, {int((grid == 100).sum())} occupied, {int((grid == -1).sum())} unknown "
+        f"({dropped} unreachable cells returned to unknown)"
+    )
     return 0
 
 

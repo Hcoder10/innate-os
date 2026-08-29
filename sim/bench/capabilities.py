@@ -255,8 +255,10 @@ def _ungraspable() -> dict[str, str]:
 def blocked_reason(challenge, env: dict[str, str] | None = None) -> str | None:
     """Why this challenge cannot be attempted here, or None if it can."""
     if MANIPULATION in missing_capabilities(env) and needs_manipulation(challenge):
-        return ("needs pick_any_object, which needs a grasp-vision backend: "
-                "INNATE_SERVICE_KEY, or GEMINI_BASE_URL on an OpenAI-compatible endpoint")
+        return (
+            "needs pick_any_object, which needs a grasp-vision backend: "
+            "INNATE_SERVICE_KEY, or GEMINI_BASE_URL on an OpenAI-compatible endpoint"
+        )
     too_wide = _ungraspable().get(getattr(challenge, "id", ""))
     if too_wide:
         return f"target does not fit the gripper: {too_wide}"

@@ -46,8 +46,7 @@ CHALLENGE = Challenge(
         # given, the way a person asks follow-ups. An agent that never answers
         # never hears it.
         Cue(
-            "Thanks. One more thing -- which colour cup is the one in the "
-            "middle, between the other two?",
+            "Thanks. One more thing -- which colour cup is the one in the middle, between the other two?",
             after_goal=0,
         ),
     ],

@@ -20,6 +20,7 @@ to satisfy a signature whose response-injection machinery is never wanted.
 
 Usage: python3 nemotron_vc_server.py [--port 8099]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -43,8 +44,7 @@ from nemo.collections.speechlm2.inference.utils.offline_voicechat import (  # no
 )
 
 CHECKPOINT = os.environ.get("NVC_CHECKPOINT", "/home/sarta/models/NemotronLabs-VoiceChat-11B")
-TEMPLATE = os.environ.get(
-    "NVC_TEMPLATE", "/home/sarta/Speech/examples/speechlm2/function_calling/template.jinja")
+TEMPLATE = os.environ.get("NVC_TEMPLATE", "/home/sarta/Speech/examples/speechlm2/function_calling/template.jinja")
 
 # The 7 blind-harness actions (no "look" -- this model has no camera) as
 # tool definitions in the shape the FC template renders. Names and argument
@@ -52,26 +52,63 @@ TEMPLATE = os.environ.get(
 # call maps onto the harness's {"action", "args"} schema with no
 # translation layer to get wrong.
 TOOLS = [
-    {"function": {"name": "turn", "description": "Turn in place. Positive degrees is left.",
-                  "parameters": {"type": "object",
-                                 "properties": {"degrees": {"type": "number", "description": "-180..180"}},
-                                 "required": ["degrees"]}}},
-    {"function": {"name": "forward", "description": "Drive straight ahead.",
-                  "parameters": {"type": "object",
-                                 "properties": {"metres": {"type": "number", "description": "0.05..3.0"}},
-                                 "required": ["metres"]}}},
-    {"function": {"name": "pick", "description": "Grasp the nearest object within 42 cm.",
-                  "parameters": {"type": "object", "properties": {}, "required": []}}},
-    {"function": {"name": "place", "description": "Put down what you are carrying, 30 cm ahead.",
-                  "parameters": {"type": "object", "properties": {}, "required": []}}},
-    {"function": {"name": "say", "description": "Speak to the person.",
-                  "parameters": {"type": "object", "properties": {"text": {"type": "string"}},
-                                 "required": ["text"]}}},
-    {"function": {"name": "answer", "description": "Answer a question you were asked.",
-                  "parameters": {"type": "object", "properties": {"value": {"type": "string"}},
-                                 "required": ["value"]}}},
-    {"function": {"name": "finish", "description": "Stop; the task is done or impossible.",
-                  "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {
+        "function": {
+            "name": "turn",
+            "description": "Turn in place. Positive degrees is left.",
+            "parameters": {
+                "type": "object",
+                "properties": {"degrees": {"type": "number", "description": "-180..180"}},
+                "required": ["degrees"],
+            },
+        }
+    },
+    {
+        "function": {
+            "name": "forward",
+            "description": "Drive straight ahead.",
+            "parameters": {
+                "type": "object",
+                "properties": {"metres": {"type": "number", "description": "0.05..3.0"}},
+                "required": ["metres"],
+            },
+        }
+    },
+    {
+        "function": {
+            "name": "pick",
+            "description": "Grasp the nearest object within 42 cm.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        }
+    },
+    {
+        "function": {
+            "name": "place",
+            "description": "Put down what you are carrying, 30 cm ahead.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        }
+    },
+    {
+        "function": {
+            "name": "say",
+            "description": "Speak to the person.",
+            "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
+        }
+    },
+    {
+        "function": {
+            "name": "answer",
+            "description": "Answer a question you were asked.",
+            "parameters": {"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]},
+        }
+    },
+    {
+        "function": {
+            "name": "finish",
+            "description": "Stop; the task is done or impossible.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        }
+    },
 ]
 
 SYSTEM_MESSAGE = (
@@ -101,8 +138,12 @@ def _synthesize_wav(text: str) -> str:
     # .mp3 for honesty: edge-tts emits mp3 regardless of the extension
     # asked for, and load_wav_16k_mono decodes+resamples it fine.
     path = f"/tmp/nvc_turn_{uuid.uuid4().hex}.mp3"
-    subprocess.run([EDGE_TTS, "--voice", TTS_VOICE, "--text", text, "--write-media", path],
-                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(
+        [EDGE_TTS, "--voice", TTS_VOICE, "--text", text, "--write-media", path],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     return path
 
 
@@ -142,8 +183,7 @@ def _extract_tool_calls(model, result: dict) -> list[dict]:
     return calls
 
 
-def _decide(model, prompt_tokens, prompt_token_lens, observation_text: str,
-            wav_path: str | None = None) -> dict:
+def _decide(model, prompt_tokens, prompt_token_lens, observation_text: str, wav_path: str | None = None) -> dict:
     # wav_path bypasses TTS entirely -- diagnostic seam for feeding real
     # recorded speech (e.g. the checkpoint's own demo wavs) to separate
     # "the FC pipeline is broken" from "the model can't parse espeak audio".
@@ -173,13 +213,11 @@ def _decide(model, prompt_tokens, prompt_token_lens, observation_text: str,
     text = result.get("text", [""])[0]
     calls = _extract_tool_calls(model, result)
     if calls:
-        return {"action": calls[0]["name"], "args": calls[0]["arguments"],
-                "raw_text": text, "tool_calls": calls}
+        return {"action": calls[0]["name"], "args": calls[0]["arguments"], "raw_text": text, "tool_calls": calls}
     # No (parseable) tool call: relay the model's text as a spoken turn
     # rather than dropping it -- the same graceful degradation backends.py's
     # _coerce applies to malformed replies. "say" is always a legal action.
-    return {"action": "say", "args": {"text": text or "(no response)"},
-            "raw_text": text, "tool_calls": []}
+    return {"action": "say", "args": {"text": text or "(no response)"}, "raw_text": text, "tool_calls": []}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -207,9 +245,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         t0 = time.time()
         try:
-            decision = _decide(self.server.model, self.server.prompt_tokens,
-                                self.server.prompt_token_lens,
-                                body.get("observation_text", ""), wav_path=wav_path)
+            decision = _decide(
+                self.server.model,
+                self.server.prompt_tokens,
+                self.server.prompt_token_lens,
+                body.get("observation_text", ""),
+                wav_path=wav_path,
+            )
             decision["elapsed_s"] = round(time.time() - t0, 2)
             self._reply(200, decision)
         except Exception as exc:  # noqa: BLE001 -- one bad turn must not kill the server

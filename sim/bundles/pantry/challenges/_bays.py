@@ -27,9 +27,9 @@ not by eye.
 """
 
 # Front-of-deck coordinate for each bay: the fixed axis the stock sits on.
-BAY_A_X = -2.24   # west wall, jars
-BAY_B_Y = 1.54    # north wall, cartons
-BAY_C_X = 2.24    # east wall, tins
+BAY_A_X = -2.24  # west wall, jars
+BAY_B_Y = 1.54  # north wall, cartons
+BAY_C_X = 2.24  # east wall, tins
 
 # --- bay A: jars, on decks 1 and 2 ---------------------------------------
 # Spread far enough along a 2.2 m bay that a single 70-degree frame from the
@@ -71,4 +71,4 @@ JAR_NEW = (-1.35, -1.16)
 # ended at 0.85. "With the other cartons" means the carton bay, so the goal
 # is the bay. (x0, y0, x1, y1).
 PUT_A_RECT = (BAY_A_X - 0.25, -1.15, BAY_A_X + 0.25, 1.10)  # jar bay, west wall
-PUT_B_RECT = (-2.3, BAY_B_Y - 0.25, 2.3, BAY_B_Y + 0.25)    # carton bay, north wall
+PUT_B_RECT = (-2.3, BAY_B_Y - 0.25, 2.3, BAY_B_Y + 0.25)  # carton bay, north wall

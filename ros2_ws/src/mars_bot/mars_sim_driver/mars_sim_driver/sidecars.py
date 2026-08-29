@@ -19,8 +19,9 @@ from typing import TypeVar
 T = TypeVar("T")
 
 
-def load_sidecars(roots: list[Path], module_prefix: str, export: str, tag: str,
-                  key: Callable[[T], str], set_root: bool = False) -> dict[str, T]:
+def load_sidecars(
+    roots: list[Path], module_prefix: str, export: str, tag: str, key: Callable[[T], str], set_root: bool = False
+) -> dict[str, T]:
     """{key(obj): obj} for every ``<root>/*.py`` not starting with an
     underscore, in root order then filename order (filenames sort the roster
     the user sees). `module_prefix` names the imported module; `export` is the

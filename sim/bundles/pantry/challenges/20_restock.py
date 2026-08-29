@@ -31,7 +31,6 @@ from _bays import (  # noqa: E402
     JAR_NEW,
     PUT_B_RECT,
 )
-
 from mars_sim_driver.challenges import Challenge, Drop, Goal, InRect, Near  # noqa: E402
 
 CHALLENGE = Challenge(

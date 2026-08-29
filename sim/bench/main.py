@@ -41,9 +41,8 @@ from runner import Episode, run_episode, sources  # noqa: E402
 
 def discover() -> dict[str, list[tuple[str, str]]]:
     """{map: [(challenge_id, requirement)]} without building any world."""
-    from mars_sim_driver.challenges import load_challenges
-
     import autoplan
+    from mars_sim_driver.challenges import load_challenges
 
     out: dict[str, list[tuple[str, str]]] = {}
     for name, (_assets, root) in sources().items():
@@ -79,7 +78,6 @@ def _one(job):
         # agent architecture, and swapping it is the point of the seam.
         if agent_name.startswith("brain"):
             from backends import BACKENDS
-            from brain_agent import BrainAgent
 
             # backends_v2 is a SEPARATE registry (AGENT_SPEC.md's new agent)
             # merged in here rather than into backends.py itself, so the
@@ -89,6 +87,8 @@ def _one(job):
             from backends_v2 import BACKENDS_V2
             from backends_v3 import BACKENDS_V3
             from backends_v4 import BACKENDS_V4
+            from brain_agent import BrainAgent
+
             all_backends = {**BACKENDS, **BACKENDS_V2, **BACKENDS_V3, **BACKENDS_V4}
 
             kind = agent_name.split(":", 1)[1] if ":" in agent_name else "codex"
@@ -133,8 +133,9 @@ def _one(job):
         wh = (640, 480) if agent_name.startswith("brain") else (160, 120)
         return run_episode(map_name, challenge_id, make, max_sim_s=cap, render_wh=wh)
     except Exception as exc:  # noqa: BLE001 -- one bad episode must not sink the sweep
-        return Episode(map_name, challenge_id, agent_name, False, 0, 0, 0.0, "", 0.0, 0,
-                       error=f"{type(exc).__name__}: {exc}")
+        return Episode(
+            map_name, challenge_id, agent_name, False, 0, 0, 0.0, "", 0.0, 0, error=f"{type(exc).__name__}: {exc}"
+        )
 
 
 def main() -> int:
@@ -143,8 +144,12 @@ def main() -> int:
     ap.add_argument("--agents", default="oracle,random")
     ap.add_argument("--workers", type=int, default=0, help="0 = cpu_count - 2")
     ap.add_argument("--seeds", type=int, default=1, help="random-agent rollouts per challenge")
-    ap.add_argument("--random-cap", type=float, default=240.0,
-                    help="sim-seconds budget for random rollouts (0 = the challenge's own limit)")
+    ap.add_argument(
+        "--random-cap",
+        type=float,
+        default=240.0,
+        help="sim-seconds budget for random rollouts (0 = the challenge's own limit)",
+    )
     ap.add_argument("--limit", type=int, default=0, help="cap challenges per map (smoke tests)")
     ap.add_argument("--out", type=Path, default=RESULTS_DIR / "bench_results.json")
     args = ap.parse_args()
@@ -205,7 +210,7 @@ def main() -> int:
     tally = dict.fromkeys(VERDICTS, 0)
     valid_ids: set[str] = set()
     for m in maps:
-        for cid, req in (catalogue.get(m, [])[: args.limit] if args.limit else catalogue.get(m, [])):
+        for cid, req in catalogue.get(m, [])[: args.limit] if args.limit else catalogue.get(m, []):
             eps = [r for r in rows if r["challenge"] == cid]
             oracle = next((r for r in eps if r["agent"] == "oracle"), None)
             rnd = [r for r in eps if r["agent"] == "random"]
@@ -230,12 +235,13 @@ def main() -> int:
     print("\n=== scores (oracle) ===")
     for e in sorted(results, key=lambda x: x.challenge):
         if e.agent == "oracle" and e.passed:
-            print(f"  {e.challenge:<28} {e.goals_done}/{e.goals_total}  sim {e.elapsed_s:6.1f}s  "
-                  f"steps {e.steps:5d}")
+            print(f"  {e.challenge:<28} {e.goals_done}/{e.goals_total}  sim {e.elapsed_s:6.1f}s  steps {e.steps:5d}")
 
     work = sum(e.wall_s for e in results)
-    print(f"\n{len(results)} episodes, {work:.0f}s of work on {workers} workers "
-          f"({work / max(1, workers):.0f}s wall-equivalent)")
+    print(
+        f"\n{len(results)} episodes, {work:.0f}s of work on {workers} workers "
+        f"({work / max(1, workers):.0f}s wall-equivalent)"
+    )
     print("  " + "  ".join(f"{k}={v}" for k, v in tally.items()))
     return 0 if tally["INVALID"] == 0 and tally["INCOMPLETE"] == 0 else 1
 

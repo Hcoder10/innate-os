@@ -101,9 +101,7 @@ def local_to_absolute_nav_command(inputs: dict, robot_pose: Pose) -> dict:
     sin_t = math.sin(robot_theta)
     absolute_x = robot_x + local_x * cos_t - local_y * sin_t
     absolute_y = robot_y + local_x * sin_t + local_y * cos_t
-    absolute_theta = math.atan2(
-        math.sin(robot_theta + local_theta), math.cos(robot_theta + local_theta)
-    )
+    absolute_theta = math.atan2(math.sin(robot_theta + local_theta), math.cos(robot_theta + local_theta))
 
     adjusted = inputs.copy()
     adjusted["x"] = absolute_x

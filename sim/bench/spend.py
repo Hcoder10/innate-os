@@ -13,8 +13,8 @@ per-token units for its own live cost line; update both together.
 
 from __future__ import annotations
 
-import json
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -72,9 +72,11 @@ def main() -> int:
     print("-" * 66)
     print(f"{'TOTAL':<26} {calls:>6} {'':>11} {'':>9} ${grand:>7.4f}")
     if calls:
-        print(f"\nper call: ${grand / calls:.5f}   "
-              f"({sum(m['prompt'] for m in by_model.values()) // calls:,} in / "
-              f"{sum(m['out'] for m in by_model.values()) // calls:,} out avg)")
+        print(
+            f"\nper call: ${grand / calls:.5f}   "
+            f"({sum(m['prompt'] for m in by_model.values()) // calls:,} in / "
+            f"{sum(m['out'] for m in by_model.values()) // calls:,} out avg)"
+        )
     return 0
 
 

@@ -37,17 +37,13 @@ from _bays import (  # noqa: E402
     JAR_STRAY,
     PUT_A_RECT,
 )
-
 from mars_sim_driver.challenges import Answered, Challenge, Drop, Goal, InRect  # noqa: E402
 
 CHALLENGE = Challenge(
     id="pantry_misfiled",
     title="Something is on the wrong shelf",
     category=2,
-    brief=(
-        "Someone has shelved something in the wrong bay. Tell me what it is, "
-        "then put it back where it belongs."
-    ),
+    brief=("Someone has shelved something in the wrong bay. Tell me what it is, then put it back where it belongs."),
     setup=[
         Drop("pantry_jar_stray", *JAR_STRAY),
         Drop("pantry_carton_oats", *CARTON_OATS),
@@ -61,8 +57,15 @@ CHALLENGE = Challenge(
             "Say what is misfiled",
             Answered(
                 [
-                    "jar", "a jar", "the jar", "jar of jam", "the jam jar",
-                    "red jar", "the red jar", "the red one", "jam",
+                    "jar",
+                    "a jar",
+                    "the jar",
+                    "jar of jam",
+                    "the jam jar",
+                    "red jar",
+                    "the red jar",
+                    "the red one",
+                    "jam",
                 ],
             ),
         ),

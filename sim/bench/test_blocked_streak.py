@@ -19,7 +19,6 @@ if __name__ == "__main__":  # run directly: let pytest collect this file (confte
 import math
 
 import pytest
-
 from brain_agent import PRIMITIVE_TIMEOUT_S, BrainAgent, Observation
 
 
@@ -80,6 +79,7 @@ def completed_forward(agent, mars, start_pose, metres):
 
 # 1. Basic increment on a blocked forward.
 
+
 def test_blocked_streak_increments_on_a_timed_out_forward(agent, mars) -> None:
     blocked_forward(agent, mars, (0.0, 0.0, 0.0), 0.05)
     assert agent._blocked_streak == 1
@@ -92,6 +92,7 @@ def test_blocked_streak_increments_on_a_timed_out_forward(agent, mars) -> None:
 # completed primitive (including the turn) wiped the count every cycle
 # and it could never climb past 1. This is the one test that would have
 # caught that before it shipped, not after.
+
 
 def test_a_completed_turn_does_not_reset_the_streak(agent, mars) -> None:
     blocked_forward(agent, mars, (0.0, 0.0, math.radians(74)), 0.26)
@@ -112,6 +113,7 @@ def test_streak_climbs_across_intervening_successful_turns(agent, mars) -> None:
 
 # 3. Only a completed FORWARD resets it -- proves the path was actually clear.
 
+
 def test_a_completed_forward_resets_the_streak_to_zero(agent, mars) -> None:
     blocked_forward(agent, mars, (0.0, 0.0, 0.0), 0.26)
     blocked_forward(agent, mars, mars._pose, 0.26)
@@ -122,6 +124,7 @@ def test_a_completed_forward_resets_the_streak_to_zero(agent, mars) -> None:
 
 # 4. A blocked TURN also counts toward the streak (both primitive kinds can
 # discover the robot cannot move the way it just tried to).
+
 
 def test_a_timed_out_turn_also_increments_the_streak(agent, mars) -> None:
     agent._prim = ("turn", math.radians(90), 0.0, (0.0, 0.0, 0.0))
@@ -137,6 +140,7 @@ def test_a_timed_out_turn_also_increments_the_streak(agent, mars) -> None:
 # anywhere, but this exercises that property through the actual code path
 # rather than trusting the grep alone.
 
+
 @pytest.mark.parametrize("action", ["look", "say", "answer", "finish", "totally_unknown_action"])
 def test_apply_non_movement_action_leaves_the_streak_untouched(agent, action) -> None:
     agent._blocked_streak = 2
@@ -145,6 +149,7 @@ def test_apply_non_movement_action_leaves_the_streak_untouched(agent, action) ->
 
 
 # 6. reset() clears the streak across episodes.
+
 
 def test_reset_clears_blocked_streak(agent, mars) -> None:
     agent._blocked_streak = 3
@@ -155,6 +160,7 @@ def test_reset_clears_blocked_streak(agent, mars) -> None:
 # 7. End-to-end wiring: _observe() itself (not a hand-built Observation)
 # carries the real _blocked_streak into the Observation it returns, and
 # the warning threshold/content is driven by that real value.
+
 
 def test_observe_carries_the_real_blocked_streak_through(agent, mars) -> None:
     agent._blocked_streak = 3

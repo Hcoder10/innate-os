@@ -6,8 +6,8 @@
 """
 
 import json
-import time
 import os
+import time
 
 from brain_client.skills.types import cancellable_sleep
 from innate_proxy import ProxyClient

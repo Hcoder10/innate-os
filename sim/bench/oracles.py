@@ -84,10 +84,17 @@ ORACLES: dict[str, list[tuple]] = {
         ("wait", 2.5),
     ],
     "rounds_all_doors": [
-        ("goto", -4.5, -0.2), ("goto", -4.5, -1.6), ("goto", -4.5, -0.2),
-        ("goto", -1.5, -0.2), ("goto", -1.5, -1.6), ("goto", -1.5, -0.2),
-        ("goto", 1.5, -0.2), ("goto", 1.5, -1.6), ("goto", 1.5, -0.2),
-        ("goto", 4.5, -0.2), ("goto", 4.5, -1.6),
+        ("goto", -4.5, -0.2),
+        ("goto", -4.5, -1.6),
+        ("goto", -4.5, -0.2),
+        ("goto", -1.5, -0.2),
+        ("goto", -1.5, -1.6),
+        ("goto", -1.5, -0.2),
+        ("goto", 1.5, -0.2),
+        ("goto", 1.5, -1.6),
+        ("goto", 1.5, -0.2),
+        ("goto", 4.5, -0.2),
+        ("goto", 4.5, -1.6),
     ],
     "rounds_find_bathroom": [
         ("goto", 4.5, -0.2),
@@ -115,15 +122,22 @@ ORACLES: dict[str, list[tuple]] = {
         # reading (what earlier standalone tests checked) does not capture,
         # and the two disagreed by over a metre here. Engine-measured centre
         # is (-3.30, 1.27); this waypoint is within the 0.9 m goal radius.
-        ("goto", -3.0, 1.3), ("wait", 2.5),
-        ("goto", -0.4, 1.2), ("goto", 0.4, 1.2),
-        ("goto", 1.0, 0.85), ("wait", 2.5),
-        ("goto", 0.4, 1.2), ("goto", -0.4, 1.2),
+        ("goto", -3.0, 1.3),
+        ("wait", 2.5),
+        ("goto", -0.4, 1.2),
+        ("goto", 0.4, 1.2),
+        ("goto", 1.0, 0.85),
+        ("wait", 2.5),
+        ("goto", 0.4, 1.2),
+        ("goto", -0.4, 1.2),
         # -2.5 lines up with the bedroom door, but the bed's near edge is at
         # x=-2.51, so continuing straight in on that line clips it. Step out to
         # -2.0 once through.
-        ("goto", -2.5, 0.5), ("goto", -2.5, -0.5), ("goto", -2.0, -1.6),
-        ("goto", -1.4, -2.6), ("wait", 2.5),
+        ("goto", -2.5, 0.5),
+        ("goto", -2.5, -0.5),
+        ("goto", -2.0, -1.6),
+        ("goto", -1.4, -2.6),
+        ("wait", 2.5),
     ],
     # household_tour: hand waypoints because the derived ones are room-rectangle
     # CENTRES, and the centre of a kitchen is where the kitchen units are. A*
@@ -139,7 +153,8 @@ ORACLES: dict[str, list[tuple]] = {
         ("wait", 1.0),
     ],
     "household_fetch_mug": [
-        ("goto", -0.4, 1.2), ("goto", 0.4, 1.2),
+        ("goto", -0.4, 1.2),
+        ("goto", 0.4, 1.2),
         # 2.80, not 2.65. The goal radius is 0.55 m from the mug at (1.4, 3.1),
         # and the follower stops up to ARRIVE_M short of its waypoint plus
         # whatever the last turn costs -- from 2.65 the robot settled at
@@ -147,7 +162,8 @@ ORACLES: dict[str, list[tuple]] = {
         # margin.
         ("goto", 1.4, 2.62),
         ("grab", "household_mug_kitchen"),
-        ("goto", 0.4, 1.2), ("goto", -0.4, 1.2),
+        ("goto", 0.4, 1.2),
+        ("goto", -0.4, 1.2),
         ("goto", -1.3, 2.0),
         ("put", "household_mug_kitchen", -1.3, 2.6),
         ("wait", 1.0),

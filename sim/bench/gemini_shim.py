@@ -103,8 +103,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:  # noqa: N802
         self._relay("DELETE")
 
-    def _fail(self, code: int, payload: bytes, headers_sent: bool,
-              content_type: str = "application/json") -> None:
+    def _fail(self, code: int, payload: bytes, headers_sent: bool, content_type: str = "application/json") -> None:
         """Report a failure without corrupting a response already in flight.
 
         If the headers went out, the body has begun and a status line can no
@@ -212,26 +211,29 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:  # noqa: BLE001
                 payload = b'{"error": "upstream error body was truncated"}'
             status = error.code
-            self._fail(error.code, payload, headers_sent,
-                       error.headers.get("content-type", "application/json"))
+            self._fail(error.code, payload, headers_sent, error.headers.get("content-type", "application/json"))
             sent = len(payload)
         except Exception as error:  # noqa: BLE001 -- a shim never takes the stack down
             status = 502
-            payload = (f'{{"error": "shim could not reach upstream: '
-                       f'{type(error).__name__}"}}').encode()
+            payload = (f'{{"error": "shim could not reach upstream: {type(error).__name__}"}}').encode()
             self._fail(502, payload, headers_sent)
             # Named in the log, because "502 0B" reads as "sent nothing" when
             # the useful fact is WHY, and whether the body had already begun.
-            print(f"    upstream {type(error).__name__}"
-                  f"{' MID-BODY (client sees a truncated stream)' if headers_sent else ''}",
-                  flush=True)
+            print(
+                f"    upstream {type(error).__name__}"
+                f"{' MID-BODY (client sees a truncated stream)' if headers_sent else ''}",
+                flush=True,
+            )
             sent = 0 if headers_sent else len(payload)
 
         # first-byte time as well as total: the gap between them is the only
         # way to see from a log whether this is relaying or accumulating.
         first = f"first {1000 * first_at:.0f}ms " if first_at is not None else ""
-        print(f"{method} {self.path.split('?')[0]} -> {status} {sent}B "
-              f"{first}total {1000 * (time.time() - started):.0f}ms", flush=True)
+        print(
+            f"{method} {self.path.split('?')[0]} -> {status} {sent}B "
+            f"{first}total {1000 * (time.time() - started):.0f}ms",
+            flush=True,
+        )
 
 
 def main() -> int:
@@ -244,9 +246,10 @@ def main() -> int:
         return 2
     Handler.api_key = key
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    print(f"gemini shim on :{port} -> {UPSTREAM}  "
-          f"({OPENAI_PATH} -> {OPENAI_UPSTREAM}, everything else passed through)",
-          flush=True)
+    print(
+        f"gemini shim on :{port} -> {UPSTREAM}  ({OPENAI_PATH} -> {OPENAI_UPSTREAM}, everything else passed through)",
+        flush=True,
+    )
     server.serve_forever()
     return 0
 

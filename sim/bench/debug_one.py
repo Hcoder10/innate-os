@@ -71,8 +71,10 @@ def main() -> int:
             if engine.state != "running" or agent.done or t > (ch.time_limit_s or 900):
                 break
 
-    print(f"\nfinal: {engine.state} goals={engine.goal_done} reason={engine.reason!r} "
-          f"agent_step={agent.i}/{len(steps)} failed={agent.failed_reason!r}")
+    print(
+        f"\nfinal: {engine.state} goals={engine.goal_done} reason={engine.reason!r} "
+        f"agent_step={agent.i}/{len(steps)} failed={agent.failed_reason!r}"
+    )
     print(f"pose={mars.pose()}  sim_t={float(mars.data.time):.1f}")
     return 0
 

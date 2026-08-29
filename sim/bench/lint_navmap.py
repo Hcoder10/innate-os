@@ -128,7 +128,6 @@ def read_pgm(path: Path) -> np.ndarray:
     return np.frombuffer(raw[i + 1 : i + 1 + w * h], dtype=np.uint8).reshape(h, w)[::-1]
 
 
-
 def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__.strip().splitlines()[-1].strip())
@@ -145,10 +144,11 @@ def main() -> int:
     n_unknown_grey = int((grey == UNKNOWN_GREY).sum())
     as_free = unknown_occ < free_thresh
     print(f"{yaml_path.name}: {grey.shape[1]}x{grey.shape[0]} @ {res}m, free_thresh {free_thresh}")
-    print(f"  grey {UNKNOWN_GREY} (unknown) -> occ {unknown_occ:.5f} -> "
-          f"{'FREE  <-- FAULT' if as_free else 'unknown (correct)'}")
-    print(f"  {n_unknown_grey:,} unknown cells "
-          f"({100.0 * n_unknown_grey / grey.size:.1f}% of the map)")
+    print(
+        f"  grey {UNKNOWN_GREY} (unknown) -> occ {unknown_occ:.5f} -> "
+        f"{'FREE  <-- FAULT' if as_free else 'unknown (correct)'}"
+    )
+    print(f"  {n_unknown_grey:,} unknown cells ({100.0 * n_unknown_grey / grey.size:.1f}% of the map)")
 
     read_free = occ < free_thresh
 
@@ -169,17 +169,23 @@ def main() -> int:
     free_m2 = float(read_free.sum()) * res * res
     apron_m2 = apron_area(read_free, res)
     apron_share = 100.0 * apron_m2 / free_m2 if free_m2 else 0.0
-    print(f"  drivable floor {free_m2:7.1f} m2, of which {apron_m2:.1f} m2 "
-          f"({apron_share:.0f}%) lies outside the outer walls")
+    print(
+        f"  drivable floor {free_m2:7.1f} m2, of which {apron_m2:.1f} m2 "
+        f"({apron_share:.0f}%) lies outside the outer walls"
+    )
 
     if as_free:
-        print(f"\nFAIL: unknown space is drivable. Set free_thresh to {ROS_FREE_THRESH} "
-              f"(strictly below {unknown_occ:.5f}).")
+        print(
+            f"\nFAIL: unknown space is drivable. Set free_thresh to {ROS_FREE_THRESH} "
+            f"(strictly below {unknown_occ:.5f})."
+        )
         return 1
     if apron_share > APRON_LIMIT_PCT:
-        print(f"\nFAIL: {apron_share:.0f}% of the drivable map is outside the building. The "
-              f"planner can\nanswer a goal across the room by going out of the door and "
-              f"around, which is the\nroute oscillation this map was supposed to remove.")
+        print(
+            f"\nFAIL: {apron_share:.0f}% of the drivable map is outside the building. The "
+            f"planner can\nanswer a goal across the room by going out of the door and "
+            f"around, which is the\nroute oscillation this map was supposed to remove."
+        )
         return 1
     print("\nOK: unknown space is not drivable, and the drivable map is the building.")
     return 0

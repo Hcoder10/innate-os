@@ -70,24 +70,24 @@ class Episode:
     # itself); the live path could not, so every live failure looked the same
     # in the results file -- a robot that never moved and one that drove into a
     # wall both read as "0/2, timeout".
-    model_calls: int = 0          # generate calls billed inside this episode
+    model_calls: int = 0  # generate calls billed inside this episode
     tokens_in: int = 0
     tokens_out: int = 0
     cost_usd: float = 0.0
     # -- measured, not judged. A pass/fail hides the difference between a robot
     # -- that drove straight there and one that took four minutes and three
     # -- wrong rooms; these are what "where does it break" is actually read off.
-    turns: int = 0                      # agent decisions taken (its own count)
-    path_len_m: float = 0.0             # distance actually driven, integrated
+    turns: int = 0  # agent decisions taken (its own count)
+    path_len_m: float = 0.0  # distance actually driven, integrated
     goal_times_s: list = field(default_factory=list)
     utterances: int = 0
     first_utterance_s: float | None = None
-    tempt_min_m: float | None = None    # closest approach to what an ambient cue named
+    tempt_min_m: float | None = None  # closest approach to what an ambient cue named
     # Times the camera could not be read. Never silently zero-by-omission: an
     # agent that saw nothing all episode must be distinguishable from one that
     # saw everything and still failed.
     camera_errors: int = 0
-    heard: int = 0                       # narrator lines delivered this episode
+    heard: int = 0  # narrator lines delivered this episode
 
     def as_row(self) -> str:
         mark = "BLOK" if self.blocked else ("PASS" if self.passed else "fail")
@@ -103,8 +103,13 @@ class Episode:
         )
 
 
-def run_episode(map_name: str, challenge_id: str, make_agent, max_sim_s: float | None = None,
-                render_wh: tuple[int, int] = (160, 120)) -> Episode:
+def run_episode(
+    map_name: str,
+    challenge_id: str,
+    make_agent,
+    max_sim_s: float | None = None,
+    render_wh: tuple[int, int] = (160, 120),
+) -> Episode:
     """Run one challenge to completion, timeout, or agent exhaustion.
 
     make_agent(challenge) -> agent, because an auto-planned oracle cannot be
@@ -133,7 +138,9 @@ def run_episode(map_name: str, challenge_id: str, make_agent, max_sim_s: float |
 
     # Progress is per-episode and thrown away: the shared workspace/challenges.json
     # is a user's record, and parallel workers would race each other writing it.
-    progress = Path(__file__).resolve().parent / "results" / "progress" / f"{map_name}_{challenge_id}_{os.getpid()}.json"
+    progress = (
+        Path(__file__).resolve().parent / "results" / "progress" / f"{map_name}_{challenge_id}_{os.getpid()}.json"
+    )
     engine = ChallengeEngine(mars, sim_lock, roots=[ch_root], progress_path=progress)
 
     ch = engine.challenges.get(challenge_id)
@@ -149,8 +156,9 @@ def run_episode(map_name: str, challenge_id: str, make_agent, max_sim_s: float |
 
     blank.agent = agent.name
     if hasattr(agent, "frame_dir"):
-        agent.frame_dir = (Path(__file__).resolve().parent / "results" / "frames"
-                           / agent.name.replace(":", "_") / challenge_id)
+        agent.frame_dir = (
+            Path(__file__).resolve().parent / "results" / "frames" / agent.name.replace(":", "_") / challenge_id
+        )
 
     # Nav map BEFORE start(): props are still parked off-map, so the grid holds
     # only static geometry. Built after the drops, every target prop rasterises

@@ -22,7 +22,6 @@ if __name__ == "__main__":  # run directly: let pytest collect this file (confte
 import os
 
 import pytest
-
 from backends_v2 import NemotronStackBackend
 
 
@@ -39,14 +38,14 @@ class FakeObs:
 
 # The scenario, turn by turn.
 TURNS = [
-    FakeObs(None),                                                   # 1: nothing carried yet
-    FakeObs("test_item_a", pose=(1.0, 2.0, 0.0), elapsed_s=10.0),    # 2: pick succeeded before this obs
-    FakeObs(None, pose=(1.0, 2.0, 0.0), elapsed_s=12.0),             # 3: place/release just happened
-    FakeObs(None),                                                   # 4: still nothing carried
+    FakeObs(None),  # 1: nothing carried yet
+    FakeObs("test_item_a", pose=(1.0, 2.0, 0.0), elapsed_s=10.0),  # 2: pick succeeded before this obs
+    FakeObs(None, pose=(1.0, 2.0, 0.0), elapsed_s=12.0),  # 3: place/release just happened
+    FakeObs(None),  # 4: still nothing carried
     FakeObs("test_item_b", pose=(3.0, -1.0, 1.57), elapsed_s=30.0),  # 5: a second, different item
-    FakeObs(None, pose=(3.0, -1.0, 1.57), elapsed_s=31.0),           # 6: released
-    FakeObs("test_item_a", pose=(5.0, 5.0, 0.0), elapsed_s=50.0),    # 7: re-pick the FIRST item
-    FakeObs(None, pose=(5.0, 5.0, 0.0), elapsed_s=52.0),             # 8: re-release it
+    FakeObs(None, pose=(3.0, -1.0, 1.57), elapsed_s=31.0),  # 6: released
+    FakeObs("test_item_a", pose=(5.0, 5.0, 0.0), elapsed_s=50.0),  # 7: re-pick the FIRST item
+    FakeObs(None, pose=(5.0, 5.0, 0.0), elapsed_s=52.0),  # 8: re-release it
 ]
 
 
@@ -111,6 +110,7 @@ def test_rereleased_item_gets_a_fresh_fact_at_its_new_position_and_time(backend)
 # reset() must clear the carrying-tracking state across episodes, or a
 # fresh episode could spuriously fire a checkpoint from the PREVIOUS
 # episode's last carried item.
+
 
 def test_reset_clears_carrying_transition_tracking(backend) -> None:
     b = after(backend, 8)

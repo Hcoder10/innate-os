@@ -160,10 +160,19 @@ class CodexBackend:
                 json.dump(SCHEMA, fh)
             proc = subprocess.run(
                 [
-                    "codex", "exec", "-m", self.model,
-                    "--ephemeral", "--skip-git-repo-check",
-                    "--ignore-user-config", "--ignore-rules",
-                    "-s", "read-only", "--output-schema", schema, "-",
+                    "codex",
+                    "exec",
+                    "-m",
+                    self.model,
+                    "--ephemeral",
+                    "--skip-git-repo-check",
+                    "--ignore-user-config",
+                    "--ignore-rules",
+                    "-s",
+                    "read-only",
+                    "--output-schema",
+                    schema,
+                    "-",
                 ],
                 input=prompt,
                 capture_output=True,
@@ -240,8 +249,8 @@ class GeminiBackend:
 
 
 BACKENDS = {
-    "echo": EchoBackend,                # offline test double
-    "codex": CodexBackend,              # sees, by being handed a file path
-    "codex-blind": CodexBlindBackend,   # the control: same model, no camera
-    "gemini": GeminiBackend,            # sees, inline; needs GEMINI_API_KEY
+    "echo": EchoBackend,  # offline test double
+    "codex": CodexBackend,  # sees, by being handed a file path
+    "codex-blind": CodexBlindBackend,  # the control: same model, no camera
+    "gemini": GeminiBackend,  # sees, inline; needs GEMINI_API_KEY
 }

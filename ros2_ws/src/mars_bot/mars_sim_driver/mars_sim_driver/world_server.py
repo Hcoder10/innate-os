@@ -240,11 +240,15 @@ class WorldServer:
             # so the roster never had to describe the world; an authored room
             # ships no mesh, and without this the 3D view is an empty white box
             # while the sim is running the map perfectly well.
-            ws.send(json.dumps({
-                "props": self.sim.prop_manifest(),
-                "challenges": self.challenges.roster(),
-                "rooms": self.sim.room_manifest(),
-            }))
+            ws.send(
+                json.dumps(
+                    {
+                        "props": self.sim.prop_manifest(),
+                        "challenges": self.challenges.roster(),
+                        "rooms": self.sim.room_manifest(),
+                    }
+                )
+            )
         last_seq = -1
         try:
             while True:

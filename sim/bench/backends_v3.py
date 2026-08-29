@@ -58,7 +58,6 @@ from __future__ import annotations
 import json
 import math
 import threading
-import time
 from dataclasses import dataclass
 
 from backends import _coerce
@@ -194,7 +193,7 @@ class _BackgroundReasoner(threading.Thread):
             f"TASK-STACK: {self.stack.as_text()}\n"
             + (f"TOOL RESULT: {self._last_tool_result}\n" if self._last_tool_result else "")
             + f"TASK: {snap.brief}\nElapsed: {snap.elapsed_s:.0f}s.\n"
-            + (f'You hear:\n' + "\n".join(f'  "{h}"' for h in snap.heard) + "\n" if snap.heard else "")
+            + ("You hear:\n" + "\n".join(f'  "{h}"' for h in snap.heard) + "\n" if snap.heard else "")
             + f"Carrying: {snap.carrying or 'nothing'}\n"
             + (f"Last action: {snap.last_result}\n" if snap.last_result else "")
             + f"\n{snap.menu}\n\n"
@@ -202,7 +201,7 @@ class _BackgroundReasoner(threading.Thread):
             "INSTEAD OF an action to use one:\n"
             '  ground_object  args: {"description": "..."} -- bearing/distance/height of a named thing\n'
             '  check_reach    args: {"bearing_deg":.., "distance_m":.., "height_m":..} -- can I reach it, or where to stand\n'
-            '  explore_frontier  args: {} -- which way to turn to see somewhere new\n'
+            "  explore_frontier  args: {} -- which way to turn to see somewhere new\n"
             'Optionally include "task_stack": {"goals":[...], "facts":{...}, "constraints":[...]} '
             "to update what you are keeping track of. Reply with EXACTLY one JSON object -- "
             'either {"action": ..., "args": {...}} or {"tool": ..., "args": {...}}, nothing else.'
@@ -223,7 +222,7 @@ class _BackgroundReasoner(threading.Thread):
                 f"TOOL RESULT ({name}): {self._last_tool_result}\n"
                 f"TASK: {snap.brief}\nCarrying: {snap.carrying or 'nothing'}\n"
                 f"\n{snap.menu}\n\n"
-                'Now give a real action -- no more tool requests this turn. '
+                "Now give a real action -- no more tool requests this turn. "
                 'Reply with EXACTLY {"action": ..., "args": {...}}, nothing else.'
             )
             reply = self._call(CONVERSATION_SYSTEM, snap.image_path, text2)
@@ -251,14 +250,17 @@ class _BackgroundReasoner(threading.Thread):
             ty = y + dist * math.sin(yaw + bearing)
             tz = height if height is not None else 0.05
             v = can_reach((x, y), (tx, ty, tz))
-            out = {"reachable": v.reachable, "horizontal_m": v.horizontal_m,
-                   "height_m": v.height_m, "reason": v.reason}
+            out = {"reachable": v.reachable, "horizontal_m": v.horizontal_m, "height_m": v.height_m, "reason": v.reason}
             if not v.reachable:
                 so = standoff_for((tx, ty), tz)
-                out["standoff"] = None if so is None else {
-                    "bearing_deg": round(math.degrees(math.atan2(so.y - y, so.x - x) - yaw), 1),
-                    "distance_m": round(math.hypot(so.x - x, so.y - y), 2),
-                }
+                out["standoff"] = (
+                    None
+                    if so is None
+                    else {
+                        "bearing_deg": round(math.degrees(math.atan2(so.y - y, so.x - x) - yaw), 1),
+                        "distance_m": round(math.hypot(so.x - x, so.y - y), 2),
+                    }
+                )
             return out
         if name == "explore_frontier":
             # NOT backends_v2's scanned-bearings memory: a fixed 60-degree
@@ -268,8 +270,7 @@ class _BackgroundReasoner(threading.Thread):
             # for this prototype (see the class docstring's scope note).
             SLICE = 60.0
             candidates = [round(_wrap_deg(k * SLICE)) for k in range(int(360 / SLICE))]
-            return {"turn_degrees": candidates[self.turn_count % len(candidates)],
-                    "note": "systematic scan step"}
+            return {"turn_degrees": candidates[self.turn_count % len(candidates)], "note": "systematic scan step"}
         return {"error": f"unknown tool {name!r}"}
 
 
@@ -317,15 +318,21 @@ class NemotronStackConcurrentBackend(NemotronStackBackend):
         # hand it a minimal stand-in with the one attribute _call reads.
         class _ImgOnly:
             pass
+
         stub = _ImgOnly()
         stub.image_path = image_path
         return self._call(system, stub, text, want_image=image_path is not None)
 
     def decide(self, obs, menu) -> dict:
         snap = _Snapshot(
-            brief=obs.brief, elapsed_s=obs.elapsed_s, heard=list(obs.heard),
-            carrying=obs.carrying, last_result=obs.last_result, menu=menu,
-            image_path=obs.image_path, robot_pose=obs.robot_pose,
+            brief=obs.brief,
+            elapsed_s=obs.elapsed_s,
+            heard=list(obs.heard),
+            carrying=obs.carrying,
+            last_result=obs.last_result,
+            menu=menu,
+            image_path=obs.image_path,
+            robot_pose=obs.robot_pose,
         )
         if not self._warm:
             # First turn of the episode: nothing has ever been submitted, so

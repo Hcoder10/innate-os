@@ -37,8 +37,7 @@ CHALLENGE = Challenge(
     setup=[],
     script=[
         Cue(
-            "Actually -- sorry, could you wait by the right seat instead? "
-            "I'll meet you over there.",
+            "Actually -- sorry, could you wait by the right seat instead? I'll meet you over there.",
             after_goal=0,
         ),
     ],

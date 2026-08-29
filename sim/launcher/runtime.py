@@ -2453,9 +2453,7 @@ def _start_world_server(uv: str, sim_repo: Path, *, bind: str, mujoco_gl: str | 
     # chosen by the caller -- which is how you point the live stack at a
     # different world (sim/bundles/<map>) without editing the launcher. The
     # benchmark needs exactly that: same stack, same brain, a different room.
-    env["VIRTUAL_MARS_ASSETS"] = (
-        os.environ.get("VIRTUAL_MARS_ASSETS", "").strip() or str(sim_repo / "assets")
-    )
+    env["VIRTUAL_MARS_ASSETS"] = os.environ.get("VIRTUAL_MARS_ASSETS", "").strip() or str(sim_repo / "assets")
     if mujoco_gl:
         env["MUJOCO_GL"] = mujoco_gl
     with WORLD_SERVER_LOG_PATH.open("a", encoding="utf-8") as log_file:

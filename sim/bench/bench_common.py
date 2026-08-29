@@ -74,8 +74,9 @@ class ScoreRow:
     path_x: float | None
 
 
-def scorecard(rows: list[dict], categories: dict[str, int], valid: set[str],
-              agent: str) -> tuple[list[ScoreRow], tuple[int, int, int, int]] | None:
+def scorecard(
+    rows: list[dict], categories: dict[str, int], valid: set[str], agent: str
+) -> tuple[list[ScoreRow], tuple[int, int, int, int]] | None:
     """Per-category rows for `agent` over the VALID challenges, plus the
     (passed, episodes, goals done, goals total) total; None if the agent has
     no episode on a VALID challenge.
@@ -92,40 +93,53 @@ def scorecard(rows: list[dict], categories: dict[str, int], valid: set[str],
         return None
 
     def ratio(eps: list[dict], key: str) -> float | None:
-        return median([e[key] / ref[e["challenge"]][key]
-                       for e in eps
-                       if e["challenge"] in ref and ref[e["challenge"]].get(key, 0) and e.get(key, 0)])
+        return median(
+            [
+                e[key] / ref[e["challenge"]][key]
+                for e in eps
+                if e["challenge"] in ref and ref[e["challenge"]].get(key, 0) and e.get(key, 0)
+            ]
+        )
 
     out = []
     for cat in CATEGORY_ORDER:
         eps = [e for e in mine if categories.get(e["challenge"], 0) == cat]
         if not eps:
             continue
-        out.append(ScoreRow(
-            category=cat,
-            passed=sum(1 for e in eps if e["passed"]),
-            episodes=len(eps),
-            goals_done=sum(e["goals_done"] for e in eps),
-            goals_total=sum(e["goals_total"] for e in eps),
-            time_x=ratio(eps, "elapsed_s"),
-            turns_x=ratio(eps, "turns"),
-            path_x=ratio(eps, "path_len_m"),
-        ))
-    total = (sum(1 for e in mine if e["passed"]), len(mine),
-             sum(e["goals_done"] for e in mine), sum(e["goals_total"] for e in mine))
+        out.append(
+            ScoreRow(
+                category=cat,
+                passed=sum(1 for e in eps if e["passed"]),
+                episodes=len(eps),
+                goals_done=sum(e["goals_done"] for e in eps),
+                goals_total=sum(e["goals_total"] for e in eps),
+                time_x=ratio(eps, "elapsed_s"),
+                turns_x=ratio(eps, "turns"),
+                path_x=ratio(eps, "path_len_m"),
+            )
+        )
+    total = (
+        sum(1 for e in mine if e["passed"]),
+        len(mine),
+        sum(e["goals_done"] for e in mine),
+        sum(e["goals_total"] for e in mine),
+    )
     return out, total
 
 
 def format_scorecard(rows: list[ScoreRow], total: tuple[int, int, int, int]) -> list[str]:
     """The scorecard as printable lines: a header, one line per category and
     a total line. Callers put their own title above it."""
+
     def x(m: float | None) -> str:
         return f"{m:.2f}x" if m is not None else "-"
 
     lines = [f"  {'category':<38} {'pass':>7}  {'goals':>9}  {'time':>6} {'turns':>6} {'path':>6}"]
     for r in rows:
-        lines.append(f"  {CATEGORY_NAMES[r.category]:<38} {r.passed:>3}/{r.episodes:<3} "
-                     f"{r.goals_done:>4}/{r.goals_total:<4} {x(r.time_x):>6} {x(r.turns_x):>6} {x(r.path_x):>6}")
+        lines.append(
+            f"  {CATEGORY_NAMES[r.category]:<38} {r.passed:>3}/{r.episodes:<3} "
+            f"{r.goals_done:>4}/{r.goals_total:<4} {x(r.time_x):>6} {x(r.turns_x):>6} {x(r.path_x):>6}"
+        )
     passed, n, done, avail = total
     lines.append(f"  {'-' * 38} {passed:>3}/{n:<3} {done:>4}/{avail:<4}")
     return lines

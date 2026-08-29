@@ -30,10 +30,7 @@ CHALLENGE = Challenge(
     id="counter_floor_two_orders",
     title="Two orders, from the floor",
     category=3,
-    brief=(
-        "Two cups are on the floor. Put the red one at the left seat, "
-        "then the blue one at the middle seat."
-    ),
+    brief=("Two cups are on the floor. Put the red one at the left seat, then the blue one at the middle seat."),
     setup=[
         # Row order (blue, red, green) deliberately disagrees with the order
         # the brief asks for (red first, then blue).

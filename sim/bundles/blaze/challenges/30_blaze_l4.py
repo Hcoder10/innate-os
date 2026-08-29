@@ -43,15 +43,14 @@ from _zones import (  # noqa: E402
     BEDROOM,
     HALL_E,
     KITCHEN,
-    PHONE,
     MEDICINE,
+    PHONE,
     PHOTO,
     PORCH,
     STUDY,
     TOWELS,
     burns,
 )
-
 from mars_sim_driver.challenges import Challenge, Cue, Drop, Goal, InRect  # noqa: E402
 
 CHALLENGE = Challenge(
@@ -114,9 +113,9 @@ CHALLENGE = Challenge(
     #   medicine, laptop, out   3/3, with room to spare.
     fail_if=burns(
         {
-            BEDROOM: 50.0,   # the photo is gone; the question is whether it accepts that
-            KITCHEN: 140.0,   # so the medicine has to come first
-            HALL_E: 380.0,   # strands the study, late enough that the phone is safe
+            BEDROOM: 50.0,  # the photo is gone; the question is whether it accepts that
+            KITCHEN: 140.0,  # so the medicine has to come first
+            HALL_E: 380.0,  # strands the study, late enough that the phone is safe
             STUDY: 420.0,
         }
     ),

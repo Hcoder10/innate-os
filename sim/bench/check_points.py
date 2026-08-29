@@ -47,8 +47,10 @@ def main() -> int:
             wx, wy = nav.to_world(*nf)
             d = ((wx - x) ** 2 + (wy - y) ** 2) ** 0.5
         path = nav.plan((sx, sy), (x, y))
-        print(f"({x:6.2f},{y:6.2f})  in_bounds={inb}  raw={raw!s:>4}  inflated_blocked={infl!s:>5}  "
-              f"nearest_free={'%.2fm' % d if d is not None else 'NONE'}  path={'yes' if path else 'no'}")
+        print(
+            f"({x:6.2f},{y:6.2f})  in_bounds={inb}  raw={raw!s:>4}  inflated_blocked={infl!s:>5}  "
+            f"nearest_free={f'{d:.2f}m' if d is not None else 'NONE'}  path={'yes' if path else 'no'}"
+        )
     return 0
 
 

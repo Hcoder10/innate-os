@@ -41,14 +41,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _zones import (  # noqa: E402
     HALL_E,
     KITCHEN,
-    PHONE,
     MEDICINE,
+    PHONE,
     PORCH,
     STUDY,
     TOWELS,
     burns,
 )
-
 from mars_sim_driver.challenges import Challenge, Cue, Drop, Goal, InRect  # noqa: E402
 
 CHALLENGE = Challenge(

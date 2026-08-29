@@ -56,11 +56,11 @@ PORCH = (-3.25, -3.3, -1.65, -2.4)
 # reach -- the gate passed them anyway, because the oracle's grab is abstract
 # and never has to physically reach. A reach check against the nav grid is what
 # caught it, and these numbers come from probing that grid rather than the plan.
-MEDICINE = (-1.90, 1.82)   # kitchen counter -- the valuable one, in the room that goes first
+MEDICINE = (-1.90, 1.82)  # kitchen counter -- the valuable one, in the room that goes first
 DOCUMENTS = (-2.88, 1.30)  # kitchen shelf
-PHONE = (1.85, 1.75)       # study desk (was LAPTOP: 310x220mm, ungraspable)
-PHOTO = (2.35, -1.75)      # bedroom table -- the furthest thing from the door
-TOWELS = (-2.88, -1.40)    # store shelf -- worthless, and on the way out
+PHONE = (1.85, 1.75)  # study desk (was LAPTOP: 310x220mm, ungraspable)
+PHOTO = (2.35, -1.75)  # bedroom table -- the furthest thing from the door
+TOWELS = (-2.88, -1.40)  # store shelf -- worthless, and on the way out
 
 
 def burns(schedule: dict) -> AnyOf:

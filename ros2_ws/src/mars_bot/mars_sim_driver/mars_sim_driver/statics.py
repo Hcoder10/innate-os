@@ -159,8 +159,12 @@ class RoomRegistry:
                 "title": room.title,
                 "geoms": [
                     {
-                        "type": g.type, "size": list(g.size), "pos": list(g.pos),
-                        "quat": list(g.quat), "rgba": list(g.rgba), "collide": g.collide,
+                        "type": g.type,
+                        "size": list(g.size),
+                        "pos": list(g.pos),
+                        "quat": list(g.quat),
+                        "rgba": list(g.rgba),
+                        "collide": g.collide,
                     }
                     for g in room.geoms
                 ],

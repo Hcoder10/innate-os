@@ -21,10 +21,14 @@ CHALLENGE = Challenge(
         "far side of the room too, then tell me how many there are."
     ),
     setup=[
-        Drop("gallery_can_000", 0.0, -2.6), Drop("gallery_can_045", 1.84, -1.84),
-        Drop("gallery_can_090", 2.6, 0.0), Drop("gallery_can_135", 1.84, 1.84),
-        Drop("gallery_can_180", 0.0, 2.6), Drop("gallery_can_225", -1.84, 1.84),
-        Drop("gallery_can_270", -2.6, 0.0), Drop("gallery_can_315", -1.84, -1.84),
+        Drop("gallery_can_000", 0.0, -2.6),
+        Drop("gallery_can_045", 1.84, -1.84),
+        Drop("gallery_can_090", 2.6, 0.0),
+        Drop("gallery_can_135", 1.84, 1.84),
+        Drop("gallery_can_180", 0.0, 2.6),
+        Drop("gallery_can_225", -1.84, 1.84),
+        Drop("gallery_can_270", -2.6, 0.0),
+        Drop("gallery_can_315", -1.84, -1.84),
     ],
     goals=[
         # 1.2, not 0.6: the goal proves the robot CROSSED THE ROOM before

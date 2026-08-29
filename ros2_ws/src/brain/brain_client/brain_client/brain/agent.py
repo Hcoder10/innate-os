@@ -31,7 +31,6 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from brain_client.brain import grounding
-from brain_client.perception import pose as pose_math
 from brain_client.brain.context import Decision, GeminiContext, ToolCall
 from brain_client.brain.loop import LoopThread
 from brain_client.brain.prompt import build_system_prompt, self_reference_turns
@@ -49,6 +48,7 @@ from brain_client.brain.utils import (
     parse_view_point,
     resolve_timezone,
 )
+from brain_client.perception import pose as pose_math
 from brain_client.perception.scan_health import ScanHealthReporter
 from brain_client.transport.chat import Sender
 

@@ -29,7 +29,7 @@ from navplan import NavMap
 
 V_MAX = 0.30
 W_MAX = 1.2
-ARRIVE_M = 0.10       # waypoint tolerance along a path
+ARRIVE_M = 0.10  # waypoint tolerance along a path
 # Tolerance on the last waypoint of a leg, plus an escape hatch.
 #
 # Tight (0.07) and the base ORBITS: this gain overshoots, re-aims, overshoots
@@ -239,9 +239,7 @@ class PlannerAgent:
         elif math.hypot(x - self._stall_from[0], y - self._stall_from[1]) > STALL_M:
             self._stall_from, self._stall_since = (x, y), t
         elif t - self._stall_since > STALL_S:
-            self.failed_reason = (
-                f"stuck at ({x:.2f}, {y:.2f}) heading for ({tx:.2f}, {ty:.2f})"
-            )
+            self.failed_reason = f"stuck at ({x:.2f}, {y:.2f}) heading for ({tx:.2f}, {ty:.2f})"
             mars.set_cmd_vel(0.0, 0.0)
             return
 

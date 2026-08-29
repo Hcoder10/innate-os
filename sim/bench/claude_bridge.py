@@ -80,8 +80,13 @@ class ClaudeBridgeBackend:
         return (max(ns) + 1) if ns else 1
 
     def _log(self, kind: str, payload: dict) -> None:
-        row = {"t_wall": round(time.time(), 1), "kind": kind,
-               "map": self.map_name, "challenge": self.challenge_id, **payload}
+        row = {
+            "t_wall": round(time.time(), 1),
+            "kind": kind,
+            "map": self.map_name,
+            "challenge": self.challenge_id,
+            **payload,
+        }
         with self.log.open("a") as fh:
             fh.write(json.dumps(row) + "\n")
 
@@ -101,8 +106,7 @@ class ClaudeBridgeBackend:
         tmp.write_text(json.dumps(req, indent=1))
         tmp.rename(self.bridge / f"req_{n:05d}.json")  # atomic: no half-read requests
         (self.bridge / "current.json").write_text(json.dumps(req, indent=1))
-        self._log("req", {"n": n, "turn": self.turn_in_episode,
-                          "observation": obs.as_text(), "image": obs.image_path})
+        self._log("req", {"n": n, "turn": self.turn_in_episode, "observation": obs.as_text(), "image": obs.image_path})
 
         resp_path = self.bridge / f"resp_{n:05d}.json"
         deadline = time.time() + RESP_TIMEOUT_S
@@ -154,12 +158,25 @@ def _run_one(map_name: str, cid: str, bridge: Path, out: Path) -> int:
     with (out / "episodes.jsonl").open("a") as fh:
         fh.write(json.dumps(asdict(ep)) + "\n")
     with log.open("a") as fh:
-        fh.write(json.dumps({"t_wall": round(time.time(), 1), "kind": "episode_end",
-                             "map": map_name, "challenge": cid, "passed": ep.passed,
-                             "goals": f"{ep.goals_done}/{ep.goals_total}",
-                             "reason": ep.error or ep.reason}) + "\n")
-    print(f"        -> {'PASS' if ep.passed else 'fail'} {ep.goals_done}/{ep.goals_total} "
-          f"sim {ep.elapsed_s:.0f}s  {ep.error or ep.reason}", flush=True)
+        fh.write(
+            json.dumps(
+                {
+                    "t_wall": round(time.time(), 1),
+                    "kind": "episode_end",
+                    "map": map_name,
+                    "challenge": cid,
+                    "passed": ep.passed,
+                    "goals": f"{ep.goals_done}/{ep.goals_total}",
+                    "reason": ep.error or ep.reason,
+                }
+            )
+            + "\n"
+        )
+    print(
+        f"        -> {'PASS' if ep.passed else 'fail'} {ep.goals_done}/{ep.goals_total} "
+        f"sim {ep.elapsed_s:.0f}s  {ep.error or ep.reason}",
+        flush=True,
+    )
     return 0
 
 
@@ -194,18 +211,32 @@ def main() -> int:
     for i, (map_name, cid) in enumerate(jobs, 1):
         print(f"[{i}/{len(jobs)}] {map_name} {cid} ...", flush=True)
         r = subprocess.run(
-            [sys.executable, str(Path(__file__).resolve()), "--one", map_name, cid,
-             "--bridge", str(args.bridge), "--out", str(args.out)],
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--one",
+                map_name,
+                cid,
+                "--bridge",
+                str(args.bridge),
+                "--out",
+                str(args.out),
+            ],
             env=os.environ.copy(),
         )
         results.append((map_name, cid, r.returncode))
         if r.returncode != 0:
             print(f"        episode child exited {r.returncode}", flush=True)
 
-    (args.out / f"done_{args.chunk.stem}.json").write_text(json.dumps(
-        {"chunk": args.chunk.stem,
-         "episodes": [{"map": m, "challenge": c, "child_rc": rc} for m, c, rc in results]},
-        indent=1))
+    (args.out / f"done_{args.chunk.stem}.json").write_text(
+        json.dumps(
+            {
+                "chunk": args.chunk.stem,
+                "episodes": [{"map": m, "challenge": c, "child_rc": rc} for m, c, rc in results],
+            },
+            indent=1,
+        )
+    )
     print(f"chunk {args.chunk.stem} complete", flush=True)
     return 0
 

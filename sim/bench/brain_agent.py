@@ -181,7 +181,7 @@ class BrainAgent:
         self._done = False
         self._blocked_streak = 0
         # Primitive state
-        self._prim = None            # (kind, target, started_t, start_pose)
+        self._prim = None  # (kind, target, started_t, start_pose)
         # Model call state
         self._thread: threading.Thread | None = None
         self._pending: dict | None = None
@@ -471,8 +471,7 @@ class BrainAgent:
         # a dishonest success. Refusing WITH the height is the same evidence
         # the real gripper's failure would give.
         if best_z > ARM_Z_MAX_M:
-            return (f"the {best} is about {best_z:.2f} m up -- too high for the "
-                    f"arm, which only reaches below 0.30 m")
+            return f"the {best} is about {best_z:.2f} m up -- too high for the arm, which only reaches below 0.30 m"
         self._carrying = best
         # INTO THE GRIPPER, OUT OF THE WORLD. Without this the picked prop
         # stayed physically at its pickup spot for the whole carry: the agent

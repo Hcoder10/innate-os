@@ -23,9 +23,8 @@ import json
 import urllib.request
 from pathlib import Path
 
-import pytest
-
 import backends as B
+import pytest
 from brain_agent import ACTIONS, Observation
 
 # A tiny but real JPEG: two bytes of SOI plus filler is enough, since nothing
@@ -35,6 +34,7 @@ FAKE_KEY = "test-key-not-real"
 
 
 # --- the registry, and that the control still exists -------------------------
+
 
 def test_blind_control_backend_is_registered() -> None:
     assert "codex-blind" in B.BACKENDS
@@ -54,6 +54,7 @@ def test_control_is_the_same_model_minus_the_camera() -> None:
 
 # --- gemini refuses to run blind under a vision label -------------------------
 
+
 def test_gemini_refuses_to_construct_without_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     with pytest.raises(RuntimeError):
@@ -61,6 +62,7 @@ def test_gemini_refuses_to_construct_without_a_key(monkeypatch: pytest.MonkeyPat
 
 
 # --- gemini actually puts the frame in the request ----------------------------
+
 
 @pytest.fixture
 def gemini(monkeypatch: pytest.MonkeyPatch) -> tuple[B.GeminiBackend, dict]:
@@ -136,6 +138,7 @@ def test_the_key_goes_on_the_url(framed_decision) -> None:
 
 
 # --- an observation with no frame must not fabricate one ----------------------
+
 
 def test_no_frame_means_no_image_part(gemini) -> None:
     backend, captured = gemini

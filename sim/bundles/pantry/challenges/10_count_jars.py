@@ -37,7 +37,6 @@ from _bays import (  # noqa: E402
     JAR_PICK,
     JAR_STRAY,
 )
-
 from mars_sim_driver.challenges import Answered, Challenge, Drop, Goal, InCircle  # noqa: E402
 
 CHALLENGE = Challenge(

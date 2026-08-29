@@ -200,8 +200,7 @@ class _TaskStack:
             separators=(",", ":"),
         )
 
-    def note_released(self, item: str, pose: tuple[float, float, float] | None,
-                       elapsed_s: float | None = None) -> None:
+    def note_released(self, item: str, pose: tuple[float, float, float] | None, elapsed_s: float | None = None) -> None:
         """Mechanically checkpoint a verified gripper release into facts --
         called from the harness-observed carrying transition (see
         decide()), never from the model's own say-so. Same "verify
@@ -467,8 +466,12 @@ class NemotronStackBackend:
         ty = y + distance_m * math.sin(world_bearing)
         tz = height_m if height_m is not None else 0.05
         verdict = can_reach((x, y), (tx, ty, tz))
-        out = {"reachable": verdict.reachable, "horizontal_m": verdict.horizontal_m,
-               "height_m": verdict.height_m, "reason": verdict.reason}
+        out = {
+            "reachable": verdict.reachable,
+            "horizontal_m": verdict.horizontal_m,
+            "height_m": verdict.height_m,
+            "reason": verdict.reason,
+        }
         if not verdict.reachable:
             so = standoff_for((tx, ty), tz)
             if so is None:
@@ -495,15 +498,27 @@ class NemotronStackBackend:
         # circle -- a systematic pan-and-remember, not a lookup table.
         SLICE = 60.0
         candidates = [round(_wrap_deg(k * SLICE)) for k in range(int(360 / SLICE))]
-        unscanned = [c for c in candidates
-                     if not any(abs(_wrap_deg(c - s)) < SLICE / 2 for s in self.stack.scanned_bearings)]
-        target = unscanned[0] if unscanned else min(
-            candidates, key=lambda c: min(abs(_wrap_deg(c - s)) for s in self.stack.scanned_bearings) if self.stack.scanned_bearings else 0
+        unscanned = [
+            c for c in candidates if not any(abs(_wrap_deg(c - s)) < SLICE / 2 for s in self.stack.scanned_bearings)
+        ]
+        target = (
+            unscanned[0]
+            if unscanned
+            else min(
+                candidates,
+                key=lambda c: (
+                    min(abs(_wrap_deg(c - s)) for s in self.stack.scanned_bearings)
+                    if self.stack.scanned_bearings
+                    else 0
+                ),
+            )
         )
         self.stack.scanned_bearings.append(rel if unscanned else target)
         turn_needed = _wrap_deg(target - rel)
-        return {"turn_degrees": round(turn_needed, 1),
-                "note": f"{len(unscanned) - 1} of {len(candidates)} directions still unscanned after this"}
+        return {
+            "turn_degrees": round(turn_needed, 1),
+            "note": f"{len(unscanned) - 1} of {len(candidates)} directions still unscanned after this",
+        }
 
     def decide(self, obs, menu) -> dict:
         # Mechanical checkpoint, not model-reported: obs.carrying is the
@@ -529,9 +544,9 @@ class NemotronStackBackend:
             f"TASK-STACK: {self.stack.as_text()}\n"
             + (f"TOOL RESULT (from your last request): {self._last_tool_result}\n" if self._last_tool_result else "")
             + f"{obs.as_text()}\n\n{menu}\n\n"
-            "Reply with an action as usual, OR with {\"tool\": name, \"args\": {...}} "
+            'Reply with an action as usual, OR with {"tool": name, "args": {...}} '
             "if you need one of the two tools first. You may also include "
-            "\"task_stack\": {...} to update goals/facts/constraints."
+            '"task_stack": {...} to update goals/facts/constraints.'
         )
         self._last_tool_result = None
         reply = self._call(CONVERSATION_SYSTEM, obs, extra, want_image=True)

@@ -44,8 +44,7 @@ def test_round_trip_over_2000_random_poses_and_goals() -> None:
     rng = random.Random(20260814)
     for _ in range(2000):
         robot = (rng.uniform(-5, 5), rng.uniform(-5, 5), rng.uniform(-math.pi, math.pi))
-        goal = {"x": rng.uniform(-5, 5), "y": rng.uniform(-5, 5),
-                "theta_degrees": rng.uniform(-180, 180)}
+        goal = {"x": rng.uniform(-5, 5), "y": rng.uniform(-5, 5), "theta_degrees": rng.uniform(-180, 180)}
         local = absolute_to_local_nav_command(dict(goal), robot)
         back = local_to_absolute_nav_command(local, robot)
         assert abs(back["x"] - goal["x"]) < 1e-9
@@ -57,16 +56,14 @@ def test_one_metre_ahead_of_a_north_facing_robot_is_0_1() -> None:
     # The convention itself, stated as a case a human can check by eye: robot
     # at the origin facing +y (90 deg), goal 1m "forward" and 0m lateral must
     # land at (0, 1) -- not (1, 0), which is what a missing rotation gives.
-    out = local_to_absolute_nav_command(
-        {"x": 1.0, "y": 0.0, "theta_degrees": 0.0, "local_frame": True}, FACING_NORTH)
+    out = local_to_absolute_nav_command({"x": 1.0, "y": 0.0, "theta_degrees": 0.0, "local_frame": True}, FACING_NORTH)
     assert abs(out["x"]) < TOL and abs(out["y"] - 1.0) < TOL
 
 
 def test_one_metre_left_of_a_north_facing_robot_is_minus1_0() -> None:
     # Positive lateral is LEFT (compute_pose_delta's docstring). Facing north,
     # left is -x. A sign flip here mirrors every grounded goal.
-    out = local_to_absolute_nav_command(
-        {"x": 0.0, "y": 1.0, "theta_degrees": 0.0, "local_frame": True}, FACING_NORTH)
+    out = local_to_absolute_nav_command({"x": 0.0, "y": 1.0, "theta_degrees": 0.0, "local_frame": True}, FACING_NORTH)
     assert abs(out["x"] + 1.0) < TOL and abs(out["y"]) < TOL
 
 
@@ -74,8 +71,7 @@ def test_agrees_with_compute_pose_delta() -> None:
     # Agreement with the delta helper the rest of the brain uses.
     target = (3.0, 0.5, -1.2)
     fwd, lat, dth = compute_pose_delta(ROBOT, target)
-    out = local_to_absolute_nav_command(
-        {"x": fwd, "y": lat, "theta": dth, "local_frame": True}, ROBOT)
+    out = local_to_absolute_nav_command({"x": fwd, "y": lat, "theta": dth, "local_frame": True}, ROBOT)
     assert abs(out["x"] - target[0]) < 1e-9
     assert abs(out["y"] - target[1]) < 1e-9
     assert angles_equal(out["theta"], target[2])
@@ -91,19 +87,17 @@ def test_absolute_goals_pass_through_unchanged() -> None:
 # The theta spelling must survive: writing back the other key would leave
 # two conflicting headings in one dict.
 
+
 def test_radians_in_radians_out() -> None:
-    out = local_to_absolute_nav_command(
-        {"x": 1.0, "y": 0.0, "theta": 0.3, "local_frame": True}, ROBOT)
+    out = local_to_absolute_nav_command({"x": 1.0, "y": 0.0, "theta": 0.3, "local_frame": True}, ROBOT)
     assert "theta" in out and "theta_degrees" not in out
 
 
 def test_degrees_in_degrees_out() -> None:
-    out = local_to_absolute_nav_command(
-        {"x": 1.0, "y": 0.0, "theta_degrees": 30.0, "local_frame": True}, ROBOT)
+    out = local_to_absolute_nav_command({"x": 1.0, "y": 0.0, "theta_degrees": 30.0, "local_frame": True}, ROBOT)
     assert "theta_degrees" in out and "theta" not in out
 
 
 def test_local_frame_is_cleared() -> None:
-    out = local_to_absolute_nav_command(
-        {"x": 1.0, "y": 0.0, "theta_degrees": 30.0, "local_frame": True}, ROBOT)
+    out = local_to_absolute_nav_command({"x": 1.0, "y": 0.0, "theta_degrees": 30.0, "local_frame": True}, ROBOT)
     assert out.get("local_frame") is False

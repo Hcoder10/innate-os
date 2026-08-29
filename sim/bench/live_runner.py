@@ -28,9 +28,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import threading
 import math
 import sys
+import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -70,8 +70,9 @@ def prime(reset: bool = False) -> str:
     import subprocess
 
     try:
-        r = subprocess.run(["bash", str(PRIME_SH)] + (["--reset"] if reset else []),
-                           capture_output=True, text=True, timeout=240)
+        r = subprocess.run(
+            ["bash", str(PRIME_SH)] + (["--reset"] if reset else []), capture_output=True, text=True, timeout=240
+        )
         return "" if r.returncode == 0 else (r.stderr or r.stdout or "")[-200:]
     except Exception as exc:  # noqa: BLE001
         return f"{type(exc).__name__}: {exc}"
@@ -96,8 +97,7 @@ async def instruct(rosbridge: str, text: str) -> str:
     import subprocess
 
     try:
-        r = subprocess.run(["bash", str(SAY_SH)], input=text, capture_output=True,
-                           text=True, timeout=120)
+        r = subprocess.run(["bash", str(SAY_SH)], input=text, capture_output=True, text=True, timeout=120)
         return "" if r.returncode == 0 else (r.stderr or r.stdout or "")[-200:]
     except Exception as exc:  # noqa: BLE001
         return f"{type(exc).__name__}: {exc}"
@@ -150,10 +150,10 @@ class _LiveProbe(threading.Thread):
             from websockets.sync.client import connect  # noqa: PLC0415
 
             with connect(self._url, open_timeout=10, max_size=None) as ws:
-                ws.send(json.dumps({"op": "subscribe", "topic": "/odom",
-                                    "type": "nav_msgs/Odometry", "throttle_rate": 200}))
-                ws.send(json.dumps({"op": "subscribe", "topic": "/brain/chat_out",
-                                    "type": "std_msgs/String"}))
+                ws.send(
+                    json.dumps({"op": "subscribe", "topic": "/odom", "type": "nav_msgs/Odometry", "throttle_rate": 200})
+                )
+                ws.send(json.dumps({"op": "subscribe", "topic": "/brain/chat_out", "type": "std_msgs/String"}))
                 last: tuple[float, float] | None = None
                 while not self._finished.is_set():
                     try:
@@ -253,8 +253,9 @@ def _usage_between(t0: float, t1: float) -> tuple[int, int, int, float]:
     return calls, tin, tout, round(cost, 4)
 
 
-async def _episode(url: str, challenge_id: str, timeout_s: float, poll_s: float = 0.5,
-                   rosbridge: str | None = None, brief: str = "") -> Episode:
+async def _episode(
+    url: str, challenge_id: str, timeout_s: float, poll_s: float = 0.5, rosbridge: str | None = None, brief: str = ""
+) -> Episode:
     import websockets
 
     wall0 = time.time()
@@ -304,8 +305,7 @@ async def _episode(url: str, challenge_id: str, timeout_s: float, poll_s: float 
                         # is still parked off-map.
                         if rosbridge and brief:
                             err = await instruct(rosbridge, brief)
-                            print(f"      instructed via {CHAT_IN}"
-                                  + (f" (FAILED: {err})" if err else ""), flush=True)
+                            print(f"      instructed via {CHAT_IN}" + (f" (FAILED: {err})" if err else ""), flush=True)
                     elif time.time() > grace:
                         ep.error = "challenge never entered 'running' (start refused?)"
                         break
@@ -330,8 +330,11 @@ async def _episode(url: str, challenge_id: str, timeout_s: float, poll_s: float 
                     text = str(line.get("text", ""))
                     if rosbridge and text:
                         err = await instruct(rosbridge, text)
-                        print(f"      narrator +{line.get('t')}s ({line.get('kind')}): {text!r}"
-                              + (f" (DELIVERY FAILED: {err})" if err else ""), flush=True)
+                        print(
+                            f"      narrator +{line.get('t')}s ({line.get('kind')}): {text!r}"
+                            + (f" (DELIVERY FAILED: {err})" if err else ""),
+                            flush=True,
+                        )
 
             if last:
                 goals = last.get("goals", [])
@@ -367,9 +370,15 @@ async def _episode(url: str, challenge_id: str, timeout_s: float, poll_s: float 
     return ep
 
 
-async def _sweep(url: str, ids: list[str], timeout_s: float, out: Path,
-                 rosbridge: str | None = None, briefs: dict[str, str] | None = None,
-                 blocked: dict[str, str] | None = None) -> list[Episode]:
+async def _sweep(
+    url: str,
+    ids: list[str],
+    timeout_s: float,
+    out: Path,
+    rosbridge: str | None = None,
+    briefs: dict[str, str] | None = None,
+    blocked: dict[str, str] | None = None,
+) -> list[Episode]:
     results: list[Episode] = []
     for n, cid in enumerate(ids, 1):
         why = (blocked or {}).get(cid)
@@ -390,8 +399,7 @@ async def _sweep(url: str, ids: list[str], timeout_s: float, out: Path,
             if err:
                 print(f"      prime failed: {err}", flush=True)
             await asyncio.sleep(1.0)
-        ep = await _episode(url, cid, timeout_s, rosbridge=rosbridge,
-                            brief=(briefs or {}).get(cid, ""))
+        ep = await _episode(url, cid, timeout_s, rosbridge=rosbridge, brief=(briefs or {}).get(cid, ""))
         results.append(ep)
         print(f"[{n:>3}/{len(ids)}] {ep.as_row()}", flush=True)
         out.write_text(json.dumps([asdict(r) for r in results], indent=1))
@@ -420,8 +428,7 @@ def _blocked_here(ids: list[str]) -> dict[str, str]:
         # the sweep, and this whole check is meant to fail open.
         from capabilities import blocked_reason  # noqa: PLC0415
 
-        sys.path.insert(0, str(Path(__file__).resolve().parents[2]
-                               / "ros2_ws/src/mars_bot/mars_sim_driver"))
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "ros2_ws/src/mars_bot/mars_sim_driver"))
         from mars_sim_driver.challenges import load_challenges  # noqa: PLC0415
 
         sim = Path(__file__).resolve().parents[1]
@@ -448,13 +455,19 @@ def _blocked_here(ids: list[str]) -> dict[str, str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Score a live innate-os stack on the benchmark.")
-    ap.add_argument("--ignore-capabilities", action="store_true",
-                    help="attempt challenges this deployment cannot perform (they will fail)")
+    ap.add_argument(
+        "--ignore-capabilities",
+        action="store_true",
+        help="attempt challenges this deployment cannot perform (they will fail)",
+    )
     ap.add_argument("--url", default=DEFAULT_URL)
     ap.add_argument("--challenge", action="append", help="repeatable; default = the whole live roster")
     ap.add_argument("--timeout", type=float, default=900.0, help="wall-clock seconds per challenge")
-    ap.add_argument("--rosbridge", default=DEFAULT_ROSBRIDGE,
-                    help="where to publish the brief as the user instruction ('' to stay silent)")
+    ap.add_argument(
+        "--rosbridge",
+        default=DEFAULT_ROSBRIDGE,
+        help="where to publish the brief as the user instruction ('' to stay silent)",
+    )
     ap.add_argument("--out", type=Path, default=Path("/tmp/bench_live.json"))
     args = ap.parse_args()
 
@@ -484,9 +497,9 @@ def main() -> int:
             err = prime()
             print("brain primed (active + skills enabled)" + (f" -- FAILED: {err}" if err else ""))
         print()
-        results = await _sweep(args.url, ids, args.timeout, args.out,
-                               rosbridge=args.rosbridge or None, briefs=briefs,
-                               blocked=blocked)
+        results = await _sweep(
+            args.url, ids, args.timeout, args.out, rosbridge=args.rosbridge or None, briefs=briefs, blocked=blocked
+        )
 
         # Blocked challenges are excluded from the denominator. A score out of
         # 38 when 19 were never attempted is a worse lie than no score at all.
@@ -504,8 +517,10 @@ def main() -> int:
         # score and these were not, so at minimum they get named.
         broken = [e for e in scored if e.error]
         if broken:
-            print(f"{len(broken)} of those {len(scored)} failed inside the harness, not the robot "
-                  f"-- treat the score as {passed}/{len(scored) - len(broken)} until they are re-run:")
+            print(
+                f"{len(broken)} of those {len(scored)} failed inside the harness, not the robot "
+                f"-- treat the score as {passed}/{len(scored) - len(broken)} until they are re-run:"
+            )
             for episode in broken:
                 print(f"    {episode.challenge}: {episode.error}")
         print(f"results -> {args.out}")
