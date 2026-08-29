@@ -1229,10 +1229,17 @@ pipeline does not produce. Distance travelled and utterance count are
 that check here, and `run_eval.sh` now reports the container it found.
 
 Verdict: HARNESS for both. Neither cost the robot a point in any
-reported number -- the audited Aug 17 baseline predates the rename, and
-the first map of the post-fix re-run reproduces it (counter cat1: the
-same 3 of 6, `counter_follow_up`, `counter_read_the_pass`,
-`counter_which_colour`). They are recorded because the shipped
+reported number: the audited Aug 17 baseline predates the rename, and a
+post-fix re-run reproduces it. That re-run was stopped after 21 episodes
+-- counter in full and pantry's first two categories, $6.62 -- once it
+had answered the only question it was asked, which was whether the
+shipped tree still scores what the audit recorded. It does: **3/21
+challenges and 13/53 goals**, with counter cat1 landing the same 3 of 6
+(`counter_follow_up`, `counter_read_the_pass`, `counter_which_colour`)
+that supplied every cat1 pass in the Aug 17 run. Goal credit is the
+honest source of variance -- counter cat1 scored 5/12 and then 4/12 on
+two passes of the same map the same night, so single-goal differences
+between live runs are noise, not signal. They are recorded because the shipped
 `run_eval.sh` was dead against current `main` until now, and a
 reviewer running the documented one command would have hit exactly this.
 
