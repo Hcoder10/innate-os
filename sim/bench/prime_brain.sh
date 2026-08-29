@@ -117,12 +117,19 @@ run(["ros2", "topic", "pub", "--once", "/brain/set_active_skills",
      "std_msgs/String", json.dumps({"data": payload})])
 print("skills enabled:", len(SKILLS), "->", ", ".join(s.split("/")[-1] for s in SKILLS))
 PY
-docker cp /tmp/prime.py innate-dev:/tmp/prime.py >/dev/null
+# Upstream gives each checkout its own stack, so the container carries a
+# per-checkout suffix. Discover it rather than hardcoding `innate-dev`.
+OS_CONTAINER=$(docker ps --format '{{.Names}}' | grep -E '^innate-dev' | head -1)
+if [ -z "$OS_CONTAINER" ]; then
+  echo "no innate-dev* container is running" >&2
+  exit 1
+fi
+docker cp /tmp/prime.py "$OS_CONTAINER":/tmp/prime.py >/dev/null
 # RMW_IMPLEMENTATION is essential: exec shells do not inherit it, and every
 # ros2 service call then times out against the Zenoh graph -- which reads as
 # 'brain refused to activate' and leaves the model with only the wait tool.
-docker exec -e RMW_IMPLEMENTATION=rmw_zenoh_cpp innate-dev bash -lc 'source /opt/ros/humble/setup.bash; source /root/innate-os/ros2_ws/install/setup.bash; python3 /tmp/prime.py' 2>&1 | tail -4
+docker exec -e RMW_IMPLEMENTATION=rmw_zenoh_cpp "$OS_CONTAINER" bash -lc 'source /opt/ros/humble/setup.bash; source /root/innate-os/ros2_ws/install/setup.bash; python3 /tmp/prime.py' 2>&1 | tail -4
 
 echo
 echo "--- brain log ---"
-docker exec innate-dev bash -lc 'tail -6 /tmp/brain.log' 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | sed -E 's/.*\]: //'
+docker exec "$OS_CONTAINER" bash -lc 'tail -6 /tmp/brain.log' 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | sed -E 's/.*\]: //'
