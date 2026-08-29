@@ -312,6 +312,7 @@ class Answered(Predicate):
         return False
 
 
+@dataclass
 class EventSeen(Predicate):
     """Latch once a typed challenge event with the requested fields arrives.
 
