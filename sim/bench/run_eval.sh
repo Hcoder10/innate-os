@@ -83,22 +83,32 @@ for BUNDLE in $BUNDLES; do
     continue
   fi
 
+  # The OS container used to be plain `innate-dev`; since upstream gave each
+  # checkout its own stack it carries a per-checkout suffix. Discover it
+  # rather than hardcoding, so this keeps working either way.
+  OS_CONTAINER=""
   echo "--- restart" | tee -a "$LOG"
   timeout 300 bash "$HOME/innate_up.sh" down >/dev/null 2>&1
   sleep 2
   export VIRTUAL_MARS_ASSETS="$ASSETS"
   timeout 900 bash "$HOME/innate_up.sh" up --offline 2>&1 | grep -cE '✓' \
     | xargs echo "    checks passed:" | tee -a "$LOG"
+  OS_CONTAINER=$(docker ps --format '{{.Names}}' | grep -E '^innate-dev' | head -1)
+  if [ -z "$OS_CONTAINER" ]; then
+    echo "    no innate-dev* container is running -- skipping $BUNDLE" | tee -a "$LOG"
+    continue
+  fi
+  echo "    container: $OS_CONTAINER" | tee -a "$LOG"
 
   # Prove the CONTAINER can reach the backend, not just this shell -- they are
   # different hops, and checking the easy one passes while the real one fails.
   if [ -n "$SERVICE_KEY" ]; then
-    if ! timeout 90 docker exec innate-dev bash -lc \
+    if ! timeout 90 docker exec "$OS_CONTAINER" bash -lc \
          "curl -sf -o /dev/null --max-time 30 https://auth-v1.svc.innate.bot/.well-known/openid-configuration"; then
       echo "    the CONTAINER cannot reach Innate auth -- skipping $BUNDLE" | tee -a "$LOG"
       continue
     fi
-  elif ! timeout 60 docker exec innate-dev bash -lc \
+  elif ! timeout 60 docker exec "$OS_CONTAINER" bash -lc \
        "curl -sf -o /dev/null 'http://host.docker.internal:8099/v1beta/models?pageSize=1'"; then
     echo "    the CONTAINER cannot reach the shim -- skipping $BUNDLE" | tee -a "$LOG"
     continue
