@@ -1177,6 +1177,65 @@ an already-83%-dominant bucket is unremarkable, not a regression signal
 improvement demonstrated; both conclusions were foreclosed by the n=3
 usable sample size before it was ever run, exactly as flagged above.
 
+### T21. Re-running the live baseline found two faults the validity gate structurally cannot see
+
+Both paths in this benchmark are judged by the same engine, so the
+45-challenge oracle+random gate was treated as sufficient proof that a
+change was safe. Re-running the full live stack after merging upstream
+showed that it is not, and the way it failed is worth more than either
+bug.
+
+Upstream's "give each checkout its own stack" (24e6660f) renamed the OS
+container from `innate-dev` to `innate-dev-<checkout hash>`. Three
+scripts here hardcoded the old name: `run_eval.sh` (two reachability
+pre-flights), and -- the one that mattered -- `say_brief.sh` and
+`prime_brain.sh`, which are what put the challenge brief on
+`/brain/chat_in`.
+
+With the brief undelivered the robot was never told its task. The
+episode still ran to its full time limit, the judge still scored it, and
+the sweep still printed a tidy `0/4 challenges, 0/9 goals` -- a number
+indistinguishable, on the scoreboard alone, from a robot that understood
+the task perfectly and could not do any of it. That is the most
+dangerous failure this apparatus can produce: it does not crash, it
+lies quietly, and it lies in the direction of blaming the system under
+test.
+
+What caught it was not the score but the odometry: **0.00 m travelled
+over 591 samples, and the brain never spoke.** A robot that is trying and
+failing still moves. Measured before and after the fix on the same
+challenge, `gallery_ring_tour`:
+
+| | container broken | after fix |
+|---|---|---|
+| distance travelled | 0.00 m | 10.79 m |
+| utterances | 0 | 26 |
+| goals | 0/4 | 2/4 |
+
+The second fault was this project's own: `EventSeen` lost its
+`@dataclass` decorator during the upstream judge merge (the shared
+decorator ended up on `Answered` alone), so constructing one raised
+`EventSeen() takes no arguments` and upstream's
+`sim/challenges/40_household_orders` package was skipped at load.
+
+Neither bug could be caught by the gate, and not by accident. The gate
+runs the in-process path, which never touches Docker, so a container
+rename is invisible to it by construction; and no challenge in these 8
+bundles uses `EventSeen`, so the predicate could break without moving a
+single verdict. The gate stayed green through both. **A gate proves the
+thing it exercises, and silently certifies everything it does not** --
+so the live path needs its own liveness check, on a signal the scoring
+pipeline does not produce. Distance travelled and utterance count are
+that check here, and `run_eval.sh` now reports the container it found.
+
+Verdict: HARNESS for both. Neither cost the robot a point in any
+reported number -- the audited Aug 17 baseline predates the rename, and
+the first map of the post-fix re-run reproduces it (counter cat1: the
+same 3 of 6, `counter_follow_up`, `counter_read_the_pass`,
+`counter_which_colour`). They are recorded because the shipped
+`run_eval.sh` was dead against current `main` until now, and a
+reviewer running the documented one command would have hit exactly this.
+
 ---
 
 ## HARNESS or AGENT -- embodiment is a constraint, not a third verdict
