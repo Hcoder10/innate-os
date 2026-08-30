@@ -25,7 +25,7 @@ def _meter_vision(model: str, data: dict) -> None:
 
     Without this the benchmark's cost figure omits every grasp attempt --
     three image calls each -- and reports a floor as a total. See
-    sim/bench/CHANGES.md (patch_vision_meter).
+    the benchmark harness (patch_vision_meter).
     """
     usage = data.get("usage") if isinstance(data, dict) else None
     if not usage:

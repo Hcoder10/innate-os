@@ -231,7 +231,7 @@ class PlannerAgent:
             self._stall_from, self._stall_since = None, None
             return
 
-        # Stall watch. See CHANGES.md (patch_stall): without this a wedged robot spends
+        # Stall watch: without this a wedged robot spends
         # the entire time limit and the episode is reported as "time limit",
         # which says it was slow when it was stuck.
         if self._stall_since is None or self._stall_from is None:

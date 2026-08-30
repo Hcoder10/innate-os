@@ -160,7 +160,7 @@ class InCircle(Predicate):
     radius_m: float
     # Optional floor for the object's height. "On the pass" is a different
     # claim from "within 45 cm of the middle of the pass", and without this the
-    # second was standing in for the first -- see sim/bench/CHANGES.md
+    # second was standing in for the first -- see sim/bench/FINDINGS.md
     # (patch_goal_height).
     min_z: float | None = None
 
@@ -185,7 +185,7 @@ class InRect(Predicate):
     y0: float
     x1: float
     y1: float
-    # Same contract as InCircle.min_z (see sim/bench/CHANGES.md,
+    # Same contract as InCircle.min_z (see sim/bench/FINDINGS.md,
     # patch_goal_height): "on the counter" is a different claim from "within
     # the counter's footprint", and unknown height PASSES so a missing z can
     # never fail a goal.
@@ -282,7 +282,7 @@ class Answered(Predicate):
         """An accepted spelling appears in free speech as a whole word.
 
         Whole-word, so "3" does not match "30" and "four" does not match
-        "fourteen". See sim/bench/CHANGES.md (patch_answer) for the known
+        "fourteen". See sim/bench/FINDINGS.md (patch_answer) for the known
         weakness: a hedge that contains the right token passes.
         """
         low = f" {text.strip().lower()} "
@@ -603,7 +603,7 @@ class Challenge:
     runtime: ChallengeRuntime | None = field(default=None, kw_only=True, repr=False)
     time_limit_s: float | None = None
     reset_world: bool = True  # robot back to spawn + props re-parked on start
-    # Ends the run the moment it holds. See sim/bench/CHANGES.md (patch_failif)
+    # Ends the run the moment it holds. See sim/bench/FINDINGS.md (patch_failif)
     # for why a challenge needs a failure that is not the clock.
     fail_if: "Predicate | None" = None
     fail_reason: str = "eliminated"
@@ -616,7 +616,7 @@ class Challenge:
     #   1 easy observation and conversation
     #   2 simple instruction following
     #   3 long-horizon instruction following
-    # See sim/bench/CHANGES.md (patch_category) for the rule and its boundary
+    # See sim/bench/FINDINGS.md (patch_category) for the rule and its boundary
     # cases.
     category: int = 0
 

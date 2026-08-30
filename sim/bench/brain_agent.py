@@ -150,7 +150,7 @@ ACTIONS = """Reply with ONE action as JSON: {"action": ..., "args": {...}}
 
 You cannot climb, and your arm only reaches things below about 30 cm."""
 
-# The same menu with the camera taken out of it. See CHANGES.md (patch_blind_menu).
+# The same menu with the camera taken out of it. (patch_blind_menu).
 ACTIONS_BLIND = ACTIONS.replace(
     '  {"action":"look","args":{}}                  take a fresh look around\n', ""
 ).replace(
@@ -320,7 +320,7 @@ class BrainAgent:
 
     def _apply(self, mars, t: float, decision: dict) -> None:
         # A backend may mark a decision as its OWN synthesized stand-in
-        # (nothing the model chose -- see backends_v3.py's FILLER_ACTION)
+        # (nothing the model chose -- harness filler, not a decision)
         # rather than a real decision. turns/max_turns exists to bound how
         # many real decisions an episode gets, same as every other backend
         # here that makes exactly one decision per call; it was never meant

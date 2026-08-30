@@ -153,7 +153,7 @@ class NavMap:
 # wall to it. At 0.10 the planner skipped exactly such a pad in the household
 # map, planned through it, and the robot drove into the edge and held 18 N
 # against it for the rest of the episode while the grid insisted the cell was
-# free. See CHANGES.md (patch_slab).
+# free.
 #
 # It cannot be 0: the floor is itself a collidable geom whose top is at z = 0
 # by convention in these maps, and stamping it would block the world. 5 mm

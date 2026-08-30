@@ -43,7 +43,7 @@ UNSUPPORTED_ENDPOINT_STATUSES = (404, 405, 501)
 
 # A pooled connection the far end has already closed fails before it sends any
 # response at all. Expiring ours first turns that race into a reconnect, and one
-# retry covers the case where it happens anyway -- see sim/bench/CHANGES.md
+# retry covers the case where it happens anyway -- see sim/bench/FINDINGS.md
 # (patch_stream_retry).
 _KEEPALIVE_EXPIRY_S = 30.0
 _STREAM_ATTEMPTS = 2
@@ -125,7 +125,7 @@ def proxy_transport(proxy: ProxyClient) -> Transport:
     return stream
 
 
-# --- usage metering (sim/bench/CHANGES.md, patch_usage_meter) ----------------
+# --- usage metering (sim/bench/FINDINGS.md, patch_usage_meter) ----------------
 # Exact token counts for every call, so a cost estimate is measured rather than
 # guessed. Best effort in every direction: if anything here fails the brain is
 # unaffected.
@@ -162,7 +162,7 @@ def _meter_stream(model: str, chunks: Iterator[dict]) -> Iterator[dict]:
     incomplete -- it lands before the image parts are counted, 1064 tokens per
     image. Metering per chunk therefore logged the same call twice, inflating
     call counts by ~29% and input tokens by 12.5%. See
-    sim/bench/CHANGES.md (patch_meter_dedupe).
+    sim/bench/FINDINGS.md (patch_meter_dedupe).
 
     The write sits in a `finally` so a consumer that stops reading early is
     still charged for what it used.

@@ -81,7 +81,7 @@ _DROP_EVENTS_AFTER = 3  # failed turns before the peeked events are dropped (the
 
 
 # How long an idle brain sleeps before asking the model again. `_pause` wakes on
-# any event, so this is a ceiling, not a latency -- see sim/bench/CHANGES.md
+# any event, so this is a ceiling, not a latency -- see sim/bench/FINDINGS.md
 # (patch_idle_block).
 #
 # TWENTY SECONDS, NOT AN HOUR, and that is not a tuning preference. The "is it
@@ -631,7 +631,7 @@ class BrainAgent:
         rolling costmap, which has no static layer -- so the map the robot is
         localised against is not consulted at all. Converting here hands the
         same point to the map-frame planner instead. Off by default; see
-        sim/bench/CHANGES.md (patch_map_frame_goals) for why both arms exist.
+        sim/bench/FINDINGS.md (patch_map_frame_goals) for why both arms exist.
 
         Refuses when there is no map frame to convert into. A goal invented
         from a pose that does not exist is worse than a keyhole plan.

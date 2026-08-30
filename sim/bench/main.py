@@ -77,24 +77,14 @@ def _one(job):
         # "brain:codex", "brain:gemini", "brain:echo" -- the backend is the
         # agent architecture, and swapping it is the point of the seam.
         if agent_name.startswith("brain"):
-            from backends import BACKENDS
-
-            # backends_v2 is a SEPARATE registry (AGENT_SPEC.md's new agent)
-            # merged in here rather than into backends.py itself, so the
-            # extension point stays visible as an addition, not an edit --
-            # this dict merge is the entirety of what "point the harness at
-            # a different architecture" costs.
-            from backends_v2 import BACKENDS_V2
-            from backends_v3 import BACKENDS_V3
-            from backends_v4 import BACKENDS_V4
             from brain_agent import BrainAgent
+            from registry import resolve
 
-            all_backends = {**BACKENDS, **BACKENDS_V2, **BACKENDS_V3, **BACKENDS_V4}
-
-            kind = agent_name.split(":", 1)[1] if ":" in agent_name else "codex"
-            if kind not in all_backends:
-                raise ValueError(f"unknown backend {kind!r}; have {sorted(all_backends)}")
-            agent = BrainAgent(all_backends[kind]())
+            # The whole cost of pointing the harness at another architecture:
+            # a name on the command line. `brain:<builtin>` or
+            # `brain:<module>:<Class>` -- see registry.py.
+            spec = agent_name.split(":", 1)[1] if ":" in agent_name else "codex"
+            agent = BrainAgent(resolve(spec)())
             # The report has to be able to say WHICH backend produced a number.
             # "brain" alone would silently merge a vision run and a blind one.
             agent.name = agent_name
@@ -150,24 +140,58 @@ def main() -> int:
         default=240.0,
         help="sim-seconds budget for random rollouts (0 = the challenge's own limit)",
     )
+    ap.add_argument(
+        "--challenges",
+        default="",
+        help="comma-separated challenge ids or substrings, e.g. within_reach,counter_three",
+    )
     ap.add_argument("--limit", type=int, default=0, help="cap challenges per map (smoke tests)")
+    ap.add_argument(
+        "--list",
+        action="store_true",
+        help="print the backends and challenges this checkout has, then exit",
+    )
     ap.add_argument("--out", type=Path, default=RESULTS_DIR / "bench_results.json")
     args = ap.parse_args()
 
     catalogue = discover()
+
+    if args.list:
+        from registry import names
+
+        print("backends   --agents brain:<name>, or brain:<module>:<Class> for your own")
+        for n in names():
+            print(f"    {n}")
+        print()
+        print("challenges   --challenges <id or substring>")
+        for m in sorted(catalogue):
+            ids = [cid for cid, _ in catalogue[m]]
+            print(f"    {m:<10} ({len(ids):>2})  {', '.join(ids)}")
+        return 0
     # Default to the benchmark's own eight bundles. The apartment root holds
     # upstream's stock challenges, which are not part of the suite and would
     # land in the uncategorised bucket if "run everything" swept them in
     # silently. They stay runnable -- --map apartment -- but only on request.
     maps = args.map or sorted(m for m in catalogue if m != "apartment")
     agents = args.agents.split(",")
+    wanted = [w.strip() for w in args.challenges.split(",") if w.strip()]
     cap = args.random_cap or None
 
-    jobs, needs_arm = [], {}
+    # One selection, read by both the sweep and the gate below. They used to
+    # filter the catalogue separately, so --challenges ran one challenge and
+    # then reported every other challenge as INCOMPLETE.
+    selected = {}
     for m in maps:
         entries = catalogue.get(m, [])
+        if wanted:
+            entries = [(cid, req) for cid, req in entries if any(w in cid for w in wanted)]
         if args.limit:
             entries = entries[: args.limit]
+        if entries:
+            selected[m] = entries
+
+    jobs, needs_arm = [], {}
+    for m, entries in selected.items():
         for cid, req in entries:
             needs_arm[cid] = req
             if "oracle" in agents and req not in ("arm", "unknown"):
@@ -180,9 +204,12 @@ def main() -> int:
             if "random" in agents:
                 jobs.extend((m, cid, "random", s, cap) for s in range(args.seeds))
 
-    total_ch = sum(len(catalogue.get(m, [])[: args.limit] if args.limit else catalogue.get(m, [])) for m in maps)
+    if wanted and not jobs:
+        print(f"no challenge matches {args.challenges!r}. Try --list.")
+        return 2
+    total_ch = sum(len(e) for e in selected.values())
     workers = args.workers or max(1, min(len(jobs), (mp.cpu_count() or 4) - 2))
-    print(f"{total_ch} challenges across {len(maps)} maps -> {len(jobs)} episodes on {workers} workers")
+    print(f"{total_ch} challenges across {len(selected)} maps -> {len(jobs)} episodes on {workers} workers")
     skipped = sum(1 for r in needs_arm.values() if r in ("arm", "unknown"))
     if skipped:
         print(f"{skipped} challenges have no auto-plan (SkillDone / unmodelled) -- random-only")
@@ -209,8 +236,8 @@ def main() -> int:
     print("\n=== validity gate ===")
     tally = dict.fromkeys(VERDICTS, 0)
     valid_ids: set[str] = set()
-    for m in maps:
-        for cid, req in catalogue.get(m, [])[: args.limit] if args.limit else catalogue.get(m, []):
+    for m, entries in selected.items():
+        for cid, req in entries:
             eps = [r for r in rows if r["challenge"] == cid]
             oracle = next((r for r in eps if r["agent"] == "oracle"), None)
             rnd = [r for r in eps if r["agent"] == "random"]

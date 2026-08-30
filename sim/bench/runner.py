@@ -204,7 +204,7 @@ def run_episode(
     steps = 0
     reason = ""
 
-    # See CHANGES.md (patch_thinktime). Sim time is the currency every time limit is
+    # Sim time is the currency every time limit is
     # denominated in, and headless the sim runs ~10x real time -- so without
     # this, one second of model latency costs the agent ten seconds of world.
     _think_budget = {"wall0": None, "sim0": None}

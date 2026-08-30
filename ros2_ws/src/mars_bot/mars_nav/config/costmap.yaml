@@ -27,7 +27,7 @@ navigation:
             clearing: True
             marking: True
             data_type: "LaserScan"
-            raytrace_max_range: 9.0   # was 3.0; the lidar returns 12m (sim/bench/CHANGES.md, patch_costmap_range)
+            raytrace_max_range: 9.0   # was 3.0; the lidar returns 12m (sim/bench/FINDINGS.md, patch_costmap_range)
             raytrace_min_range: 0.2
             obstacle_max_range: 8.0   # was 2.5; beyond this the planner assumed open floor
             obstacle_min_range: 0.2
@@ -71,7 +71,7 @@ local_costmap:
           clearing: True
           marking: True
           data_type: "LaserScan"
-          raytrace_max_range: 9.0   # was 3.0; the lidar returns 12m (sim/bench/CHANGES.md, patch_costmap_range)
+          raytrace_max_range: 9.0   # was 3.0; the lidar returns 12m (sim/bench/FINDINGS.md, patch_costmap_range)
           raytrace_min_range: 0.2
           obstacle_max_range: 8.0   # was 2.5; beyond this the planner assumed open floor
           obstacle_min_range: 0.2
@@ -164,7 +164,7 @@ mapfree:
             clearing: True
             marking: True
             data_type: "LaserScan"
-            raytrace_max_range: 9.0   # was 3.0; the lidar returns 12m (sim/bench/CHANGES.md, patch_costmap_range)
+            raytrace_max_range: 9.0   # was 3.0; the lidar returns 12m (sim/bench/FINDINGS.md, patch_costmap_range)
             raytrace_min_range: 0.2
             obstacle_max_range: 8.0   # was 2.5; beyond this the planner assumed open floor
             obstacle_min_range: 0.2

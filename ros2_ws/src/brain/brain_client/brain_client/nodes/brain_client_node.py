@@ -183,7 +183,7 @@ class BrainClientNode(Node):
         # the whole memory tier stays unbuilt -- no search skill that can only
         # fail, no background uploads to an endpoint that is not there. The
         # turn transport is chosen separately and is unaffected.
-        # See sim/bench/CHANGES.md (patch_memory_off).
+        # See sim/bench/FINDINGS.md (patch_memory_off).
         # Explicit truthy set: a blacklist of falsey spellings treated
         # BRAIN_DISABLE_MEMORY=off as "disable memory", which is the opposite
         # of what anyone writing it means.

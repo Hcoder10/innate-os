@@ -83,7 +83,7 @@ def local_to_absolute_nav_command(inputs: dict, robot_pose: Pose) -> dict:
     instead of the rolling mapfree costmap. Absolute commands are returned
     unchanged. The input dict is never mutated.
 
-    Used only under BENCH_MAP_FRAME_GOALS -- see sim/bench/CHANGES.md
+    Used only under BENCH_MAP_FRAME_GOALS -- see sim/bench/FINDINGS.md
     (patch_map_frame_goals).
     """
     if not inputs.get("local_frame", False):

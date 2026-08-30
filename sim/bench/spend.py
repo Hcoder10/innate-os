@@ -2,7 +2,7 @@
 """What the run has cost so far, from Google's own token counts.
 
 Reads workspace/gemini_usage.jsonl, which the brain's transport writes one line
-per call (sim/bench/CHANGES.md, patch_usage_meter). These are measured, not
+per call. These are measured, not
 modelled: the counts come back on every response, so nothing here is an
 estimate except the price table.
 
