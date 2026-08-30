@@ -581,6 +581,3 @@ class NemotronStackBackend:
             self.stack.apply(reply.get("task_stack"))
 
         return _coerce(reply)
-
-
-BACKENDS_V2 = {"nemotron_stack": NemotronStackBackend}

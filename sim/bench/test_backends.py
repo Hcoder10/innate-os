@@ -25,6 +25,7 @@ from pathlib import Path
 
 import backends as B
 import pytest
+import registry
 from brain_agent import ACTIONS, Observation
 
 # A tiny but real JPEG: two bytes of SOI plus filler is enough, since nothing
@@ -37,19 +38,19 @@ FAKE_KEY = "test-key-not-real"
 
 
 def test_blind_control_backend_is_registered() -> None:
-    assert "codex-blind" in B.BACKENDS
+    assert "codex-blind" in registry.names()
 
 
 def test_codex_sees() -> None:
-    assert B.BACKENDS["codex"].wants_image is True
+    assert registry.resolve("codex").wants_image is True
 
 
 def test_codex_blind_does_not_see() -> None:
-    assert B.BACKENDS["codex-blind"].wants_image is False
+    assert registry.resolve("codex-blind").wants_image is False
 
 
 def test_control_is_the_same_model_minus_the_camera() -> None:
-    assert B.BACKENDS["codex-blind"].__bases__[0] is B.CodexBackend
+    assert registry.resolve("codex-blind").__bases__[0] is B.CodexBackend
 
 
 # --- gemini refuses to run blind under a vision label -------------------------

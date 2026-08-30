@@ -701,6 +701,12 @@ adding to it. Clean pass; audit closed.
 
 ### T16. `max_turns` was billing the harness's own filler as if the robot had thought
 
+*(The concurrent agent itself, `backends_v3.py`, has since been removed
+from this PR: it was an unfinished experiment, and shipping it cost more
+lines than the deliverable earned. The bug it exposed is in
+`brain_agent.py`, is real for any backend that makes cheap non-blocking
+calls, and is still fixed -- which is why this entry stays.)*
+
 The new concurrent (interaction/background split) agent, `backends_v3.py`,
 failed every episode outright the first time it was measured end to end --
 not on the task, on the clock. Traced to `brain_agent.py`'s `_apply`,
@@ -978,7 +984,7 @@ justified against a real traced case yet -- but the gap is confirmed
 live in the very data this fix is built on, not a future hypothetical.
 
 **Also stated plainly:** `Observation.as_text()` is shared by every
-backend in this file (`backends.py`, `backends_v2.py`/`backends_v3.py`,
+backend in this file (`backends.py`, `backends_v2.py`,
 `claude_bridge.py`), so this changes what EVERY backend's prompt looks
 like once the streak reaches 2, not only the one this fix was built for.
 That is the intended scope -- a harness-level signal, not a

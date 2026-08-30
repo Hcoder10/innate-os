@@ -103,7 +103,7 @@ class EchoBackend:
     wants_image = False
 
     # A short patrol, so the registry can build one with no arguments. Every
-    # other backend is constructed as BACKENDS[name](), and requiring a script
+    # other backend is constructed by registry.resolve(name)(), and requiring a script
     # made `main.py --agents brain:echo` -- the offline smoke path, whose whole
     # purpose is exercising the agent loop without spending money -- crash on
     # startup. Enough steps to move the robot and produce turns.
@@ -246,11 +246,3 @@ class GeminiBackend:
             data = json.loads(resp.read())
         text = data["candidates"][0]["content"]["parts"][0]["text"]
         return _coerce(json.loads(text))
-
-
-BACKENDS = {
-    "echo": EchoBackend,  # offline test double
-    "codex": CodexBackend,  # sees, by being handed a file path
-    "codex-blind": CodexBlindBackend,  # the control: same model, no camera
-    "gemini": GeminiBackend,  # sees, inline; needs GEMINI_API_KEY
-}

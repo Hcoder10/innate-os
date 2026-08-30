@@ -13,55 +13,59 @@ from. A sweep writes fresh ones under `results/` (gitignored).
 
 ## Running it
 
-All of it runs headless from the repo root, on `sim/.venv` (the system
-python has no mujoco):
+Headless, from anywhere in a clone, on `sim/.venv` (the system python has no
+mujoco):
 
 ```bash
 export MUJOCO_GL=osmesa
 export PYTHONPATH=$PWD/ros2_ws/src/mars_bot/mars_sim_driver
 
-sim/.venv/bin/python sim/bench/main.py                          # the 45-challenge suite, oracle + random
-sim/.venv/bin/python sim/bench/main.py --map rounds              # one map
-sim/.venv/bin/python sim/bench/main.py --agents oracle           # solvability only
-sim/.venv/bin/python sim/bench/main.py --agents oracle,random,brain:nemotron_stack
-                                       # score the submitted agent (needs GEMINI_API_KEY in the env)
-sim/.venv/bin/python sim/bench/debug_one.py household household_tour   # trace one episode
-sim/.venv/bin/python sim/bench/check_points.py                   # is a world point reachable?
-sim/.venv/bin/python -m pytest sim/bench -q                      # the offline tests (no key, no network)
+sim/.venv/bin/python sim/bench/main.py --list      # what backends and challenges exist
+sim/.venv/bin/python sim/bench/main.py             # the whole suite: 45 challenges, oracle + random
 ```
 
-`--agents brain:<name>` selects the agent architecture; `<name>` is any key
-in the backend registries (`backends.py` + `backends_v2/3/4.py`): `echo`,
-`codex`, `codex-blind`, `gemini`, `nemotron_stack`,
-`nemotron_stack_concurrent`, `nemotron_voicechat`. Adding an architecture
-is a new backend class plus a registry entry -- a 3-line merge in `main.py`,
-no other harness edits for v3 and v4. The v2 agent additionally added one
-opt-in observation field (`robot_pose`) and a `reset()` hook to
-`brain_agent.py` -- the seam grew once, and the commit that grew it says so.
+That second command is the benchmark. Everything else is a narrowing of it:
 
-The default sweep is the benchmark's own eight bundles (45 challenges).
-`--map apartment` runs upstream's stock apartment challenges instead; they
-load fine but report in the uncategorised bucket, so they are opt-in rather
-than silently padding "everything".
+```bash
+main.py --map rounds                          # one world
+main.py --challenges within_reach             # one challenge, by id or substring
+main.py --agents oracle                       # solvability only
+main.py --agents oracle,random,brain:nemotron_stack   # score an agent (needs GEMINI_API_KEY)
+debug_one.py household household_tour         # trace a single episode
+python -m pytest sim/bench -q                 # offline tests: no key, no network
+```
 
-The **live benchmark** — innate's own stack, Docker + nav + brain, scored by
-the same engine — is one command, from anywhere in a clone:
+Results stream to `sim/bench/results/bench_results.json` as they land.
+
+### Pointing it at your own agent
+
+An architecture is a class with `decide(observation, menu) -> action`. Name it
+on the command line -- a built-in key, or an import path to anything on the
+`PYTHONPATH`:
+
+```bash
+main.py --agents brain:nemotron_stack           # built-in (see --list)
+main.py --agents brain:your_module:YourBackend  # your own, no harness edit
+```
+
+`registry.py` holds the built-in names. Adding an architecture does not
+require touching the harness -- that is the point of the seam, and
+`--agents brain:<module>:<Class>` is the whole interface.
+
+### The live benchmark
+
+innate's own stack -- Docker, ROS2, nav2, the brain -- scored by the same
+judge, one command from anywhere in a clone:
 
 ```bash
 bash sim/bench/run_eval.sh              # all 8 maps; backend picked from .env
 bash sim/bench/run_eval.sh counter      # one map
 ```
 
-Those scripts are checked in verbatim under `sim/bench/` (`run_eval.sh`,
-`innate_up.sh`, `prime_brain.sh`, `say_brief.sh`) exactly as
-they ran: they assume this repo at `~/innate-os` and were invoked from
-`$HOME`, so copy them there (or symlink) to reproduce the live runs.
-
 It needs either `INNATE_SERVICE_KEY` (their proxy, preferred) or
-`GEMINI_BASE_URL` (a local shim, `gemini_shim.py`) in `.env`, restarts the
-stack per map, and writes per-category episode JSONs plus a stamped log under
-`sim/bench/results/eval/`. Watch it live at `live_view.py` (camera + chat +
-goals, http://localhost:8088).
+`GEMINI_BASE_URL` (a local shim, `gemini_shim.py`) in `.env`. It restarts the
+stack once per map, and writes per-category episode JSONs plus a stamped log
+under `sim/bench/results/eval/`.
 
 No ROS. `VirtualMars` and `ChallengeEngine` directly, one episode per process,
 `imap_unordered` so results stream to `sim/bench/results/bench_results.json`
