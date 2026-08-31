@@ -13,7 +13,10 @@
 # These are the tags in the local store. The assets and viewer content is
 # unchanged by the benchmark work; only the hash of the surrounding tree moved.
 set -uo pipefail
-cd "$HOME/innate-os" || exit 1
+# Resolve the repo from this script, not $HOME: run_eval.sh calls this
+# one, so a hardcoded home path here made the whole live path
+# home-directory-bound even after the callers were fixed.
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" || exit 1
 
 export INNATE_OS_IMAGE="innate-os-sim-clean-innate:inputs-3acfd3403d107c7672ea0cefd1539c6f4eaa8714f484f0743a4b6138a040ebc3"
 export INNATE_SIM_ASSETS_IMAGE="ghcr.io/innate-inc/innate-os-sim-assets:inputs-2dcc207e745947d540d9866e1028f41f6ccc6065c154c7298ce4ec468ad86f5b"
