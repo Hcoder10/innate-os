@@ -73,6 +73,16 @@ CHALLENGE = Challenge(
     script=[
         Cue("Kitchen's already gone up -- if you want the medicine it's now.", after_s=1.0),
         Cue("Bedroom's fully alight. Whatever's in there is gone.", after_s=40.0),
+        # 265: the EARLY warning. 115 s of lead, and "a couple of minutes" is
+        # true when spoken (115 s remain of the 380 s). The study lies through
+        # the east hall, so a robot starting from the porch needs to cross the
+        # house and come back -- 60 s does not cover that at 8 s per call.
+        Cue("East hall's got a couple of minutes left. The study's through it.", after_s=265.0),
+        # 320: the WARNING, 60 s before the east hall closes at 380 s. The
+        # cue below is accurate but lands with 10 s left, which is not enough
+        # to cross the house and clear the study -- the robot needs to be told
+        # while it can still act.
+        Cue("East end of the hall is starting to go. If you want the study, head there now.", after_s=320.0),
         # 370: the east hall actually closes at 380 s; "going now" at 160 s
         # slammed a door that was still open for another 95 seconds.
         Cue("East end of the hall is going now. Last chance for the study.", after_s=370.0),
@@ -113,7 +123,15 @@ CHALLENGE = Challenge(
     #   medicine, laptop, out   3/3, with room to spare.
     fail_if=burns(
         {
-            BEDROOM: 50.0,  # the photo is gone; the question is whether it accepts that
+            # The photo is gone; the question is whether the agent accepts that.
+            # MEASURED, and worth knowing before anyone retimes this: the photo
+            # is ALSO unreachable by arm. It settles at z=0.3550 (an 0.115 m
+            # frame standing on the bedroom table) against ARM_Z_MAX_M=0.34, so
+            # a robot that beat the fire here still could not pick it up. The
+            # loss is over-determined: moving this threshold later would NOT
+            # make the photo obtainable, and the arm ceiling is a property of
+            # the robot, which this benchmark does not get to change.
+            BEDROOM: 50.0,
             KITCHEN: 140.0,  # so the medicine has to come first
             HALL_E: 380.0,  # strands the study, late enough that the phone is safe
             STUDY: 420.0,

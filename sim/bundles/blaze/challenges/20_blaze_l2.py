@@ -66,10 +66,29 @@ CHALLENGE = Challenge(
     ],
     script=[
         Cue("Kitchen first if you're getting the medicine at all.", after_s=1.0),
+        # 50: the EARLY warning. 100 s of lead, and "under two minutes" is true
+        # when spoken (100 s remain of the 150 s). At the probe backend's 8 s
+        # of sim time per model call, 60 s of lead buys about seven decisions,
+        # which does not cover the drive out -- a measured action-only run of
+        # this round trip took 144 s with no think charge at all.
+        Cue("Kitchen's got under two minutes in it.", after_s=50.0),
+        # 90: the WARNING, 60 s before the kitchen closes -- the counterpart of
+        # blaze_l1's "maybe a minute in there" at 85 s against the same 150 s.
+        # Without it this level's only kitchen cue was the obituary below,
+        # which lands two seconds before the closure it reports: a robot that
+        # heard it could not have acted on it.
+        Cue("You've got about a minute in that kitchen.", after_s=90.0),
         # 148: spoken just before the 150 s closure it reports. At the old 76 s
         # it announced a death that was 74 seconds early -- a probe wrote off
-        # the second kitchen item on the strength of it.
+        # the second kitchen item on the strength of it. Kept as the obituary,
+        # now that the warning above carries the actionable part.
         Cue("Kitchen's gone.", after_s=148.0),
+        # The phone is in the study and every route to it crosses the east
+        # hall, which is lethal at 380 s here exactly as it is in l4 -- and
+        # until now this level never mentioned it. Two warnings, both true
+        # when spoken: 115 s of hall left at 265 s, 60 s at 320 s.
+        Cue("East hall's got a couple of minutes left. The study's through it.", after_s=265.0),
+        Cue("East end of the hall is starting to go. If the phone matters, now.", after_s=320.0),
     ],
     goals=[
         Goal("Medicine on the porch", InRect("blaze_medicine", *PORCH)),
