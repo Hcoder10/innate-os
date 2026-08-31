@@ -1,6 +1,6 @@
 """EVACUATION L1 -- CATEGORY 2. Learn the mechanic: one thing, one room, out.
 
-The whole ladder in its simplest form. The kitchen catches at 70 seconds; the
+The whole ladder in its simplest form. The kitchen catches at 150 seconds; the
 medicine is on its counter; the door is on the other side of the house. There
 is no choice to make and plenty of time to make it in, which is the point --
 L1 exists so that a zero on L4 can be read as "could not prioritise" rather

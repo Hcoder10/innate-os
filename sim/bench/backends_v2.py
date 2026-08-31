@@ -6,8 +6,11 @@ and run against this harness, with every substitution for unavailable
 hardware (real NemotronLabs VoiceChat, a physical Jetson) named at the call
 site rather than glossed over.
 
-THE PROTOCOL. One harness turn == at most TWO model calls, not an open
-tool-loop:
+THE PROTOCOL. One harness turn == at most two CONVERSATIONAL model calls,
+not an open tool-loop. The grounding tool makes its own vision call on top
+of those, and retries once on a low-confidence read, so a turn that grounds
+costs three model calls and four in the retry case. Only check_reach and
+explore_frontier are free -- they are pure Python:
 
   call 1 (the "conversational core" call) -- sees the frame, the task-stack,
   the last tool result if any, and may reply either with a real action, or
@@ -17,11 +20,12 @@ tool-loop:
   separate Gemini vision call with its own narrower prompt; check_reach and
   explore_frontier are pure Python, no network) and makes call 2 with the
   result appended -- which MUST return a real action, no further tool
-  requests honoured. This bounds every turn to <=2 model calls, mirrors
-  NemotronLabs' actual "tool call without stopping the conversation" shape
-  (the conversation-level call never blocks on the tool; it is simply asked
-  again once the tool result exists), and keeps the cost/latency budget the
-  AGENT_SPEC.md commits to honest rather than aspirational.
+  requests honoured. This bounds every turn to two CONVERSATIONAL calls and
+  mirrors the SHAPE of NemotronLabs' "tool call without stopping the
+  conversation" -- the conversation call is re-issued once the tool result
+  exists rather than held open. In this harness it is still synchronous:
+  decide() blocks on every call. The non-blocking property belongs to the
+  target architecture, not to this stand-in.
 
 NO OVERFITTING. Nothing here references a challenge id, a prop name, or a
 map. `grep -i "counter_\\|blaze_\\|household_\\|pantry_\\|gallery_\\|workshop_\\|rounds_\\|bridge_" backends_v2.py`

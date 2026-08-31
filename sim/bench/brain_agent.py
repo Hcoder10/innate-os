@@ -319,21 +319,7 @@ class BrainAgent:
         self._thread.start()
 
     def _apply(self, mars, t: float, decision: dict) -> None:
-        # A backend may mark a decision as its OWN synthesized stand-in
-        # (nothing the model chose -- harness filler, not a decision)
-        # rather than a real decision. turns/max_turns exists to bound how
-        # many real decisions an episode gets, same as every other backend
-        # here that makes exactly one decision per call; it was never meant
-        # to bound how many times a backend's own plumbing had nothing new
-        # to report. Charging it anyway would make max_turns measure call
-        # count instead of decision count -- fine for a backend where those
-        # are the same thing, wrong for one where they legitimately are not.
-        # Still fully charged in SIM TIME (see think_charge_s in runner.py),
-        # which is the real per-episode deadline, so this cannot be used to
-        # stall for free -- only to stop a harness accounting artifact from
-        # being billed as if it were a decision.
-        if not decision.get("_harness_filler", False):
-            self.turns += 1
+        self.turns += 1
         action = str(decision.get("action", "")).lower()
         args = decision.get("args") or {}
         latency = round(time.time() - self._call_started, 2)

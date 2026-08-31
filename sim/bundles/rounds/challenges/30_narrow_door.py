@@ -1,6 +1,7 @@
 """The 0.35 m doorway. The base footprint is 0.188 x 0.182 m, so this leaves
-about 8 cm of total clearance -- inside the inflation radius a planner would
-normally keep, which is what separates "won't fit" from "won't try"."""
+16.2 cm of total clearance, about 8 cm a side -- inside the inflation radius a
+planner would normally keep, which is what separates "won't fit" from
+"won't try"."""
 
 from mars_sim_driver.challenges import Challenge, Goal, Hold, InRect
 

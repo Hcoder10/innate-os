@@ -193,10 +193,12 @@ current system's response to that gap is undirected wandering. NemotronLabs
 VoiceChat being a better conversationalist does not fix this -- it is a
 missing skill, not a missing IQ point.
 
-The fix: a `explore_frontier()` tool that queries the local costmap (nav2
-already builds this) for the nearest unexplored boundary cell weighted by
-open angular width, turns toward it, and reports back "now facing an
-unexplored area, camera attached." The duplex model's job becomes: look at
+The fix: an `explore_frontier()` tool that keeps scan memory -- which
+60-degree slices of the circle the robot has already looked at -- and turns
+toward the nearest one it has not, reporting back "now facing an unexplored
+area, camera attached." It is bookkeeping over the robot's own heading, NOT
+a costmap query: nav2 builds an occupancy grid, and wiring this tool to it
+is the obvious next step, but the shipped version does not read it. The duplex model's job becomes: look at
 what the VLM grounds in that frame, decide if it matches the target
 ("sink and toilet visible" -> stop; "bookcase" -> call `explore_frontier()`
 again). This is precisely what probe transcripts show top-performing agents
@@ -300,7 +302,7 @@ what's substituted, explicit:
 | Piece | Status |
 |---|---|
 | Reachability tool | **Real.** Pure geometry, tested against the harness's actual judged constants (see above), no substitution needed. |
-| Frontier exploration | **Real algorithm**, running against the sim's actual occupancy grid. |
+| Frontier exploration | **Real, but simpler than the name suggests.** Scan memory over 60-degree heading slices, driven by the robot's own yaw. It does not read the occupancy grid or a costmap; "frontier" describes the intent, not the data structure. |
 | Task-stack | **Real.** A JSON scratchpad read/written via tool call, checkpointed on skill completion. |
 | Two-model concurrent split | **Prototyped and measured, then removed from this PR.** A background thread ran the heavy model continuously while the interaction thread took whatever was already finished. Measuring it surfaced a real harness bug -- `max_turns` charged the harness's own "nothing ready yet" filler tick as if the robot had thought, so every episode died of turn exhaustion rather than on the task. That fix lives in `brain_agent.py` and is still in (FINDINGS.md T16). The backend itself was an unfinished experiment whose own docstring recorded an unported checkpoint, so it is not worth the lines in a submission. |
 | Duplex conversational core | **Substituted.** Implemented against Gemini (the API this session has), prompted to honor the same contract (tool calls that don't block conversation, task-stack discipline). NemotronLabs' actual audio-native turn-taking and interrupt handling are NOT reproduced -- this session's harness is text/image-turn-based, not audio-streaming, so "full-duplex" is honored as a *context and tool-calling discipline*, not literally demonstrated. Swapping in the real model means replacing this one backend class; nothing else in the harness changes, which is itself the demonstration of the take-home's second requirement. |

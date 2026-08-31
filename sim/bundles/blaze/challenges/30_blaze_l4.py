@@ -73,7 +73,7 @@ CHALLENGE = Challenge(
     script=[
         Cue("Kitchen's already gone up -- if you want the medicine it's now.", after_s=1.0),
         Cue("Bedroom's fully alight. Whatever's in there is gone.", after_s=40.0),
-        # 250: the east hall actually closes at 255 s; "going now" at 160 s
+        # 370: the east hall actually closes at 380 s; "going now" at 160 s
         # slammed a door that was still open for another 95 seconds.
         Cue("East end of the hall is going now. Last chance for the study.", after_s=370.0),
     ],
@@ -105,7 +105,7 @@ CHALLENGE = Challenge(
     # margin.
     #
     # Three distinct failure modes, all legible in the goal count:
-    #   photo first             survives, but the kitchen goes at 65 s and the
+    #   photo first             survives, but the kitchen goes at 140 s and the
     #                           medicine is lost. 1/3, on a route that felt
     #                           sensible the whole way.
     #   medicine, laptop,

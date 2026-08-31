@@ -6,8 +6,9 @@ editing the harness. Everything here implements one method --
 decide(observation, action_menu) -> {"action": ..., "args": {...}} -- and
 declares whether it wants a camera frame.
 
-THE BLIND BACKEND IS NOT A PLACEHOLDER. CodexBackend runs text-only, because
-the Codex CLI takes no images. That makes it a control worth reporting in its
+THE BLIND BACKEND IS NOT A PLACEHOLDER. CodexBlindBackend runs text-only.
+The CLI takes no inline images, so CodexBackend writes the frame to disk and
+names the path instead; the blind control is the subclass that does not. That makes it a control worth reporting in its
 own right: any challenge a blind agent passes is a challenge with a shortcut in
 it, and finding those is the point of the validity gate. Read its scores as
 "what is reachable from the brief alone", not as a vision result.
@@ -128,7 +129,7 @@ class EchoBackend:
 
 
 class CodexBackend:
-    """The Codex CLI as the decision-maker. TEXT ONLY -- see the module note.
+    """The Codex CLI as the decision-maker. Sees, by being handed a file path.
 
     --ignore-user-config matters: with the user's config loaded a call took
     29.8 s, and without it 4.7 s. At one call per turn and forty turns per
@@ -141,8 +142,8 @@ class CodexBackend:
     # colours, the teapot and the menu board, all correct.
     wants_image = True
 
-    def __init__(self, model: str = "gpt-5.6-luna", effort: str = "medium", timeout_s: float = 180.0):
-        self.model, self.effort, self.timeout_s = model, effort, timeout_s
+    def __init__(self, model: str = "gpt-5.6-luna", timeout_s: float = 180.0):
+        self.model, self.timeout_s = model, timeout_s
         if shutil.which("codex") is None:
             raise RuntimeError("codex CLI not on PATH")
 

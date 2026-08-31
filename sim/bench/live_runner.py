@@ -81,7 +81,7 @@ def prime(reset: bool = False) -> str:
         return f"{type(exc).__name__}: {exc}"
 
 
-async def instruct(rosbridge: str, text: str) -> str:
+async def instruct(text: str) -> str:
     """Give the robot the challenge's brief, as a person would.
 
     Starting a challenge only builds the SCENE. The brief is written for a human
@@ -307,7 +307,7 @@ async def _episode(
                         # the drops land tells the robot to fetch something that
                         # is still parked off-map.
                         if rosbridge and brief:
-                            err = await instruct(rosbridge, brief)
+                            err = await instruct(brief)
                             print(f"      instructed via {CHAT_IN}" + (f" (FAILED: {err})" if err else ""), flush=True)
                     elif time.time() > grace:
                         ep.error = "challenge never entered 'running' (start refused?)"
@@ -332,7 +332,7 @@ async def _episode(
                     cues_sent += 1
                     text = str(line.get("text", ""))
                     if rosbridge and text:
-                        err = await instruct(rosbridge, text)
+                        err = await instruct(text)
                         print(
                             f"      narrator +{line.get('t')}s ({line.get('kind')}): {text!r}"
                             + (f" (DELIVERY FAILED: {err})" if err else ""),
@@ -418,7 +418,7 @@ def _blocked_here(ids: list[str]) -> dict[str, str]:
     definition cannot be found is not blocked -- silence here must never
     invent a block that stops a runnable challenge.
 
-    BOTH roots are loaded. sim/bundles holds this benchmark's 38; sim/challenges
+    BOTH roots are loaded. sim/bundles holds this benchmark's 45; sim/challenges
     holds the stock apartment suite, which ChallengeEngine serves whenever the
     loaded assets bundle has no rooms/ dir. Their ids do not overlap, so
     scanning only the bundles made the gate a silent no-op on the stock world --

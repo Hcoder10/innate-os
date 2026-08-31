@@ -5,8 +5,8 @@ WHY. `pick_any_object` finds the object and verifies the grasp through
 `innate.gemini.make_client()`, which returns a ProxyClient when
 INNATE_SERVICE_KEY is set, a `_DirectClient(GEMINI_BASE_URL)` when that is set
 instead, and None when neither is -- and `execute()` fails on the first line
-when it is None. That blocks 19 of the 38 challenges, 12 of the 14 in category
-2. Innate built the GEMINI_BASE_URL seam for exactly this case; it just needs
+when it is None. That blocks the 22 of 45 challenges that need a pick, 13 of
+the 17 in category 2 (see capabilities.py). Innate built the GEMINI_BASE_URL seam for exactly this case; it just needs
 something at the other end.
 
 WHY A SHIM AND NOT THE URL ON ITS OWN. `_DirectClient` sends no auth header and

@@ -263,19 +263,3 @@ def blocked_reason(challenge, env: dict[str, str] | None = None) -> str | None:
     if too_wide:
         return f"target does not fit the gripper: {too_wide}"
     return None
-
-
-def summarise(challenges, env: dict[str, str] | None = None) -> str:
-    """One line per category: how many are runnable here."""
-    lines = []
-    by_category: dict[int, list] = {}
-    for challenge in challenges:
-        by_category.setdefault(getattr(challenge, "category", 0), []).append(challenge)
-    for category in sorted(by_category):
-        group = by_category[category]
-        blocked = [c for c in group if blocked_reason(c, env)]
-        lines.append(
-            f"  category {category}: {len(group) - len(blocked)}/{len(group)} runnable"
-            + (f", {len(blocked)} blocked" if blocked else "")
-        )
-    return "\n".join(lines)

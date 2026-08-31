@@ -126,9 +126,10 @@ def proxy_transport(proxy: ProxyClient) -> Transport:
 
 
 # --- usage metering (sim/bench/FINDINGS.md, patch_usage_meter) ----------------
-# Exact token counts for every call, so a cost estimate is measured rather than
-# guessed. Best effort in every direction: if anything here fails the brain is
-# unaffected.
+# Token counts come from the API response, so a cost estimate is measured
+# rather than guessed -- but the metering is best effort in every direction: a
+# failed write is swallowed so the brain is unaffected, which means a total is
+# a floor, not a guaranteed-complete sum.
 _USAGE_LOG = os.environ.get("GEMINI_USAGE_LOG", "/root/innate-os/workspace/gemini_usage.jsonl")
 
 

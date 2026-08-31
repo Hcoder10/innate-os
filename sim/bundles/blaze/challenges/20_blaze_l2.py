@@ -1,7 +1,7 @@
 """EVACUATION L2 -- CATEGORY 2. Both are savable. Only one order works.
 
 Two things worth saving, in two rooms, and enough time for both -- but the
-kitchen goes at 75 seconds and the study does not go for another two minutes.
+kitchen goes at 150 seconds and the study does not go for another two minutes.
 Fetch the phone first and you come back for a medicine that is already gone.
 
 WHY THIS RUNG EXISTS. L1 asks whether the robot can evacuate at all. L4 asks

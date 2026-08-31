@@ -149,7 +149,7 @@ names (13 observation/conversation, 17 simple instruction, 15 long-horizon):
 | **pantry** | counting under classification pressure (a misfiled item counts as what it IS), shelving, a five-goal stocktake |
 | **workshop** | reach (5 benches, 0.06–0.30 m tops), grasp band (5 cans, 40–100 mm), occlusion |
 | **gallery** | height above the floor plane (5 identical mugs, 0–0.5 m) and bearing (8 identical cans at 45°) |
-| **rounds** | doorway clearance (0.45–1.10 m), room identification by fixture, long-horizon delivery |
+| **rounds** | doorway clearance (0.35–1.00 m), room identification by fixture, long-horizon delivery |
 | **household** | composite: four rooms, three stations, no isolated variable |
 | **bridge** | spoken route-following, clean list vs the same route delivered disfluently (the pair prices disfluency in gates) |
 | **blaze** | urgency: a spreading fire (hard fail), reprioritisation cues, evacuation ordering |
@@ -183,8 +183,9 @@ search-coverage probe into a contrast probe.
 ## Sim constraints worth knowing before writing a challenge
 
 - The robot **cannot change height**. `add_planar_base` gives x, y, yaw only.
-- The base is **0.188 × 0.182 m**, so sub-0.45 m gaps are a geometry wall, not
-  a planning problem.
+- The base is **0.188 × 0.182 m**, so it physically fits every door in the
+  suite, down to the 0.35 m one the oracle drives through. What stops the robot
+  at the narrow end is planner inflation, not geometry.
 - `pose()` returns qpos directly — yaw is **radians**.
 - A floor must sit at **exactly z = 0**. Two millimetres proud is a penetration
   the planar base can never rise out of, and it pins the robot: commanded to
