@@ -309,6 +309,12 @@ async def _episode(
                         if rosbridge and brief:
                             err = await instruct(brief)
                             print(f"      instructed via {CHAT_IN}" + (f" (FAILED: {err})" if err else ""), flush=True)
+                            if err:
+                                # The robot was never told the task. Whatever it
+                                # does now is not an answer to this challenge, so
+                                # the episode is harness-blocked, not a robot
+                                # zero -- `scored` below drops blocked episodes.
+                                ep.blocked = f"harness: brief not delivered ({err[:80]})"
                     elif time.time() > grace:
                         ep.error = "challenge never entered 'running' (start refused?)"
                         break
@@ -398,11 +404,17 @@ async def _sweep(
             # Fresh agent per challenge: the world resets on start, the BRAIN
             # does not, so without this it carries the previous task's history
             # forward and the scores absorb the contamination silently.
-            err = prime(reset=True)
-            if err:
-                print(f"      prime failed: {err}", flush=True)
+            prime_err = prime(reset=True)
+            if prime_err:
+                print(f"      prime failed: {prime_err}", flush=True)
             await asyncio.sleep(1.0)
+        else:
+            prime_err = ""
         ep = await _episode(url, cid, timeout_s, rosbridge=rosbridge, brief=(briefs or {}).get(cid, ""))
+        if prime_err and not ep.blocked:
+            # An unprimed brain is carrying the last challenge's history, so
+            # this score would be measuring contamination, not the robot.
+            ep.blocked = f"harness: brain not primed ({prime_err[:80]})"
         results.append(ep)
         print(f"[{n:>3}/{len(ids)}] {ep.as_row()}", flush=True)
         out.write_text(json.dumps([asdict(r) for r in results], indent=1))
@@ -441,8 +453,17 @@ def _blocked_here(ids: list[str]) -> dict[str, str]:
         for root in roots:
             if root.is_dir():
                 found.update(load_challenges([root]))
-    except Exception as exc:  # noqa: BLE001 -- never block a run over this
-        print(f"(capability check skipped: {type(exc).__name__}: {exc})", flush=True)
+    except Exception as exc:  # noqa: BLE001 -- reported, not silently ignored
+        # Failing open here schedules challenges this deployment cannot
+        # attempt and counts their zeros, which is the mis-scoring this
+        # check exists to prevent. Say so loudly rather than return a
+        # clean-looking empty dict.
+        print(
+            f"!!! capability check FAILED ({type(exc).__name__}: {exc}) -- "
+            "cannot tell which challenges are attemptable; scores from this "
+            "run may include challenges that were never runnable here",
+            flush=True,
+        )
         return {}
 
     out = {}

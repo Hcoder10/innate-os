@@ -171,9 +171,10 @@ class InCircle(Predicate):
         if self.min_z is None:
             return True
         z = state.height(self.target)
-        # Unknown height PASSES: a goal must never start failing because the
-        # engine could not read a z it previously never asked for.
-        return z is None or z >= self.min_z
+        # Unknown height FAILS. min_z is what separates "on the counter" from
+        # "in the counter's footprint, on the floor"; awarding it when the
+        # height cannot be read credits a goal the robot may not have reached.
+        return z is not None and z >= self.min_z
 
 
 @dataclass
@@ -203,7 +204,7 @@ class InRect(Predicate):
         if self.min_z is None:
             return True
         z = state.height(self.target)
-        return z is None or z >= self.min_z
+        return z is not None and z >= self.min_z  # unknown height fails; see InCircle
 
 
 @dataclass
@@ -695,6 +696,7 @@ class ChallengeEngine:
     ):
         self.sim = sim
         self.sim_lock = sim_lock
+        self._height_warned = False
         # Tracked source dir plus anything the asset bundle shipped, like the
         # props (core.VirtualMars): a pack can carry its scenarios with it.
         #
@@ -987,7 +989,13 @@ class ChallengeEngine:
                 # object_poses() has carried z all along and nothing read it.
                 try:
                     heights = {name: float(p[2]) for name, p in self.sim.object_poses().items()}
-                except Exception:  # noqa: BLE001 -- judging must not depend on this
+                except Exception as exc:  # noqa: BLE001 -- judging must not depend on this
+                    # Every min_z goal now fails while heights are missing, so
+                    # this must not pass silently: a run that hits it is
+                    # producing scores the height rules cannot back.
+                    if not self._height_warned:
+                        self._height_warned = True
+                        print(f"[challenges] heights unavailable ({type(exc).__name__}: {exc})", flush=True)
                     heights = {}
                 state = WorldState(t=t, robot=pose, centers=centers, elapsed=self.elapsed_s, heights=heights)
                 self._measure(pose, events, centers)
