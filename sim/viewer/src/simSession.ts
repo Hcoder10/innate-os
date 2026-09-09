@@ -15,6 +15,7 @@ import type {
   EnvironmentRoster,
 } from "./physics/worldStateController";
 import type { PropInfo } from "./props";
+import type { SimulationClock } from "./slowdown";
 import { interpolateTraffic } from "./trafficState";
 import type { RoomInfo } from "./roomManifest";
 import type { TrafficManifest, TrafficState } from "./trafficState";
@@ -27,6 +28,8 @@ export interface ChallengeEntry extends ChallengeInfo, ChallengeProgress {}
 export interface ChallengeView {
   list: ChallengeEntry[];
   active: ChallengeActive | null;
+  /** Persona and name the story gave the robot; survives the switch to the next scene. */
+  profile?: Record<string, string>;
 }
 
 const NO_PROGRESS: ChallengeProgress = { passed: false, best_time_s: null, attempts: 0 };
@@ -407,6 +410,7 @@ export class SimSession {
     this.#challenge = {
       list: this.#challengeInfo.map((info) => ({ ...info, ...(block.progress[info.id] ?? NO_PROGRESS) })),
       active: block.active,
+      profile: block.profile ?? {},
     };
     for (const cb of this.#challengeListeners) cb(this.#challenge);
   }
@@ -419,6 +423,11 @@ export class SimSession {
   /** Abort the active challenge (or dismiss a finished one). */
   abortChallenge(): void {
     this.#controller?.send({ op: "abort_challenge" });
+  }
+
+  /** Tell the active challenge runtime something only the interface knows. */
+  sendChallengeEvent(event: { type: string } & Record<string, unknown>): void {
+    this.#controller?.send({ op: "challenge_event", event });
   }
 
   // WebRTC-specific surface: harmless no-ops in sim.
@@ -566,6 +575,12 @@ export class SimSession {
   /** The live 2D canvas behind a PiP tile; the webapp mounts it directly. */
   thumbnailCanvas(index: number): HTMLCanvasElement | null {
     return this.#thumbCanvases[index] ?? null;
+  }
+
+  /** Latest authoritative simulation clock, independent of viewer interpolation. */
+  get simulationClock(): SimulationClock | null {
+    const sample = this.#samples[this.#samples.length - 1];
+    return sample ? { t: sample.t, receivedAtMs: this.#lastArrival * 1000 } : null;
   }
 
   /** Server->browser state delivery lag: cur is the median of the last ~2s,

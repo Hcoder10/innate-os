@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ast
+import dataclasses
 import functools
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -72,6 +74,9 @@ def _resolve_port(name: str, offset: int, classic: int) -> int:
 
 SIM_HTTPS_PORT = _resolve_port("SIM_HTTPS_PORT", 0, 443)
 SIM_HTTP_PORT = _resolve_port("SIM_HTTP_PORT", 1, 80)
+# `up --intro` opens this pack, where the first-run story is authored.
+INTRO_ENVIRONMENT_ID = "void"
+
 SIM_ROSBRIDGE_PORT = _resolve_port("SIM_ROSBRIDGE_PORT", 2, 9090)
 SIM_UDP_PORT = _resolve_port("SIM_UDP_PORT", 3, 9999)
 SIM_FOXGLOVE_PORT = _resolve_port("SIM_FOXGLOVE_PORT", 4, 8765)
@@ -155,7 +160,7 @@ ASSETS_IMAGE_PATHSPECS = (
     "sim/environments",
     "sim/tools",
     "sim/viewer/tools",
-    "ros2_ws/src/mars_bot/mars_sim",
+    "ros2_ws/src/mars_bot/mars_description",
 )
 # The driver modules the build imports to compile a world for the nav map --
 # exactly those, not the package: world_server.py, node.py and the bridges
@@ -182,7 +187,7 @@ ASSETS_IMAGE_DRIVER_FILES = tuple(
 # hard-stop `up` (compute_geometry_inputs_hash), except the authored Crossroads
 # scene spec. Traffic-control logic changes do not alter its generated GLB.
 GEOMETRY_DRIVER_FILES = (f"{_DRIVER}/crossroads.py",)
-NON_GEOMETRY_PATHSPECS = ("ros2_ws/src/mars_bot/mars_sim",)
+NON_GEOMETRY_PATHSPECS = ("ros2_ws/src/mars_bot/mars_description",)
 GEOMETRY_INPUT_PATHSPECS = tuple(p for p in ASSETS_IMAGE_PATHSPECS if p not in NON_GEOMETRY_PATHSPECS)
 # The SimSession bundle the webapp loads, as its own image
 # (sim/viewer/Dockerfile), addressed by inputs-<compute_viewer_inputs_hash over
@@ -214,6 +219,8 @@ SIM_ASSET_UNITS_DERIVED = (
     "backrooms_visual",
     "intersection_split_v2",
     "intersection_visual",
+    "void_split_v2",
+    "void_visual",
     "map",
 )
 SIM_ASSET_UNITS_AUTHORED = (
@@ -221,6 +228,14 @@ SIM_ASSET_UNITS_AUTHORED = (
     "objects",
 )
 SIM_ASSET_UNITS = SIM_ASSET_UNITS_DERIVED + SIM_ASSET_UNITS_AUTHORED
+# The published geometry to install when nothing built this checkout's tag. A
+# fork cannot push a branch for our CI to build, so the alternative is refusing
+# to start over inputs that may not touch geometry at all.
+ASSETS_FALLBACK_TAG = "main"
+# The two roots mars_sim_driver.environments reads, `environments.local`
+# gitignored for licensed packs. Manifests are loaded LIVE from the checkout,
+# so a spawn pose or a display name is not something `up` can be missing.
+ENVIRONMENT_MANIFEST_ROOTS = ("environments", "environments.local")
 # This file is deliberately NOT in ASSETS_IMAGE_INPUT_FILES -- that would retag
 # the asset image on every unrelated launcher edit. Safe only because
 # tests/test_assets_image_inputs.py holds the dockerignore (which IS hashed)
@@ -585,6 +600,72 @@ def resolve_assets_image(repo_root: Path) -> str:
     return f"{DEFAULT_SIM_ASSETS_IMAGE}:inputs-{compute_assets_image_inputs_hash(repo_root)}"
 
 
+def resolve_fallback_assets_image() -> str:
+    return f"{DEFAULT_SIM_ASSETS_IMAGE}:{ASSETS_FALLBACK_TAG}"
+
+
+@dataclasses.dataclass(frozen=True)
+class EnvironmentAssets:
+    """What one environment needs on disk, per install root.
+
+    The contract `up` gates on. A content hash over sim/environments and
+    sim/tools answers a different question -- was this store built from these
+    bytes -- and answers it wrongly for the common cases: a manifest the driver
+    reads live, or an edit to a pipeline whose output the launched world never
+    loads.
+    """
+
+    assets: tuple[str, ...]  # under sim/assets
+    viewer: tuple[str, ...]  # under sim/viewer/public
+
+
+def environment_manifest_path(repo_root: Path, environment_id: str) -> Path:
+    candidates = [repo_root / "sim" / root / environment_id / "manifest.json" for root in ENVIRONMENT_MANIFEST_ROOTS]
+    return next((path for path in candidates if path.is_file()), candidates[0])
+
+
+def available_environment_ids(repo_root: Path) -> list[str]:
+    sim = repo_root / "sim"
+    return sorted(
+        {path.parent.name for root in ENVIRONMENT_MANIFEST_ROOTS for path in (sim / root).glob("*/manifest.json")}
+    )
+
+
+def _viewer_paths(viewer: dict[str, str]) -> tuple[str, ...]:
+    """The browser assets whose absence means this pack is not installed.
+
+    Every path the manifest names except the one the image does not ship: the
+    apartment's monolith glb is scene.ts's fallback for a missing room
+    manifest, and sim/Dockerfile.assets deliberately leaves it out, so
+    requiring it would refuse a healthy install. Where the rooms are streamed,
+    the manifest and the directory it streams from are what must be there.
+    """
+    keys = ("manifest", "base_dir", "collision_dir") if "manifest" in viewer else ("model", "collision_dir")
+    return tuple(str(viewer[key]) for key in keys if key in viewer)
+
+
+def read_environment_assets(repo_root: Path, environment_id: str) -> EnvironmentAssets | None:
+    """None when no manifest describes `environment_id`, or it does not parse.
+
+    Not an error here: the driver reports a broken pack against the world it
+    was asked to load, with the available ids -- far better than a launcher
+    gate can, and refusing to start is the behaviour being removed.
+    """
+    try:
+        manifest = json.loads(environment_manifest_path(repo_root, environment_id).read_text(encoding="utf-8"))
+        physics, viewer = manifest["physics"], manifest["viewer"]
+        return EnvironmentAssets(
+            assets=(
+                str(physics["collision_dir"]),
+                str(physics["visual_dir"]),
+                str(manifest["navigation"]["map_yaml"]),
+            ),
+            viewer=_viewer_paths(viewer),
+        )
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        return None
+
+
 @functools.lru_cache
 def compute_geometry_inputs_hash(repo_root: Path) -> str:
     """Whether the geometry already installed still describes this checkout.
@@ -743,6 +824,7 @@ def get_config() -> dict[str, object]:
         "os_pull_image": os_pull_image if os_pull_image is not None else True,
         "os_always_build": os_always_build if os_always_build is not None else False,
         "environment_id": get_nested_str(sim_config, "simulation", "environment") or "apartment",
+        "intro": False,
     }
 
 

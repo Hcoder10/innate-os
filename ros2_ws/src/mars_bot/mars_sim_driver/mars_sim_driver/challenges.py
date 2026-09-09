@@ -46,6 +46,7 @@ import socket
 import sys
 import threading
 import time
+import uuid
 from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -100,6 +101,7 @@ class WorldState:
     # working and so an in-process caller that does not supply it simply gets
     # goals that cannot assert height.
     heights: dict[str, float] = field(default_factory=dict)
+    objects: dict[str, list[float]] = field(default_factory=dict)
 
     def pos(self, name: str) -> tuple[float, float] | None:
         """xy of "robot" or a prop; None while that prop isn't dropped."""
@@ -651,10 +653,21 @@ class EnvironmentReply:
 
 @dataclass
 class RuntimeResult:
-    """Environment events and chat replies produced by one runtime update."""
+    """Environment events and chat replies produced by one runtime update.
+
+    ``public`` replaces the scenario state shipped to the interface and the
+    agent (the state stream's ``active.runtime`` and the agent context file);
+    None leaves the last value standing. ``drops`` and ``transition`` are
+    world actions the runtime cannot perform itself: the world server drops
+    the props under the sim lock, and a transition switches environment then
+    starts the named challenge there.
+    """
 
     events: list[dict] = field(default_factory=list)
     replies: list[str | EnvironmentReply] = field(default_factory=list)
+    public: dict | None = None
+    drops: list[Drop] = field(default_factory=list)
+    transition: tuple[str, str] | None = None
 
 
 class ChallengeRuntime:
@@ -711,6 +724,11 @@ class Challenge:
     # Environment pack ids this scenario is authored for (its drops and goals
     # are coordinates in that world); None means any pack can host it.
     environments: tuple[str, ...] | None = field(default=None, kw_only=True)
+    # Public scenario instructions, never private judging state; the agent reads
+    # them with the current goal list (challenge_context.json) on every turn.
+    agent_guidance: str = field(default="", kw_only=True)
+    # Optional authored first pose (x, y, yaw degrees), applied only on start.
+    spawn: tuple[float, float, float] | None = field(default=None, kw_only=True)
 
     def available_in(self, environment_id: str | None) -> bool:
         return self.environments is None or environment_id in self.environments
@@ -847,6 +865,15 @@ class ChallengeEngine:
                 self.challenges[cid] = challenge
         self.progress_path = progress_path or world.repo_root() / "workspace" / "challenges.json"
         self.progress = self._load_progress()
+        self.attempt_id = ""
+        self.runtime_public: dict | None = None
+        # What a story runtime established about the robot (a persona, a name):
+        # outlives the challenge that set it, so the next scene inherits it.
+        self.story_profile: dict = {}
+        self._pending_drops: list[Drop] = []
+        self._pending_transition: tuple[str, str] | None = None
+        self._context_json = ""
+        self._write_context(None)
         self._mutex = threading.Lock()  # engine state (active challenge, events)
         # Serializes whole start/abort transitions. start() is three critical
         # sections (deactivate, build the scene, publish the run) and holds
@@ -969,7 +996,7 @@ class ChallengeEngine:
                 # gap, waiting to be ticked.
                 self.world_epoch += 1
                 if challenge.reset_world:
-                    self.sim.reset()  # also re-parks every prop (props.py)
+                    self.sim.reset(spawn=challenge.spawn)
                 for drop in challenge.setup:
                     if not self.sim.drop_prop_at(drop.name, drop.x, drop.y, math.radians(drop.yaw_deg)):
                         print(f"[challenges] {challenge.id}: no prop named {drop.name!r} in this world", flush=True)
@@ -1032,6 +1059,13 @@ class ChallengeEngine:
                 entry = self.progress.setdefault(challenge_id, {"attempts": 0, "passed": False, "best_time_s": None})
                 entry["attempts"] += 1
                 self.active = challenge  # last: judging starts here
+                self.attempt_id = str(uuid.uuid4())
+                self.runtime_public = None
+                if challenge.runtime is not None:
+                    self.story_profile = {}  # a story starting over starts from nobody
+                self._pending_drops.clear()
+                self._pending_transition = None
+                self._write_context(challenge)
                 if self.state == "failed":
                     self._record(challenge.id, "failed", None)
         return True
@@ -1052,6 +1086,10 @@ class ChallengeEngine:
                 if self.active is not None and self.state == "running":
                     self._record(self.active.id, "aborted", None)
                 self.active = None
+                self.runtime_public = None
+                self._pending_drops.clear()
+                self._pending_transition = None
+                self._write_context(None)
                 self._run_token += 1
                 self._chat_inputs.clear()
                 self._chat_ready.notify_all()
@@ -1118,7 +1156,13 @@ class ChallengeEngine:
     # -- evaluation (physics thread, after state gathering; no sim access) --
 
     def tick(
-        self, t: float, pose: tuple[float, float, float], centers: dict[str, tuple[float, float]], epoch: int
+        self,
+        t: float,
+        pose: tuple[float, float, float],
+        centers: dict[str, tuple[float, float]],
+        epoch: int,
+        *,
+        objects: dict[str, list[float]] | None = None,
     ) -> dict:
         """Advance the active challenge and return the state-stream block.
 
@@ -1161,7 +1205,9 @@ class ChallengeEngine:
                         self._height_warned = True
                         print(f"[challenges] heights unavailable ({type(exc).__name__}: {exc})", flush=True)
                     heights = {}
-                state = WorldState(t=t, robot=pose, centers=centers, elapsed=self.elapsed_s, heights=heights)
+                state = WorldState(
+                    t=t, robot=pose, centers=centers, elapsed=self.elapsed_s, heights=heights, objects=objects or {}
+                )
                 self._measure(pose, events, centers)
                 # Before judging: every goal sees every batch. A goal asserting
                 # something about the whole run cannot be judged from the
@@ -1224,6 +1270,14 @@ class ChallengeEngine:
                                 self._queue_chat_input(payload)
                             if runtime_result.replies:
                                 self._chat_ready.notify_all()
+                            if runtime_result.public is not None:
+                                self.runtime_public = runtime_result.public
+                                profile = runtime_result.public.get("profile")
+                                if isinstance(profile, dict):
+                                    self.story_profile = {k: v for k, v in profile.items() if isinstance(v, str) and v}
+                            self._pending_drops.extend(runtime_result.drops)
+                            if runtime_result.transition is not None:
+                                self._pending_transition = runtime_result.transition
                         # next(), not index(): a ValueError escaping this block must
                         # mean a scenario bug and fail the run, not read as "all done".
                         first = next((i for i, done in enumerate(self.goal_done) if not done), None)
@@ -1293,6 +1347,7 @@ class ChallengeEngine:
                     elif all(self.goal_done):
                         self.state = "passed"
                         self._record(challenge.id, "passed", self.elapsed_s)
+            self._write_context(challenge)
             return self._block(challenge)
 
     # -- narrator + metrics (called from tick(), already under _mutex) --
@@ -1397,6 +1452,44 @@ class ChallengeEngine:
                 "transcript": list(self.transcript),
             }
 
+    def take_world_actions(self) -> tuple[list[Drop], tuple[str, str] | None]:
+        """Hand the runtime's requested drops and transition to whoever owns the sim, once."""
+        with self._mutex:
+            drops, self._pending_drops = self._pending_drops, []
+            transition, self._pending_transition = self._pending_transition, None
+            return drops, transition
+
+    def _write_context(self, challenge: Challenge | None) -> None:
+        # With no scene running the robot still knows who it became.
+        context = {"profile": self.story_profile} if self.story_profile else None
+        if challenge is not None and challenge.agent_guidance:
+            context = {
+                "id": challenge.id,
+                "attempt_id": self.attempt_id,
+                "title": challenge.title,
+                "brief": challenge.brief,
+                "state": self.state,
+                "guidance": challenge.agent_guidance,
+                "goals": self._goals(challenge),
+                "runtime": self.runtime_public,
+                "profile": self.story_profile,
+            }
+        encoded = json.dumps(context, ensure_ascii=False)
+        if encoded == self._context_json:
+            return
+        path = self.progress_path.with_name("challenge_context.json")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(".json.tmp")
+            temporary.write_text(encoded + "\n")
+            temporary.replace(path)
+            self._context_json = encoded
+        except OSError as error:
+            print(f"[challenges] could not write agent context: {error}", flush=True)
+
+    def _goals(self, challenge: Challenge) -> list[dict]:
+        return [{"label": g.label, "done": done} for g, done in zip(challenge.goals, self.goal_done, strict=True)]
+
     def _environment_id(self) -> str | None:
         environment = getattr(self.sim, "environment", None)
         return environment.id if environment is not None else None
@@ -1430,20 +1523,21 @@ class ChallengeEngine:
                     "attempts": entry.get("attempts", 0),
                 }
                 for cid, entry in self.progress.items()
-                if cid in self.challenges
+                if cid in self.challenges and self.challenges[cid].available_in(self._environment_id())
             },
             "active": None,
+            "profile": self.story_profile,
         }
         if challenge is not None:
             block["active"] = {
                 "id": challenge.id,
+                "attempt_id": self.attempt_id,
                 "state": self.state,
                 "reason": self.reason,
                 "elapsed_s": round(self.elapsed_s, 1),
                 "time_limit_s": challenge.time_limit_s,
-                "goals": [
-                    {"label": g.label, "done": done} for g, done in zip(challenge.goals, self.goal_done, strict=True)
-                ],
+                "goals": self._goals(challenge),
+                "runtime": self.runtime_public,
                 # The transcript rides the state stream so any frontend renders
                 # the conversation without a second channel to subscribe to.
                 "transcript": list(self.transcript),

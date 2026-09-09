@@ -97,6 +97,7 @@ workspace/.training_pending/
 
 # Per-machine challenge state, written at runtime.
 workspace/challenges.json
+workspace/challenge_context.json
 
 # Gemini usage telemetry, appended at runtime by the brain transport
 # (sim/bench/spend.py reads it; absent means no calls yet).

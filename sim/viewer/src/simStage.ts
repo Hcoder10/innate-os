@@ -14,6 +14,7 @@ import { APARTMENT_VIEWER, SimScene, type CameraMode, type CameraView } from "./
 import type { EnvironmentInfo } from "./physics/worldStateController";
 import type { PropInfo } from "./props";
 import { LoadQueue } from "./loadQueue";
+import { SlowdownDetector } from "./slowdown";
 import { THUMB_H, THUMB_W, type SimSession } from "./simSession";
 
 // One PiP tile refresh per N rendered frames, round-robin: ~30fps per tile
@@ -24,6 +25,13 @@ const THUMB_FRAME_DIV = 2;
 // visible gain (~75Hz interpolated state) and the load jitters everything.
 const MIN_FRAME_MS = 1000 / 62;
 
+// Opt-in GPU fill budget (~3 MP), independent of display size and Retina
+// scale; the DPR-only cap alone allows 12 MP.
+const MAX_RENDER_PIXELS = 3_000_000;
+// Module state, not stage state: the choice must outlive the shared stage's
+// rebuild after its linger, while a reload stays the way back to full resolution.
+let reducedResolution = false;
+
 // Scene setup and the webapp's challenge panel expand over the same corner of
 // the stage, so at most one may be open. They ship in separate bundles -- this
 // one is vite-built and imported at runtime -- so the handshake is a document
@@ -33,6 +41,44 @@ const PANEL_OPEN_EVENT = "innate:panel-open";
 const PANEL_ID = "sim-scene-setup";
 
 const VIEW_FOR: Record<string, CameraView> = { main: "main", arm: "arm", orbit: "orbit" };
+
+// The scene setup's world tiles: one line icon per environment pack, keyed by its id, in
+// the rail's icon style. A pack this map does not know gets the globe.
+const icon = (paths: string): string =>
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+const ENVIRONMENT_ICONS: Record<string, string> = {
+  apartment: icon('<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M10 21v-6h4v6"/>'),
+  backrooms: icon(
+    '<path d="M13 4h3a2 2 0 0 1 2 2v14"/><path d="M2 20h3"/><path d="M13 20h9"/><path d="M10 12v.01"/><path d="M13 4.562v16.157a1 1 0 0 1-1.242.97L5 20V5.562a2 2 0 0 1 1.515-1.94l4-1A2 2 0 0 1 13 4.561Z"/>',
+  ),
+  intersection: icon(
+    '<path d="M12 13v8"/><path d="M12 3v3"/><path d="M18 6a2 2 0 0 1 1.387.56l2.307 2.22a1 1 0 0 1 0 1.44l-2.307 2.22A2 2 0 0 1 18 13H6a2 2 0 0 1-1.387-.56l-2.306-2.22a1 1 0 0 1 0-1.44l2.306-2.22A2 2 0 0 1 6 6z"/>',
+  ),
+  void: icon(
+    '<path d="M10.1 2.18a9.93 9.93 0 0 1 3.8 0"/><path d="M17.6 3.71a9.95 9.95 0 0 1 2.69 2.7"/><path d="M21.82 10.1a9.93 9.93 0 0 1 0 3.8"/><path d="M20.29 17.6a9.95 9.95 0 0 1-2.7 2.69"/><path d="M13.9 21.82a9.94 9.94 0 0 1-3.8 0"/><path d="M6.4 20.29a9.95 9.95 0 0 1-2.69-2.7"/><path d="M2.18 13.9a9.93 9.93 0 0 1 0-3.8"/><path d="M3.71 6.4a9.95 9.95 0 0 1 2.7-2.69"/>',
+  ),
+};
+const ENVIRONMENT_ICON_FALLBACK = icon(
+  '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+);
+
+// Storage access throws in restricted contexts (blocked cookies, opaque
+// origins); a lost preference must not take the stage down.
+type StorageScope = "local" | "session";
+const readFlag = (scope: StorageScope, key: string): boolean => {
+  try {
+    return (scope === "local" ? localStorage : sessionStorage).getItem(key) === "true";
+  } catch {
+    return false;
+  }
+};
+const writeFlag = (scope: StorageScope, key: string, on: boolean): void => {
+  try {
+    (scope === "local" ? localStorage : sessionStorage).setItem(key, String(on));
+  } catch {
+    /* best effort */
+  }
+};
 const ROTATION_DRAG_PX = 6;
 const PROP_FORWARD_ANGLE = Math.PI / 2;
 
@@ -111,13 +157,13 @@ export function createSimStage(
     '<svg class="sim-scene-toggle-icon sim-scene-toggle-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>';
 
   const coarsePointer = window.matchMedia("(hover: none)");
-  let setupOpen = localStorage.getItem("sim-scene-panel-open") === "true";
+  let setupOpen = readFlag("local", "sim-scene-panel-open");
   const setSetupOpen = (open: boolean) => {
     setupOpen = open;
     setup.classList.toggle("open", open);
     setupToggle.setAttribute("aria-expanded", String(open));
     setupToggle.setAttribute("aria-label", open ? "Close scene setup" : "Open scene setup");
-    localStorage.setItem("sim-scene-panel-open", String(open));
+    writeFlag("local", "sim-scene-panel-open", open);
     if (open) document.dispatchEvent(new CustomEvent(PANEL_OPEN_EVENT, { detail: { panel: PANEL_ID } }));
   };
   const onPanelOpen = (event: Event) => {
@@ -171,12 +217,24 @@ export function createSimStage(
   environmentSection.hidden = true;
   const environmentLabel = document.createElement("h3");
   environmentLabel.textContent = "Environment";
-  const environmentSelect = document.createElement("select");
-  environmentSelect.className = "skill-input";
-  environmentSelect.setAttribute("aria-label", "Environment");
-  environmentSelect.onchange = () => session.switchEnvironment(environmentSelect.value);
-  environmentSection.append(environmentLabel, environmentSelect);
+  const environmentGrid = document.createElement("div");
+  environmentGrid.className = "sim-environment-grid";
+  environmentGrid.setAttribute("role", "group");
+  environmentGrid.setAttribute("aria-label", "Environment");
+  environmentSection.append(environmentLabel, environmentGrid);
   setupBody.appendChild(environmentSection);
+  const environmentTiles = new Map<string, HTMLButtonElement>();
+  const makeEnvironmentTile = (id: string, name: string) => {
+    const tile = makeChip("", `Switch the world to ${name}`);
+    tile.classList.add("sim-environment-tile");
+    tile.innerHTML = ENVIRONMENT_ICONS[id] ?? ENVIRONMENT_ICON_FALLBACK;
+    const label = document.createElement("span");
+    label.textContent = name;
+    tile.append(label);
+    tile.onclick = () => session.switchEnvironment(id);
+    environmentTiles.set(id, tile);
+    return tile;
+  };
 
   const objectsSection = document.createElement("section");
   objectsSection.className = "sim-scene-section";
@@ -396,6 +454,9 @@ export function createSimStage(
     loadingLabel.textContent = text;
   };
   const hideLoading = () => {
+    // The view is as ready as it will get: whoever covers the page while it builds
+    // (the boot splash) can come down now.
+    document.dispatchEvent(new CustomEvent("innate:stage-ready"));
     loading.style.opacity = "0";
     // transitionend may not fire with reduced motion or before paint.
     // Keep the overlay for subsequent switches.
@@ -443,6 +504,16 @@ export function createSimStage(
     cameraMode = index;
     refreshCameraSwitch();
   };
+  // The webapp (the onboarding story) can pick a mode without owning the scene.
+  const onCameraModeRequest = (event: Event) => {
+    const detail = (event as CustomEvent<CameraMode | { mode: CameraMode; side?: number; back?: number; height?: number }>).detail;
+    const mode = typeof detail === "string" ? detail : detail?.mode;
+    scene.chaseSide = typeof detail === "object" && typeof detail?.side === "number" ? detail.side : 0;
+    scene.chaseBack = typeof detail === "object" && typeof detail?.back === "number" ? detail.back : null;
+    scene.chaseHeight = typeof detail === "object" && typeof detail?.height === "number" ? detail.height : null;
+    if (CAMERA_MODES.includes(mode)) scene.setCameraMode(mode);
+  };
+  document.addEventListener("innate:camera-mode", onCameraModeRequest);
 
   function setPlacement(next: PlacementState): void {
     if (placement.kind === "rotating" && canvas.hasPointerCapture(placement.drag.pointerId)) {
@@ -523,15 +594,74 @@ export function createSimStage(
   window.addEventListener("pointerup", finishDrop);
   window.addEventListener("pointercancel", cancelDrop);
 
-  const resize = () => {
-    const w = wrap.clientWidth;
-    const h = wrap.clientHeight;
-    if (!w || !h) return; // hidden (map primary): keep the last real size
-    scene.setRenderSize(w, h, Math.min(devicePixelRatio, 2));
+  // Full resolution by default: the notice only offers the reduction. Dismissal
+  // is remembered for the tab so navigating doesn't nag again; while reduced the
+  // notice stays as the way back, so it cannot be dismissed.
+  const slowdown = new SlowdownDetector();
+  const resetSlowdown = () => slowdown.reset(); // a hidden tab stops rAF without a sample to see it
+  document.addEventListener("visibilitychange", resetSlowdown);
+  // The scrim is up whenever the view isn't in steady state: mesh loads, the
+  // server rebuilding a world, failures.
+  const loadingShown = () => loading.style.display !== "none";
+  // The last real size: the resolution toggle must still apply while the stage
+  // is hidden behind the map, where the agent page keeps the notice visible.
+  let stageW = 0;
+  let stageH = 0;
+  let stageVisible = true;
+  let slowdownDismissed = readFlag("session", "sim-resolution-dismissed");
+  const resolutionNotice = document.createElement("div");
+  resolutionNotice.className = "sim-resolution-notice";
+  resolutionNotice.setAttribute("role", "status");
+  resolutionNotice.hidden = !reducedResolution;
+  const resolutionText = document.createElement("span");
+  const resolutionAction = makeChip("");
+  const resolutionDismiss = makeChip("×", "Dismiss resolution notice");
+  resolutionDismiss.setAttribute("aria-label", "Dismiss resolution notice");
+  resolutionNotice.append(resolutionText, resolutionAction, resolutionDismiss);
+  debugStack.prepend(resolutionNotice);
+  const refreshResolutionNotice = () => {
+    resolutionText.textContent = reducedResolution
+      ? "Render resolution reduced until reload."
+      : "Slow rendering or simulation detected. Reducing resolution may help.";
+    resolutionAction.textContent = reducedResolution ? "Use full resolution" : "Reduce resolution";
+    resolutionDismiss.hidden = reducedResolution;
+  };
+  refreshResolutionNotice();
+  resolutionAction.onclick = () => {
+    reducedResolution = !reducedResolution;
+    refreshResolutionNotice();
+    if (stageW > 0) applyRenderSize(stageW, stageH);
+    if (reducedResolution) return;
+    // Back at full resolution the notice would report a stale verdict: hide it
+    // and let the detector speak again.
+    resolutionNotice.hidden = true;
+    slowdown.reset();
+  };
+  resolutionDismiss.onclick = () => {
+    slowdownDismissed = true;
+    resolutionNotice.hidden = true;
+    writeFlag("session", "sim-resolution-dismissed", true);
+  };
+  // Reduced: 75% of the display's scale, bounded by the pixel budget -- below 1
+  // on very large windows, where a floor of 1 would defeat it. Logical size,
+  // aspect and CSS overlays are unchanged.
+  const pixelRatio = (w: number, h: number) => {
+    const full = Math.min(devicePixelRatio, 2);
+    return reducedResolution ? Math.min(full * 0.75, Math.sqrt(MAX_RENDER_PIXELS / (w * h))) : full;
+  };
+  const applyRenderSize = (w: number, h: number) => {
+    scene.setRenderSize(w, h, pixelRatio(w, h));
     // setSize cleared the buffer (the spec clears a resized canvas) and the
     // browser paints before the next rAF, so the stage would flash black.
     scene.setView(VIEW_FOR[session.primaryCamera] ?? "orbit");
     scene.render();
+  };
+  const resize = () => {
+    stageVisible = wrap.clientWidth > 0 && wrap.clientHeight > 0;
+    if (!stageVisible) return; // hidden (map primary): keep the last real size
+    stageW = wrap.clientWidth;
+    stageH = wrap.clientHeight;
+    applyRenderSize(stageW, stageH);
   };
   const observer = new ResizeObserver(resize);
   observer.observe(wrap);
@@ -554,6 +684,7 @@ export function createSimStage(
   const stopLoop = () => {
     cancelAnimationFrame(raf);
     raf = 0;
+    slowdown.reset(); // a parked stage renders nothing; the gap is not slowness
   };
 
   const loop = (now: number) => {
@@ -582,6 +713,10 @@ export function createSimStage(
     scene.setView(VIEW_FOR[session.primaryCamera] ?? "orbit");
     scene.render();
     frame++;
+    const watching = !slowdownDismissed && resolutionNotice.hidden;
+    if (watching && slowdown.sample(now, session.simulationClock, stageVisible && !loadingShown())) {
+      resolutionNotice.hidden = false;
+    }
 
     if (perfEl) {
       frameTimes.push(performance.now() - now);
@@ -592,7 +727,7 @@ export function createSimStage(
         const p95 = sorted[Math.floor(sorted.length * 0.95)] ?? 0;
         const lag = session.pipelineLag;
         const lagTxt = lag ? `  lag ${lag.curMs.toFixed(0)}ms (min ${lag.minMs.toFixed(0)})` : "";
-        perfEl.textContent = `js ${med.toFixed(1)}/${p95.toFixed(1)}ms  lt ${longTaskMs.toFixed(0)}ms  ${frameTimes.length}fps${lagTxt}`;
+        perfEl.textContent = `js ${med.toFixed(1)}/${p95.toFixed(1)}ms  lt ${longTaskMs.toFixed(0)}ms  ${frameTimes.length}fps${lagTxt}  ${canvas.width}×${canvas.height}px`;
         frameTimes = [];
         longTaskMs = 0;
       }
@@ -655,10 +790,13 @@ export function createSimStage(
     const optionsKey = environments.map(({ id, display_name }) => `${id}\0${display_name}`).join("\n");
     if (optionsKey !== environmentOptionsKey) {
       environmentOptionsKey = optionsKey;
-      environmentSelect.replaceChildren(...environments.map(({ id, display_name }) => new Option(display_name, id)));
+      environmentTiles.clear();
+      environmentGrid.replaceChildren(...environments.map(({ id, display_name }) => makeEnvironmentTile(id, display_name)));
     }
-    environmentSelect.value = environment?.id ?? "";
-    environmentSelect.disabled = pending?.state === "loading";
+    for (const [id, tile] of environmentTiles) {
+      setChipOn(tile, id === environment?.id);
+      tile.disabled = pending?.state === "loading";
+    }
     if (pending?.state === "loading") {
       setWaiting(`loading robot and ${pending.display_name.toLowerCase()}...`);
     } else if (pending?.state === "failed") {
@@ -678,9 +816,11 @@ export function createSimStage(
       startLoop();
       resize();
       // A page used to get a new scene, so entering one always framed the
-      // robot in free orbit; that is page state, not session state.
+      // robot in free orbit; that is page state, not session state. Whoever
+      // steers the camera from outside (the story) hears about it and re-asserts.
       scene.setCameraMode("free");
       scene.frameRobot();
+      document.dispatchEvent(new CustomEvent("innate:camera-reset"));
     },
     detach() {
       attached = false;
@@ -705,6 +845,7 @@ export function createSimStage(
       window.removeEventListener("pointercancel", cancelDrop);
       document.removeEventListener(PANEL_OPEN_EVENT, onPanelOpen);
       document.removeEventListener("pointerdown", onOutsidePointer, true);
+      document.removeEventListener("visibilitychange", resetSlowdown);
       scene.dispose();
       wrap.remove();
     },
