@@ -85,6 +85,9 @@ def test_retry_abort_and_external_reset_restore_the_fire(tmp_path):
         mars, threading.Lock(), roots=[], packs=[mars.environment], progress_path=tmp_path / "p.json"
     )
     try:
+        mars.data.time = 20
+        mars.step(0)
+        assert len(mars.fire.sources) > 1  # free play advances without a judge
         assert engine.start("blaze_l4")
         assert len(mars.fire.sources) == 2
         mars.data.time = 100
@@ -104,3 +107,49 @@ def test_retry_abort_and_external_reset_restore_the_fire(tmp_path):
         assert len(mars.fire.sources) == 1
     finally:
         mars.close()
+
+
+def test_free_play_spreads_on_sim_time_and_abort_restarts_from_current_time():
+    fire = FireEffect(True)
+    initial = fire.sources
+    fire.reset(1000)
+    fire.advance(1000)
+    assert fire.sources == initial
+    fire.advance(1020)
+    assert len(fire.sources) > len(initial)
+    assert fire.sources[0][3] > initial[0][3]
+    fire.advance(1170)
+    assert len(fire.sources) == 28
+    assert all(s[3] == 1 for s in fire.sources)
+    assert all(s[1] > -2.4 for s in fire.sources)  # porch always clear
+    fire.reset(1170)
+    fire.advance(1171)
+    assert len(fire.sources) == 1 and fire.sources[0][3] < 0.4
+    fire.reset()
+    assert fire.sources == initial
+
+
+def test_preview_cannot_override_a_challenge_and_fire_seeds_do_not_jump():
+    challenge = load_challenges([Path(__file__).parents[1] / "bundles/blaze/challenges"])["blaze_l4"]
+    fire = FireEffect(True)
+    fire.advance(170)
+    fire.sync(challenge, 0)
+    initial = fire.sources
+    fire.advance(900)
+    assert fire.sources == initial
+    fire.sync(challenge, 20)
+    earlier = {tuple(s[:3]): s for s in fire.sources}
+    fire.sync(challenge, 40)
+    later = {tuple(s[:3]): s for s in fire.sources}
+    assert len(later) > len(earlier)
+    for position, source in earlier.items():
+        assert later[position][3] >= source[3]
+        assert later[position][4] == source[4]
+
+
+def test_new_flame_patches_start_small():
+    def height(strength):
+        return max(p[2] for tri in flame_triangles((0, 0, 0, strength, 0), 1) for p in tri[:3])
+
+    assert height(0.00001) < 0.003
+    assert height(0.01) < height(0.25) < height(1)

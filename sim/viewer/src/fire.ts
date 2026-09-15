@@ -10,8 +10,8 @@ export function* flameTriangles(source: FireState["sources"][number], t: number)
   const [x, y, z, strength, seed] = source;
   for (let tongue = 0; tongue < 3; tongue++) {
     const phase = seed + tongue * 2.4;
-    const height = (0.24 + strength * 0.65) * (0.80 + 0.20 * Math.sin(t * 8 + phase));
-    const radius = (0.075 + strength * 0.10) * (tongue === 0 ? 1 : 0.7);
+    const height = 0.89 * Math.sqrt(strength) * (0.80 + 0.20 * Math.sin(t * 8 + phase));
+    const radius = 0.175 * Math.sqrt(strength) * (tongue === 0 ? 1 : 0.7);
     const cx = x + Math.cos(phase) * radius * 0.55;
     const cy = y + Math.sin(phase) * radius * 0.55;
     for (let layer = 0; layer < 2; layer++) {
@@ -89,7 +89,7 @@ export class FireEffect {
         mesh.visible = true;
         mesh.position.set(x + Math.sin(seed + age * 4) * age * 0.16, y + age * 0.10, z + 0.32 + age * 1.12);
         mesh.scale.set(radius, radius, radius * 0.7);
-        mesh.material.opacity = Math.sin(Math.PI * age) * (0.08 + strength * 0.12);
+        mesh.material.opacity = Math.sin(Math.PI * age) * (0.08 + strength * 0.12) * Math.min(1, strength * 4);
       }
     }
     for (let i = puff; i < this.smoke.length; i++) this.smoke[i].visible = false;

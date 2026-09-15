@@ -1101,7 +1101,7 @@ class ChallengeEngine:
                     self._record(self.active.id, "aborted", None)
                 self.active = None
                 if (fire := getattr(self.sim, "fire", None)) is not None:
-                    fire.reset()
+                    fire.reset(float(self.sim.data.time))
                 self.runtime_public = None
                 self._pending_drops.clear()
                 self._pending_transition = None

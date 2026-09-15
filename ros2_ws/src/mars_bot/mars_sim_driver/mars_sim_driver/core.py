@@ -473,6 +473,7 @@ class VirtualMars:
             if not np.all(np.isfinite(self.data.qpos)):
                 self.reset()
                 return
+        self.fire.advance(float(self.data.time))
 
     def _apply_control(self) -> None:
         d = self.data

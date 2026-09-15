@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
-import { FireEffect, type FireState } from "../src/fire.ts";
+import { FireEffect, flameTriangles, type FireState } from "../src/fire.ts";
 
 test("fire animates on the playback clock and disappears on world changes", () => {
   const scene = new THREE.Scene();
@@ -26,4 +26,14 @@ test("fire animates on the playback clock and disappears on world changes", () =
   assert.equal(group.visible, true);
   effect.dispose();
   assert.equal(scene.children.length, 0);
+});
+
+
+test("new fire patches grow from zero instead of appearing at full size", () => {
+  const height = (strength: number) => Math.max(...Array.from(
+    flameTriangles([0, 0, 0, strength, 0], 1), tri => Math.max(tri[0][2], tri[1][2], tri[2][2]),
+  ));
+  assert.ok(height(.00001) < .003);
+  assert.ok(height(.01) < height(.25));
+  assert.ok(height(.25) < height(1));
 });

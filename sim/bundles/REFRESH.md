@@ -39,6 +39,12 @@ spreads through the judge’s timed regions, and resets on Retry. These effects
 do not collide or appear in the depth map; combustion and smoke transport are
 not physically simulated.
 
+In free play, fire grows from the stove across the kitchen, then reaches the
+east hall, study and bedroom over roughly three minutes. Respawn starts this
+preview over. Starting a challenge replaces the preview with that challenge's
+own timeline; the danger deadlines are unchanged. Flames spread outward from
+each ignition point and new patches grow smoothly from zero.
+
 These changes revise the task layouts. Historical benchmark scores, including
 the old shelf-versus-floor controls, are not directly comparable. The three
 Counter skill-event controls still require real arm completion events and are

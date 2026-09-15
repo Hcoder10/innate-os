@@ -10,15 +10,40 @@ import math
 import mujoco
 import numpy as np
 
+# Unscored free play demonstrates the spread in under three minutes. Active
+# challenges use their own predicates below, never these preview deadlines.
+PREVIEW_REGIONS = (
+    (60.0, (-3.2, 0.7, -0.35, 2.3), 0.0),
+    (100.0, (1.2, -0.5, 3.2, 0.5), 35.0),
+    (135.0, (-0.35, 0.7, 3.2, 2.3), 75.0),
+    (170.0, (0.55, -2.3, 3.2, -0.7), 100.0),
+)
+
+
+def _origin(bounds):
+    x0, y0, x1, y1 = bounds
+    if x1 < 0:
+        return (-1.30, 1.96, 0.25), 0  # stove, away from the medicine
+    if y1 < 0:
+        return (1.08, -1.82, 0.34), 1  # bed
+    if y0 < 0:
+        return (2.85, 0.20, 0.02), 2  # east hall
+    return (2.03, 1.96, 0.25), 3  # study
+
 
 class FireEffect:
     def __init__(self, enabled: bool):
         self.enabled = enabled
         self.reset()
 
-    def reset(self):
-        # A small stove fire makes the environment legible in free play.
-        self.sources = [[-1.30, 1.96, 0.25, 0.38, 0]] if self.enabled else []
+    def reset(self, t: float = 0):
+        self._preview_started_t = float(t)
+        self.sources = self._spread(PREVIEW_REGIONS, 0) if self.enabled else []
+
+    def advance(self, t: float):
+        """Called once per physics slice; no browser or active trial required."""
+        if self.enabled and self._preview_started_t is not None:
+            self.sources = self._spread(PREVIEW_REGIONS, max(0, t - self._preview_started_t))
 
     def sync(self, challenge, elapsed: float):
         if not self.enabled:
@@ -34,38 +59,40 @@ class FireEffect:
                     yield from regions(child)
             elif isinstance(predicate, After) and isinstance(predicate.inner, InRect):
                 if predicate.inner.target == "robot":
-                    yield predicate.seconds, predicate.inner
+                    rect = predicate.inner
+                    bounds = (rect.x0, rect.y0, rect.x1, rect.y1)
+                    _, kind = _origin(bounds)
+                    ignition = 0 if kind < 2 else max(0, predicate.seconds - (90 if kind == 2 else 75))
+                    yield predicate.seconds, bounds, ignition
 
+        # The judge owns progression until completion/abort; a physics tick
+        # must never replace it with the free-play schedule.
+        self._preview_started_t = None
+        self.sources = self._spread(regions(challenge.fail_if), elapsed)
+
+    @staticmethod
+    def _spread(regions, elapsed):
         sources = []
-        for deadline, rect in regions(challenge.fail_if):
-            if rect.x1 < 0:  # kitchen: starts on the stove, away from the medicine
-                origin = (-1.30, 1.96, 0.25)
-                ignition = 0
-            elif rect.y1 < 0:  # bedroom is already burning in level four
-                origin = (1.08, -1.82, 0.34)
-                ignition = 0
-            elif rect.y0 < 0:  # east hall
-                origin = (2.85, 0.20, 0.02)
-                ignition = max(0, deadline - 90)
-            else:  # study
-                origin = (2.03, 1.96, 0.25)
-                ignition = max(0, deadline - 75)
+        for deadline, bounds, ignition in regions:
             if elapsed < ignition:
                 continue
+            origin, kind = _origin(bounds)
             progress = min(1, max(0, (elapsed - ignition) / max(1, deadline - ignition)))
-            seed = len(sources) * 1.73
+            seed = kind * 17.3  # stable when another region gains emitters
             sources.append([*origin, 0.38 + 0.62 * progress, seed])
-            # Reach the region's floor only as the deadline approaches. The
-            # judge's bounds and time are authoritative, never a second timer.
-            for ix in range(3):
-                for iy in range(2):
-                    threshold = 0.42 + 0.045 * (ix + 3 * iy)
-                    strength = min(1, max(0, (progress - threshold) / (1 - threshold)))
-                    if strength > 0:
-                        x = rect.x0 + (rect.x1 - rect.x0) * (ix + 0.5) / 3
-                        y = rect.y0 + (rect.y1 - rect.y0) * (iy + 0.5) / 2
-                        sources.append([x, y, 0.025, strength, seed + ix * 2.1 + iy * 3.7 + 1])
-        self.sources = sources
+            x0, y0, x1, y1 = bounds
+            patches = [
+                (x0 + (x1 - x0) * (ix + 0.5) / 3, y0 + (y1 - y0) * (iy + 0.5) / 2) for ix in range(3) for iy in range(2)
+            ]
+            # Spread out from the ignition point, starting early enough to
+            # see movement. New patches grow from zero instead of popping in.
+            patches.sort(key=lambda point: math.dist(point, origin[:2]))
+            for rank, (x, y) in enumerate(patches):
+                threshold = 0.12 + 0.11 * rank
+                strength = min(1, max(0, (progress - threshold) / (1 - threshold)))
+                if strength > 0:
+                    sources.append([x, y, 0.025, strength, seed + rank * 2.1 + 1])
+        return sources
 
     def public(self):
         return {"sources": self.sources} if self.enabled else None
@@ -120,8 +147,8 @@ def flame_triangles(source, t):
     x, y, z, strength, seed = source
     for tongue in range(3):
         phase = seed + tongue * 2.4
-        height = (0.24 + strength * 0.65) * (0.80 + 0.20 * math.sin(t * 8 + phase))
-        radius = (0.075 + strength * 0.10) * (1 if tongue == 0 else 0.7)
+        height = 0.89 * math.sqrt(strength) * (0.80 + 0.20 * math.sin(t * 8 + phase))
+        radius = 0.175 * math.sqrt(strength) * (1 if tongue == 0 else 0.7)
         cx = x + math.cos(phase) * radius * 0.55
         cy = y + math.sin(phase) * radius * 0.55
         for layer in range(2):
@@ -154,4 +181,4 @@ def smoke_puffs(source, t):
         age = (t * 0.22 + i / 4 + seed * 0.17) % 1
         radius = 0.06 + age * (0.16 + strength * 0.12)
         pos = (x + math.sin(seed + age * 4) * age * 0.16, y + age * 0.10, z + 0.32 + age * 1.12)
-        yield pos, radius, math.sin(math.pi * age) * (0.08 + strength * 0.12)
+        yield pos, radius, math.sin(math.pi * age) * (0.08 + strength * 0.12) * min(1, strength * 4)
