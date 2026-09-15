@@ -85,7 +85,7 @@ def test_retry_abort_and_external_reset_restore_the_fire(tmp_path):
         mars, threading.Lock(), roots=[], packs=[mars.environment], progress_path=tmp_path / "p.json"
     )
     try:
-        mars.data.time = 20
+        mars.data.time = 30
         mars.step(0)
         assert len(mars.fire.sources) > 1  # free play advances without a judge
         assert engine.start("blaze_l4")
@@ -115,7 +115,7 @@ def test_free_play_spreads_on_sim_time_and_abort_restarts_from_current_time():
     fire.reset(1000)
     fire.advance(1000)
     assert fire.sources == initial
-    fire.advance(1020)
+    fire.advance(1030)
     assert len(fire.sources) > len(initial)
     assert fire.sources[0][3] > initial[0][3]
     fire.advance(1300)
@@ -155,7 +155,7 @@ def test_new_flame_patches_start_small():
     assert height(0.01) < height(0.25) < height(1)
 
 
-@pytest.mark.parametrize("elapsed", [0, 30, 75, 120, 150, 195, 210, 240, 270, 299, 300])
+@pytest.mark.parametrize("elapsed", [0, 30, 75, 150, 180, 210, 240, 270, 285, 299, 300])
 def test_five_minute_timer_drives_the_same_spread_as_free_play(elapsed):
     challenge = load_challenges([Path(__file__).parents[1] / "bundles/blaze/challenges"])["blaze_l1"]
     assert challenge.time_limit_s == 300
@@ -168,3 +168,58 @@ def test_five_minute_timer_drives_the_same_spread_as_free_play(elapsed):
     else:
         assert len(running.sources) == 28
         assert all(s[3] == 1 for s in running.sources)
+
+
+def test_medicine_rescue_has_time_for_search_and_pickup_delays(tmp_path):
+    """Exercise the real route/judge with 195 s of extra thinking/pick time.
+
+    Object placement is still oracle-assisted; this is a timing and escape
+    route regression, not proof that the live vision/arm pipeline succeeds.
+    """
+    import threading
+
+    from mars_sim_driver.challenges import ChallengeEngine, WorldState
+    from mars_sim_driver.core import VirtualMars
+    from mars_sim_driver.environments import Environment
+    from navplan import NavMap
+    from oracles import plan_for
+    from planner_agent import PlannerAgent
+
+    mars = VirtualMars(render_wh=(64, 48), environment=Environment.load("blaze"))
+    engine = ChallengeEngine(
+        mars, threading.Lock(), roots=[], packs=[mars.environment], progress_path=tmp_path / "p.json"
+    )
+    try:
+        mars.props.park_all(mars.data)
+        nav = NavMap.from_sim(mars)
+        assert engine.start("blaze_l1", chat_cues=False)
+        challenge = engine.active
+        steps = [("wait", 105)]
+        for step in plan_for(challenge):
+            if step[0] == "grab":
+                steps.append(("wait", 90))
+            steps.append(step)
+        agent = PlannerAgent(steps)
+        agent.reset(mars, challenge, nav)
+        exit_route = []
+        reached_medicine = False
+        while engine.state == "running":
+            t = float(mars.data.time)
+            agent.act(mars, t)
+            mars.step(0.05)
+            t, pose = float(mars.data.time), mars.pose()
+            engine.tick(t, pose, mars.object_centers(), engine.world_epoch)
+            reached_medicine |= pose[1] > 0.9
+            if reached_medicine and pose[1] < 0.7:
+                exit_route.append(pose)
+            assert not agent.failed_reason, agent.failed_reason
+        assert engine.state == "passed", (engine.reason, mars.pose(), t)
+        assert 240 < engine.elapsed_s < 270  # still at least 30 s to spare
+        assert exit_route
+        # The actual return route stays clear even at the final fire stage.
+        mars.fire.sync(challenge, 300)
+        for pose in exit_route:
+            assert not challenge.fail_if.update(WorldState(300, pose, {}, elapsed=300), [])
+            assert all(np.linalg.norm(np.array(pose[:2]) - source[:2]) > 0.30 for source in mars.fire.sources)
+    finally:
+        mars.close()

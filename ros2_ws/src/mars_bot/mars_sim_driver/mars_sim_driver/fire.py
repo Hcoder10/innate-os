@@ -14,9 +14,11 @@ import numpy as np
 # the challenge's countdown limit; there is no shorter preview clock.
 FIVE_MINUTE_FIRE_S = 300.0
 FIVE_MINUTE_REGIONS = (
-    (150.0, (-3.2, 0.7, -0.35, 2.3), 0.0),
-    (210.0, (1.2, -0.5, 3.2, 0.5), 120.0),
-    (270.0, (-0.35, 0.7, 3.2, 2.3), 195.0),
+    # Allow a slow search/pick, then a full minute to return through the
+    # west hall and store. Those escape areas and the porch never ignite.
+    (240.0, (-3.2, 0.7, -0.35, 2.3), 0.0),
+    (270.0, (1.2, -0.5, 3.2, 0.5), 180.0),
+    (285.0, (-0.35, 0.7, 3.2, 2.3), 210.0),
     (FIVE_MINUTE_FIRE_S, (0.55, -2.3, 3.2, -0.7), 240.0),
 )
 

@@ -41,11 +41,18 @@ not physically simulated.
 
 In free play, fire grows from the stove across the kitchen, then reaches the
 east hall, study and bedroom over five minutes. This is the same schedule as
-Evacuation 1's 5:00 countdown: kitchen unsafe at 2:30 elapsed, east hall at
-3:30, study at 4:30, and the final bedroom spread at 5:00. Respawn restarts
+Evacuation 1's 5:00 countdown: kitchen unsafe at 4:00 elapsed, east hall at
+4:30, study at 4:45, and the final bedroom spread at 5:00. The medicine task
+allows four minutes for search and pickup, then a full minute to escape.
+The west hall, store room and porch remain free of fire. Respawn restarts
 free play; Retry resets the fire and countdown together. The other evacuation
 challenges retain their own timelines. Flames spread outward from
 each ignition point and new patches grow smoothly from zero.
+
+A timing regression drives the medicine route with 105 seconds of initial
+delay and another 90 seconds at pickup. It still finishes with over 30 seconds
+remaining, and its return route stays clear even at maximum fire spread.
+This uses oracle-assisted placement and does not validate live grasping.
 
 These changes revise the task layouts. Historical benchmark scores, including
 the old shelf-versus-floor controls, are not directly comparable. The three
