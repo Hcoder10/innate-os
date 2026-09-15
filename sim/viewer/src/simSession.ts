@@ -103,6 +103,7 @@ export class SimSession {
     joints: Record<string, number>;
     objects: Record<string, number[]>;
     traffic: TrafficState | null;
+    fire: import("./fire").FireState | null;
   }[] = [];
   #gaps: number[] = []; // recent inter-arrival gaps: sizes the playback delay
   #lastArrival = 0;
@@ -261,6 +262,7 @@ export class SimSession {
         joints: s.joints,
         objects: s.objects,
         traffic: s.traffic,
+        fire: s.fire ?? null,
       };
       if (last !== undefined && s.worldEpoch !== last.worldEpoch) {
         // Any reset is a hard generation boundary even if it happened before
@@ -504,6 +506,7 @@ export class SimSession {
     else this.#playT += dt + (target - this.#playT) * Math.min(1, dt * 4);
 
     const [a, b, u] = bracket(this.#samples, this.#playT);
+    scene.setFireState(b.fire ?? null, a.t + (b.t - a.t) * u);
     const x = a.x + (b.x - a.x) * u;
     const y = a.y + (b.y - a.y) * u;
     const dyaw = Math.atan2(Math.sin(b.yaw - a.yaw), Math.cos(b.yaw - a.yaw));

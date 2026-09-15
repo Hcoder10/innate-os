@@ -31,6 +31,7 @@ from .constants import (
 )
 from .drive_limits import clamp_cmd_vel
 from .environments import DEFAULT_ENVIRONMENT_ID, Environment
+from .fire import FireEffect
 from .props import PropRegistry
 from .statics import RoomRegistry
 from .traffic import TrafficController
@@ -399,6 +400,7 @@ class VirtualMars:
         self._hold = None  # (x, y, yaw) the stopped base is keeping, or None
         self._still_since = None  # sim time the base went quiet, or None
         self.world_epoch = -1
+        self.fire = FireEffect("blaze" in self.statics.rooms)
         self.reset()
         release_freed_heap()
 
@@ -415,6 +417,7 @@ class VirtualMars:
         self.data.qpos[mq] = mult * ARM_HOME[source]
         self.props.mark_all_parked()  # mj_resetData already re-parked every prop
         self.traffic.reset(self.data)
+        self.fire.reset()
         self._cmd_vx = self._cmd_wz = 0.0
         self._cmd_sim_time = -math.inf
         self._hold = None
@@ -565,6 +568,7 @@ class VirtualMars:
         scene.flags[mujoco.mjtRndFlag.mjRND_FOG] = 1
         if SHADOWS:
             self._exempt_environment_from_casting(scene)
+        self._fire_frame = (self.fire.sources, float(self.data.time), scene.ngeom)
 
     def _encode_display_colours(self) -> None:
         """Prop rgba is linear light to the viewer's three.js and a display value to
@@ -598,6 +602,10 @@ class VirtualMars:
     def read_rgb(self) -> np.ndarray:
         """Tone-mapped uint8 RGB of the last update_camera snapshot. Slow
         (software GL) -- do not hold the physics lock across this."""
+        sources, t, base_geoms = self._fire_frame
+        self._renderer.scene.ngeom = base_geoms
+        # Pure visual geometry can be prepared outside the physics lock.
+        self.fire.draw(self._renderer.scene, t, sources=sources)
         return _tonemap(self._renderer.render())
 
     def render_rgb(self, camera: str) -> np.ndarray:

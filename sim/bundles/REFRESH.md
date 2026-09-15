@@ -33,7 +33,11 @@ in Counter, Pantry and Blaze previously required unsupported shelf pickup;
 they now use floor pickup and floor release areas. Counter's deliberately
 unreachable teapot still tests recognition of a capability limit. Blaze's
 level-four photo remains an intentional item to leave behind. Timed hazard
-rules remain active; flames and smoke are not physically simulated.
+rules drive visible, animated flames and rising smoke in both the viewer and
+robot RGB cameras. The fire starts at the stove (and the level-four bed),
+spreads through the judge’s timed regions, and resets on Retry. These effects
+do not collide or appear in the depth map; combustion and smoke transport are
+not physically simulated.
 
 These changes revise the task layouts. Historical benchmark scores, including
 the old shelf-versus-floor controls, are not directly comparable. The three

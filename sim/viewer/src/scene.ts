@@ -18,6 +18,7 @@ import { PropLibrary, type PropInfo } from "./props";
 import { TrafficLibrary } from "./traffic";
 import type { TrafficManifest, TrafficState } from "./trafficState";
 import { RoomLibrary } from "./rooms";
+import { FireEffect, type FireState } from "./fire";
 import type { RoomInfo } from "./roomManifest";
 
 /** An environment pack's browser assets as its manifest names them: paths
@@ -238,6 +239,7 @@ export class SimScene {
   private traffic: TrafficLibrary;
   // A primitive-authored world (statics.py), drawn from the roster's "rooms".
   private rooms: RoomLibrary;
+  private fire: FireEffect;
   // While true a placement drag owns the pointer and orbit stays off.
   private placementMode = false;
   private cameraMode: CameraMode = "free";
@@ -291,6 +293,7 @@ export class SimScene {
     );
     this.traffic = new TrafficLibrary(this.scene, this.hullMaterial, () => this.updateShadowVolume());
     this.rooms = new RoomLibrary(this.scene, this.hullMaterial, () => this.updateShadowVolume());
+    this.fire = new FireEffect(this.scene);
 
     this.camera = new THREE.PerspectiveCamera(55, w / h, 0.05, 200);
     this.camera.up.set(0, 0, 1);
@@ -595,6 +598,7 @@ export class SimScene {
 
   /** Dispose environment assets; retain the robot and props for the next pose. */
   unloadEnvironment(): void {
+    this.fire.update(null, 0);
     this.traffic.unloadEnvironment();
     this.rooms.unloadEnvironment();
     for (const group of [this.layoutGroup, this.hullsGroup]) {
@@ -1088,6 +1092,10 @@ export class SimScene {
     this.props.setManifest(props);
   }
 
+  setFireState(state: FireState | null, t: number): void {
+    this.fire.update(state, t);
+  }
+
   /** Parse the prop models ahead of any drop. Call once the robot and
    * apartment have finished, so the props queue behind them. */
   prefetchPropModels(): void {
@@ -1324,6 +1332,7 @@ export class SimScene {
    * stage per visit, and undisposed contexts pile up until the browser kills
    * the oldest (~16), breaking the live view. */
   dispose(): void {
+    this.fire.dispose();
     this.props.clearPlacementPreview();
     this.traffic.unloadEnvironment();
     this.rooms.unloadEnvironment();

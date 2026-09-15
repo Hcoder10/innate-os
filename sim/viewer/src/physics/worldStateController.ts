@@ -4,6 +4,7 @@
 // world_server.py "two interfaces".
 
 import type { PropInfo } from "../props";
+import type { FireState } from "../fire";
 import type { RoomInfo } from "../roomManifest";
 import type { TrafficManifest, TrafficState } from "../trafficState";
 
@@ -86,6 +87,7 @@ export interface WorldState {
   traffic: TrafficState | null;
   /** Challenge judge state; null on servers that predate it. */
   challenge: ChallengeBlock | null;
+  fire?: FireState | null;
 }
 
 export class WorldStateController {
@@ -200,6 +202,7 @@ export class WorldStateController {
       objects?: Record<string, number[]> | null;
       traffic?: TrafficState | null;
       challenge?: ChallengeBlock | null;
+      fire?: FireState | null;
     };
     const joints = msg.joints;
     // joint6M: the gripper's mirrored finger (URDF mimic of joint6, x-1).
@@ -215,6 +218,7 @@ export class WorldStateController {
       objects: msg.objects ?? {},
       traffic: msg.traffic ?? null,
       challenge: msg.challenge ?? null,
+      fire: msg.fire ?? null,
     });
   }
 }

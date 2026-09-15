@@ -186,6 +186,8 @@ class WorldServer:
                 self._challenge_error_at = time.time()
                 print(f"[world-server] challenge tick failed: {exc!r}", flush=True)
         self._apply_world_actions()
+        with self.lock:
+            fire = self.sim.fire.public() if self.sim.world_epoch == world_epoch else None
         # t = sim clock (playback timeline); wall = shared clock for lag HUDs.
         payload = json.dumps(
             {
@@ -196,6 +198,7 @@ class WorldServer:
                 "joints": joints,
                 "objects": objects,
                 "traffic": traffic,
+                "fire": fire,
                 "challenge": challenge,
             }
         )

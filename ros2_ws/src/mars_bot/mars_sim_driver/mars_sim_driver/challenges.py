@@ -1053,6 +1053,8 @@ class ChallengeEngine:
                 self._last_judged_t = started_t
                 self._run_epoch = epoch
                 self.elapsed_s = 0.0
+                if (fire := getattr(self.sim, "fire", None)) is not None:
+                    fire.sync(challenge, 0)
                 self._cues_fired.clear()
                 self.transcript = []
                 self.path_len_m = 0.0
@@ -1098,6 +1100,8 @@ class ChallengeEngine:
                 if self.active is not None and self.state == "running":
                     self._record(self.active.id, "aborted", None)
                 self.active = None
+                if (fire := getattr(self.sim, "fire", None)) is not None:
+                    fire.reset()
                 self.runtime_public = None
                 self._pending_drops.clear()
                 self._pending_transition = None
@@ -1205,6 +1209,8 @@ class ChallengeEngine:
                 # run's skill completions for the next current one.
                 events, self._events = self._events, []
                 self.elapsed_s = max(0.0, t - self.started_t)
+                if (fire := getattr(self.sim, "fire", None)) is not None:
+                    fire.sync(challenge, self.elapsed_s)
                 # Heights come straight from the sim the engine already holds;
                 # object_poses() has carried z all along and nothing read it.
                 try:

@@ -1,0 +1,106 @@
+"""Fire cues follow the judge, are visible to RGB, and never become physics."""
+
+from pathlib import Path
+
+import mujoco
+import numpy as np
+import pytest
+from mars_sim_driver.challenges import After, AnyOf, Challenge, InRect, load_challenges
+from mars_sim_driver.fire import FireEffect, flame_triangles
+
+
+@pytest.mark.parametrize(
+    "challenge",
+    list(load_challenges([Path(__file__).parents[1] / "bundles/blaze/challenges"]).values()),
+    ids=lambda c: c.id,
+)
+def test_fire_follows_each_challenges_real_deadlines(challenge):
+    fire = FireEffect(True)
+    fire.sync(challenge, 0)
+    starts = 2 if challenge.id == "blaze_l4" else 1
+    assert len(fire.sources) == starts
+    assert all(s[3] == pytest.approx(0.38) for s in fire.sources)
+    for after in challenge.fail_if.preds:
+        fire.sync(challenge, after.seconds)
+        r = after.inner
+        in_region = [s for s in fire.sources if r.x0 <= s[0] <= r.x1 and r.y0 <= s[1] <= r.y1]
+        assert len(in_region) == 7
+        assert all(s[3] == 1 for s in in_region)
+    fire.sync(None, 0)
+    assert fire.sources == [[-1.30, 1.96, 0.25, 0.38, 0]]
+
+
+def test_fire_uses_edited_predicate_deadline_and_stays_inside_the_room():
+    challenge = Challenge(
+        id="custom",
+        title="custom",
+        brief="custom",
+        setup=[],
+        goals=[],
+        fail_if=AnyOf([After(20, InRect("robot", -3.2, 0.7, -0.35, 2.3))]),
+    )
+    fire = FireEffect(True)
+    fire.sync(challenge, 20)
+    assert len(fire.sources) == 7
+    assert all(s[3] == 1 for s in fire.sources)
+    assert all(-3.2 <= s[0] <= -0.35 and 0.7 <= s[1] <= 2.3 for s in fire.sources)
+    off = FireEffect(False)
+    off.sync(challenge, 30)
+    assert off.public() is None
+
+
+def test_rgb_flame_geometry_is_animated_and_does_not_enter_the_model():
+    model = mujoco.MjModel.from_xml_string('<mujoco><worldbody><geom type="plane" size="5 5 .1"/></worldbody></mujoco>')
+    data = mujoco.MjData(model)
+    scene = mujoco.MjvScene(model, maxgeom=500)
+    camera = mujoco.MjvCamera()
+    mujoco.mjv_updateScene(model, data, mujoco.MjvOption(), None, camera, mujoco.mjtCatBit.mjCAT_ALL, scene)
+    physics_count, rendered_count = model.ngeom, scene.ngeom
+    fire = FireEffect(True)
+    fire.draw(scene, 2)
+    assert scene.ngeom > rendered_count
+    assert model.ngeom == physics_count
+    assert not data.ncon
+    assert all(g.category == mujoco.mjtCatBit.mjCAT_DECOR for g in scene.geoms[rendered_count : scene.ngeom])
+    a = np.array([p for tri in flame_triangles(fire.sources[0], 1) for p in tri[:3]])
+    b = np.array([p for tri in flame_triangles(fire.sources[0], 1.2) for p in tri[:3]])
+    assert np.isfinite(a).all()
+    assert not np.allclose(a, b)
+    fire.draw(scene, 2)  # respects a renderer's finite extra-geometry budget
+    fire.draw(scene, 2)
+    fire.draw(scene, 2)
+    fire.draw(scene, 2)
+    assert scene.ngeom <= scene.maxgeom
+
+
+def test_retry_abort_and_external_reset_restore_the_fire(tmp_path):
+    import threading
+
+    from mars_sim_driver.challenges import ChallengeEngine
+    from mars_sim_driver.core import VirtualMars
+    from mars_sim_driver.environments import Environment
+
+    mars = VirtualMars(render_wh=(64, 48), environment=Environment.load("blaze"))
+    engine = ChallengeEngine(
+        mars, threading.Lock(), roots=[], packs=[mars.environment], progress_path=tmp_path / "p.json"
+    )
+    try:
+        assert engine.start("blaze_l4")
+        assert len(mars.fire.sources) == 2
+        mars.data.time = 100
+        engine.tick(100, (0, 0, 0), mars.object_centers(), engine.world_epoch)
+        assert len(mars.fire.sources) > 2
+        engine.tick(101, (2, -1, 0), mars.object_centers(), engine.world_epoch)
+        assert engine.state == "failed"
+        frozen = mars.fire.sources
+        engine.tick(450, (0, 0, 0), mars.object_centers(), engine.world_epoch)
+        assert mars.fire.sources == frozen
+        mars.reset()
+        engine.tick(0, (0, 0, 0), mars.object_centers(), engine.world_epoch)
+        assert len(mars.fire.sources) == 1
+        assert engine.start("blaze_l4")
+        assert len(mars.fire.sources) == 2
+        engine.abort()
+        assert len(mars.fire.sources) == 1
+    finally:
+        mars.close()
