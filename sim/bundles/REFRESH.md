@@ -40,9 +40,11 @@ do not collide or appear in the depth map; combustion and smoke transport are
 not physically simulated.
 
 In free play, fire grows from the stove across the kitchen, then reaches the
-east hall, study and bedroom over roughly three minutes. Respawn starts this
-preview over. Starting a challenge replaces the preview with that challenge's
-own timeline; the danger deadlines are unchanged. Flames spread outward from
+east hall, study and bedroom over five minutes. This is the same schedule as
+Evacuation 1's 5:00 countdown: kitchen unsafe at 2:30 elapsed, east hall at
+3:30, study at 4:30, and the final bedroom spread at 5:00. Respawn restarts
+free play; Retry resets the fire and countdown together. The other evacuation
+challenges retain their own timelines. Flames spread outward from
 each ignition point and new patches grow smoothly from zero.
 
 These changes revise the task layouts. Historical benchmark scores, including

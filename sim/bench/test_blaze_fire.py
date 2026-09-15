@@ -118,12 +118,12 @@ def test_free_play_spreads_on_sim_time_and_abort_restarts_from_current_time():
     fire.advance(1020)
     assert len(fire.sources) > len(initial)
     assert fire.sources[0][3] > initial[0][3]
-    fire.advance(1170)
+    fire.advance(1300)
     assert len(fire.sources) == 28
     assert all(s[3] == 1 for s in fire.sources)
     assert all(s[1] > -2.4 for s in fire.sources)  # porch always clear
-    fire.reset(1170)
-    fire.advance(1171)
+    fire.reset(1300)
+    fire.advance(1301)
     assert len(fire.sources) == 1 and fire.sources[0][3] < 0.4
     fire.reset()
     assert fire.sources == initial
@@ -153,3 +153,18 @@ def test_new_flame_patches_start_small():
 
     assert height(0.00001) < 0.003
     assert height(0.01) < height(0.25) < height(1)
+
+
+@pytest.mark.parametrize("elapsed", [0, 30, 75, 120, 150, 195, 210, 240, 270, 299, 300])
+def test_five_minute_timer_drives_the_same_spread_as_free_play(elapsed):
+    challenge = load_challenges([Path(__file__).parents[1] / "bundles/blaze/challenges"])["blaze_l1"]
+    assert challenge.time_limit_s == 300
+    preview, running = FireEffect(True), FireEffect(True)
+    preview.advance(elapsed)
+    running.sync(challenge, elapsed)
+    assert preview.sources == running.sources
+    if elapsed < 300:
+        assert len(running.sources) < 28 or any(s[3] < 1 for s in running.sources)
+    else:
+        assert len(running.sources) == 28
+        assert all(s[3] == 1 for s in running.sources)

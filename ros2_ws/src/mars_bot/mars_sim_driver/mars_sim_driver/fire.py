@@ -10,13 +10,14 @@ import math
 import mujoco
 import numpy as np
 
-# Unscored free play demonstrates the spread in under three minutes. Active
-# challenges use their own predicates below, never these preview deadlines.
-PREVIEW_REGIONS = (
-    (60.0, (-3.2, 0.7, -0.35, 2.3), 0.0),
-    (100.0, (1.2, -0.5, 3.2, 0.5), 35.0),
-    (135.0, (-0.35, 0.7, 3.2, 2.3), 75.0),
-    (170.0, (0.55, -2.3, 3.2, -0.7), 100.0),
+# One five-minute schedule for free play and Evacuation 1. Its end is also
+# the challenge's countdown limit; there is no shorter preview clock.
+FIVE_MINUTE_FIRE_S = 300.0
+FIVE_MINUTE_REGIONS = (
+    (150.0, (-3.2, 0.7, -0.35, 2.3), 0.0),
+    (210.0, (1.2, -0.5, 3.2, 0.5), 120.0),
+    (270.0, (-0.35, 0.7, 3.2, 2.3), 195.0),
+    (FIVE_MINUTE_FIRE_S, (0.55, -2.3, 3.2, -0.7), 240.0),
 )
 
 
@@ -38,12 +39,12 @@ class FireEffect:
 
     def reset(self, t: float = 0):
         self._preview_started_t = float(t)
-        self.sources = self._spread(PREVIEW_REGIONS, 0) if self.enabled else []
+        self.sources = self._spread(FIVE_MINUTE_REGIONS, 0) if self.enabled else []
 
     def advance(self, t: float):
         """Called once per physics slice; no browser or active trial required."""
         if self.enabled and self._preview_started_t is not None:
-            self.sources = self._spread(PREVIEW_REGIONS, max(0, t - self._preview_started_t))
+            self.sources = self._spread(FIVE_MINUTE_REGIONS, max(0, t - self._preview_started_t))
 
     def sync(self, challenge, elapsed: float):
         if not self.enabled:
@@ -62,7 +63,7 @@ class FireEffect:
                     rect = predicate.inner
                     bounds = (rect.x0, rect.y0, rect.x1, rect.y1)
                     _, kind = _origin(bounds)
-                    ignition = 0 if kind < 2 else max(0, predicate.seconds - (90 if kind == 2 else 75))
+                    ignition = 0 if kind == 0 else max(0, predicate.seconds - {1: 60, 2: 90, 3: 75}[kind])
                     yield predicate.seconds, bounds, ignition
 
         # The judge owns progression until completion/abort; a physics tick
