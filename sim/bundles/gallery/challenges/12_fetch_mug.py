@@ -3,6 +3,7 @@
 from mars_sim_driver.challenges import Challenge, Drop, Goal, InCircle, Near
 
 CHALLENGE = Challenge(
+    populate_world=True,
     id="gallery_fetch_mug",
     title="Fetch the mug",
     category=2,

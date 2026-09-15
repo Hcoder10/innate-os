@@ -159,6 +159,9 @@ def main() -> int:
     # by its manifest, which is what the launcher and Nav2 look it up by.
     basename = Path(environment.map_name).stem if environment else "sim_apartment"
     sim = VirtualMars(environment=environment)
+    # Populated exhibits may place movable props on reset. They belong in
+    # live obstacle sensing, never in the permanent localization map.
+    sim.props.park_all(sim.data)
     # Lidar-consistent map (virtual SLAM at the laser's true height): AMCL
     # localizes against what the lidar actually returns, exactly like a real
     # robot localizing against its own SLAM map. occupancy_grid() (collision

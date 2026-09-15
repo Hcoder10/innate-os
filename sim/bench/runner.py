@@ -288,7 +288,11 @@ def _prepare(map_name, challenge_id, make_agent, render_wh, agent_name, wall0):
     # Progress is per-episode and thrown away: the shared workspace/challenges.json
     # is a user's record, and parallel workers would race each other writing it.
     progress = (
-        Path(__file__).resolve().parent / "results" / "progress" / f"{map_name}_{challenge_id}_{os.getpid()}.json"
+        Path(__file__).resolve().parent
+        / "results"
+        / "progress"
+        / f"{map_name}_{challenge_id}_{os.getpid()}"
+        / "progress.json"
     )
     engine = ChallengeEngine(mars, sim_lock, roots=[ch_root], progress_path=progress)
 
@@ -313,7 +317,7 @@ def _prepare(map_name, challenge_id, make_agent, render_wh, agent_name, wall0):
             Path(__file__).resolve().parent / "results" / "frames" / agent.name.replace(":", "_") / challenge_id
         )
 
-    # Nav map BEFORE start(): props are still parked off-map, so the grid holds
+    # Nav map BEFORE start(): park any default exhibit props, so it holds
     # only static geometry. Built after the drops, every target prop rasterises
     # as an obstacle and the planner cannot route to the thing it is meant to
     # approach.
@@ -321,7 +325,13 @@ def _prepare(map_name, challenge_id, make_agent, render_wh, agent_name, wall0):
     if hasattr(agent, "nav"):
         from navplan import NavMap
 
-        nav = NavMap.from_sim(mars)
+        mars.props.park_all(mars.data)
+        try:
+            nav = NavMap.from_sim(mars)
+        finally:
+            # Restore the fresh world's exhibits even when a challenge opts
+            # out of resetting again in start(). No episode has started yet.
+            mars.reset()
 
     if not engine.start(challenge_id):
         blank.agent = agent.name

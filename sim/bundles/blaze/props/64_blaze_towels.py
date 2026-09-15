@@ -4,12 +4,14 @@ from mars_sim_driver.props import Prop
 
 PROP = Prop(
     name="blaze_towels",
-    label="?",
-    title="Towels",
-    mesh="../objects/blaze_towels.stl",
+    label="🧺",
+    title="Folded towels",
+    mesh="../objects/blaze_towels.obj",
+    viewer={"glb": "/models/blaze/blaze_towels.glb", "preNormalized": True},
     collision="box",
     size=(0.0575, 0.031, 0.0925),
     rgba=(0.1804, 0.3608, 0.2588, 1.0),
+    initial_pose=(-2.6, -1.4, 0),
     rest_z=0.0925,
-    drop_z=0.2325,
+    drop_z=0.105,
 )

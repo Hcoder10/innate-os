@@ -5,11 +5,13 @@ from mars_sim_driver.props import Prop
 PROP = Prop(
     name="gallery_can_315",
     label="🥫",
-    title="Can 315",
-    mesh="../objects/gallery_can_315.stl",
+    title="Blue studio can",
+    mesh="../objects/gallery_can_315.obj",
     collision="cylinder",
     size=(0.033, 0.0575),
     rgba=(0.1725, 0.4157, 0.7765, 1.0),
     rest_z=0.0575,
     drop_z=0.0675,
+    initial_pose=(-1.84, -1.84, 0.0),
+    viewer={"glb": "/models/gallery/gallery_can_315.glb", "preNormalized": True},
 )

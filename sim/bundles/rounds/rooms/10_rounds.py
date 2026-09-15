@@ -4,9 +4,12 @@ Authored in Roblox Studio and exported as primitives -- see that tool's header
 for the axis conversion. 76 collidable geoms plus 16 decor geoms
 (floor seams and skirting) that are drawn but never collided with.
 
-Do not hand-edit: rebuild the map and re-run the exporter.
+The wall cutouts extend 2 mm behind the coloured door linings, including
+above the lintels. Flush wall/lining faces z-fight in the viewer and camera.
+Keep this reveal when re-exporting; the linings still set the clear openings.
 """
 
+from mars_sim_driver.scene_details import rounds as finish_room
 from mars_sim_driver.statics import Geom, Room
 
 ROOM = Room(
@@ -14,15 +17,15 @@ ROOM = Room(
     title="Rounds",
     spawn=(-5.2, -0.0, 0.0),
     geoms=[
-    Geom("box", (0.6375, 0.06, 1.2), (-5.3625, -0.8, 1.2), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.58, 0.58, 0.58, 1.0), name="corrn_1"),
-    Geom("box", (1.2375, 0.06, 1.2), (-3.0375, -0.8, 1.2), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.58, 0.58, 0.58, 1.0), name="corrn_2"),
-    Geom("box", (1.15, 0.06, 1.2), (-0.05, -0.8, 1.2), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.58, 0.58, 0.58, 1.0), name="corrn_3"),
-    Geom("box", (1.025, 0.06, 1.2), (2.925, -0.8, 1.2), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.58, 0.58, 0.58, 1.0), name="corrn_4"),
-    Geom("box", (0.475, 0.06, 1.2), (5.525, -0.8, 1.2), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.58, 0.58, 0.58, 1.0), name="corrn_5"),
-    Geom("box", (0.55, 0.06, 0.2), (4.5, -0.8, 2.2), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.949, 0.9412, 0.9255, 1.0), name="corrn_hdr"),
-    Geom("box", (0.4, 0.06, 0.2), (1.5, -0.8, 2.2), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.949, 0.9412, 0.9255, 1.0), name="corrn_hdr"),
-    Geom("box", (0.225, 0.06, 0.2), (-4.5, -0.8, 2.2), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.949, 0.9412, 0.9255, 1.0), name="corrn_hdr"),
-    Geom("box", (0.3, 0.06, 0.2), (-1.5, -0.8, 2.2), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.949, 0.9412, 0.9255, 1.0), name="corrn_hdr"),
+    Geom("box", (0.6365, 0.06, 1.2), (-5.3635, -0.8, 1.2), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.58, 0.58, 0.58, 1.0), name="corrn_1"),
+    Geom("box", (1.2355, 0.06, 1.2), (-3.0375, -0.8, 1.2), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.58, 0.58, 0.58, 1.0), name="corrn_2"),
+    Geom("box", (1.148, 0.06, 1.2), (-0.05, -0.8, 1.2), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.58, 0.58, 0.58, 1.0), name="corrn_3"),
+    Geom("box", (1.023, 0.06, 1.2), (2.925, -0.8, 1.2), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.58, 0.58, 0.58, 1.0), name="corrn_4"),
+    Geom("box", (0.474, 0.06, 1.2), (5.526, -0.8, 1.2), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.58, 0.58, 0.58, 1.0), name="corrn_5"),
+    Geom("box", (0.552, 0.06, 0.199), (4.5, -0.8, 2.201), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.949, 0.9412, 0.9255, 1.0), name="corrn_hdr"),
+    Geom("box", (0.402, 0.06, 0.199), (1.5, -0.8, 2.201), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.949, 0.9412, 0.9255, 1.0), name="corrn_hdr"),
+    Geom("box", (0.227, 0.06, 0.199), (-4.5, -0.8, 2.201), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.949, 0.9412, 0.9255, 1.0), name="corrn_hdr"),
+    Geom("box", (0.302, 0.06, 0.199), (-1.5, -0.8, 2.201), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.949, 0.9412, 0.9255, 1.0), name="corrn_hdr"),
     Geom("box", (0.7, 0.06, 1.2), (2.7, 0.8, 1.2), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.58, 0.58, 0.58, 1.0), name="corrs2_1"),
     Geom("box", (0.7, 0.06, 1.2), (5.3, 0.8, 1.2), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.58, 0.58, 0.58, 1.0), name="corrs2_2"),
     Geom("box", (0.6, 0.06, 0.2), (4.0, 0.8, 2.2), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.949, 0.9412, 0.9255, 1.0), name="corrs2_hdr"),
@@ -108,3 +111,7 @@ ROOM = Room(
     Geom("box", (0.21, 0.09, 0.2), (5.4, -3.14, 0.4), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.9686, 0.9647, 0.9529, 1.0), name="tank"),
     ],
 )
+
+# Shared camera-visible finishes; supports and door clearances remain above.
+
+finish_room(ROOM)

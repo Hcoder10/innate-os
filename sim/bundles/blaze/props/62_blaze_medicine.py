@@ -4,10 +4,10 @@ from mars_sim_driver.props import Prop
 
 PROP = Prop(
     name="blaze_medicine",
-    label="?",
-    title="Medicine",
-    mesh="../objects/blaze_medicine.stl",
-    mesh_scale=0.5814,
+    label="💊",
+    title="Medicine bottle",
+    mesh="../objects/blaze_medicine.obj",
+    viewer={"glb": "/models/blaze/blaze_medicine.glb", "preNormalized": True},
     collision="cylinder",
     size=(0.0250, 0.0314),
     # Red, not terracotta-on-orange: the bottle stood against the kitchen's
@@ -16,6 +16,7 @@ PROP = Prop(
     # from the green towels decoy and pops against orange, cream and white.
     # Post-dates the Aug 16 live run.
     rgba=(0.85, 0.10, 0.10, 1.0),
+    initial_pose=(-1.9, 1.37, 0),
     rest_z=0.0314,
-    drop_z=0.304,
+    drop_z=0.045,
 )

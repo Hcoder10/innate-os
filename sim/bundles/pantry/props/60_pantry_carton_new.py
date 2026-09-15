@@ -14,17 +14,19 @@ that put blaze_documents on the floor. 80 mm tall clears BOTH surfaces: the 240 
 the two and is what sets the number.
 """
 
+# Visuals: sim/tools/build_pantry_props.py; metres at the collision body origin.
 from mars_sim_driver.props import Prop
 
 PROP = Prop(
     name="pantry_carton_new",
-    label="?",
+    label="C",
     title="Carton New",
-    mesh="../objects/pantry_carton_new.stl",
-    mesh_scale=0.8065,
+    mesh="../objects/pantry_carton_new.obj",
+    viewer={"glb": "/models/groceries/pantry_carton_new.glb", "preNormalized": True},
     collision="box",
     size=(0.0464, 0.0250, 0.0400),
     rgba=(0.698, 0.3059, 0.1882, 1.0),
+    initial_pose=(2.24, -0.4, -90),
     rest_z=0.0400,
     drop_z=0.3425,
 )

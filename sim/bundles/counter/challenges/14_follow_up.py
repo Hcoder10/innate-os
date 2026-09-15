@@ -39,7 +39,7 @@ CHALLENGE = Challenge(
         Drop("counter_cup_red", -0.62, 1.50),
         Drop("counter_cup_blue", 0.02, 1.50),
         Drop("counter_cup_green", 0.66, 1.50),
-        Drop("counter_teapot_brew", 1.02, 1.44),
+        Drop("counter_teapot_brew", 1.1, 1.44),
     ],
     script=[
         # Gated on goal 0: the follow-up is only asked once the count has been

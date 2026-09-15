@@ -2097,6 +2097,24 @@ def ensure_viewer_public_assets(config: dict[str, object], *, offline: bool = Fa
         raise StackError(
             f"No 3D view assets for this checkout ({shorten_docker_image_ref(image)}): {exc}\n{remedy}"
         ) from exc
+    _stage_bundle_viewer_assets(sim_repo)
+
+
+def _stage_bundle_viewer_assets(sim_repo: Path) -> list[Path]:
+    """Overlay tracked bundle models after image extraction, including cached
+    installs. These small authored assets ship with the checkout, so a new
+    grocery model does not require rebuilding the apartment asset image."""
+    public = sim_repo / "viewer" / "public" / "models"
+    written = []
+    for models in sorted((sim_repo / "bundles").glob("*/viewer/models")):
+        for source in sorted(models.rglob("*.glb")):
+            target = public / source.relative_to(models)
+            if target.is_file() and target.read_bytes() == source.read_bytes():
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+            written.append(target)
+    return written
 
 
 def install_layer_subtree(

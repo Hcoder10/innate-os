@@ -14,7 +14,7 @@
   },
   "attribution": {
     "name": "Gallery",
-    "author": "innate benchmark (authored in Roblox Studio, exported as MuJoCo primitives)",
+    "author": "Innate benchmark (authored procedural gallery and exhibit models)",
     "license": "Apache-2.0",
     "source": "sim/bundles/gallery"
   }

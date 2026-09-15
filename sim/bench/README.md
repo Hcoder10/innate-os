@@ -13,6 +13,16 @@ from. A sweep writes fresh ones under `results/` (gitignored).
 
 ## Running it
 
+In the web app, open **Challenges** and choose one to preview its goals.
+**View prompt** reveals the default instructions; **Run challenge** runs them:
+the scene resets, the judge confirms a fresh attempt, and the prompt is sent
+through chat to the selected agent. Browsing does not start the clock.
+Hover over a challenge, **View prompt**, or **Run challenge** to read and select
+the prompt for copying. Tap **View prompt** to expand it on touch screens.
+**Try manually** pauses the agent and starts an attempt for you to drive.
+Challenge authors can set `prompt=` when the operator-facing `brief` is not
+what the robot should hear; otherwise the brief is the default prompt.
+
 Headless, from anywhere in a clone, on `sim/.venv` (the system python has no
 mujoco):
 
@@ -165,14 +175,18 @@ names (13 observation/conversation, 17 simple instruction, 15 long-horizon):
 
 | map | isolates |
 |---|---|
-| **counter** | conversation: counting, clarification, mid-task correction, overheard speech, implicit requests, a remembered detail — plus fetch/deliver, with floor-vs-shelf twin controls |
+| **counter** | conversation: counting, clarification, mid-task correction, overheard speech, implicit requests, a remembered detail — plus floor fetch/deliver and skill-event controls |
 | **pantry** | counting under classification pressure (a misfiled item counts as what it IS), shelving, a five-goal stocktake |
 | **workshop** | reach (5 benches, 0.06–0.30 m tops), grasp band (5 cans, 40–100 mm), occlusion |
-| **gallery** | height above the floor plane (5 identical mugs, 0–0.5 m) and bearing (8 identical cans at 45°) |
+| **gallery** | a furnished art gallery: two red mugs (floor and 0.5 m plinth), eight blue cans at 45°, counting and a clockwise tour |
 | **rounds** | doorway clearance (0.35–1.00 m), room identification by fixture, long-horizon delivery |
 | **household** | composite: four rooms, three stations, no isolated variable |
 | **bridge** | spoken route-following, clean list vs the same route delivered disfluently (the pair prices disfluency in gates) |
 | **blaze** | urgency: a spreading fire (hard fail), reprioritisation cues, evacuation ordering |
+
+The [six-world refresh](../bundles/REFRESH.md) adds populated free play, shared
+robot/browser assets and floor staging for unsupported shelf pickups. Its
+revised layouts supersede the historical shelf-control scores.
 
 Scene furniture on the Gallery sits at 22.5° off-bearings, exactly between ring
 positions, so every can has the same plain-wall backdrop. Furniture parked on a

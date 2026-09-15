@@ -110,9 +110,7 @@ class WorldState:
         return self.centers.get(name)
 
     def height(self, name: str) -> float | None:
-        """z of a prop, or None when unknown -- which must never be read as
-        "too low": a goal asserting min_z passes on None so a missing height
-        cannot silently fail a challenge that used to pass."""
+        """z of a prop, or None when unknown. Height-bounded goals require it."""
         if name == "robot":
             return None
         return self.heights.get(name)
@@ -167,18 +165,19 @@ class InCircle(Predicate):
     # second was standing in for the first -- see sim/bench/FINDINGS.md
     # (patch_goal_height).
     min_z: float | None = None
+    max_z: float | None = field(default=None, kw_only=True)
 
     def update(self, state: WorldState, events: list[dict]) -> bool:
         p = state.pos(self.target)
         if p is None or math.hypot(p[0] - self.x, p[1] - self.y) > self.radius_m:
             return False
-        if self.min_z is None:
+        if self.min_z is None and self.max_z is None:
             return True
         z = state.height(self.target)
         # Unknown height FAILS. min_z is what separates "on the counter" from
         # "in the counter's footprint, on the floor"; awarding it when the
         # height cannot be read credits a goal the robot may not have reached.
-        return z is not None and z >= self.min_z
+        return z is not None and (self.min_z is None or z >= self.min_z) and (self.max_z is None or z <= self.max_z)
 
 
 @dataclass
@@ -190,11 +189,9 @@ class InRect(Predicate):
     y0: float
     x1: float
     y1: float
-    # Same contract as InCircle.min_z (see sim/bench/FINDINGS.md,
-    # patch_goal_height): "on the counter" is a different claim from "within
-    # the counter's footprint", and unknown height PASSES so a missing z can
-    # never fail a goal.
+    # Same height contract as InCircle: unknown height fails a bounded goal.
     min_z: float | None = None
+    max_z: float | None = field(default=None, kw_only=True)
 
     def update(self, state: WorldState, events: list[dict]) -> bool:
         p = state.pos(self.target)
@@ -205,10 +202,10 @@ class InRect(Predicate):
             and min(self.y0, self.y1) <= p[1] <= max(self.y0, self.y1)
         ):
             return False
-        if self.min_z is None:
+        if self.min_z is None and self.max_z is None:
             return True
         z = state.height(self.target)
-        return z is not None and z >= self.min_z  # unknown height fails; see InCircle
+        return z is not None and (self.min_z is None or z >= self.min_z) and (self.max_z is None or z <= self.max_z)
 
 
 @dataclass
@@ -587,6 +584,8 @@ class Drop:
     x: float
     y: float
     yaw_deg: float = 0.0
+    # Select a shelf for this scene without changing the prop's default height.
+    z: float | None = field(default=None, kw_only=True)
 
 
 @dataclass
@@ -695,6 +694,8 @@ class Challenge:
     id: str
     title: str
     brief: str  # shown to the user; what to tell (or do with) the robot
+    # Defaults to the brief; override when the brief addresses the operator.
+    prompt: str = field(default="", kw_only=True)
     setup: list[Drop]
     # Adjacent goals with one parallel_group form an unordered phase. Events
     # arriving before their phase are discarded rather than deferred.
@@ -704,6 +705,9 @@ class Challenge:
     runtime: ChallengeRuntime | None = field(default=None, kw_only=True, repr=False)
     time_limit_s: float | None = None
     reset_world: bool = True  # robot back to spawn + props re-parked on start
+    # Free play opens with the environment's exhibit props. A challenge owns
+    # its stock/counts through setup, unless it explicitly uses that exhibit.
+    populate_world: bool = field(default=False, kw_only=True)
     # Ends the run the moment it holds. See sim/bench/FINDINGS.md (patch_failif)
     # for why a challenge needs a failure that is not the clock.
     fail_if: "Predicate | None" = None
@@ -996,13 +1000,21 @@ class ChallengeEngine:
                 # gap, waiting to be ticked.
                 self.world_epoch += 1
                 if challenge.reset_world:
-                    self.sim.reset(spawn=challenge.spawn)
+                    self.sim.reset(spawn=challenge.spawn, populate=challenge.populate_world)
+                missing = []
                 for drop in challenge.setup:
-                    if not self.sim.drop_prop_at(drop.name, drop.x, drop.y, math.radians(drop.yaw_deg)):
-                        print(f"[challenges] {challenge.id}: no prop named {drop.name!r} in this world", flush=True)
+                    height = {"z": drop.z} if drop.z is not None else {}
+                    if not self.sim.drop_prop_at(drop.name, drop.x, drop.y, math.radians(drop.yaw_deg), **height):
+                        missing.append(drop.name)
                 started_t = float(self.sim.data.time)
                 epoch = self.world_epoch
             with self._mutex:
+                if missing:
+                    self.state = "failed"
+                    self.reason = "scene setup error: missing props: " + ", ".join(missing)
+                    print(f"[challenges] {challenge.id}: {self.reason}", flush=True)
+                    # An invalid world is not a failed attempt by the robot.
+                    return False
                 for goal in challenge.goals:
                     try:
                         goal.predicate.reset()
@@ -1033,7 +1045,7 @@ class ChallengeEngine:
                     self.state = "failed"
                     self.reason = "judge error: a predicate could not be reset"
                     self._record(challenge.id, "failed", None)
-                    return
+                    return False
                 self.state = "running"
                 self.reason = ""
                 self.goal_done = [False] * len(challenge.goals)
@@ -1508,7 +1520,18 @@ class ChallengeEngine:
 
     def roster(self) -> list[dict]:
         """Challenge briefs for this environment; sent on connection and world changes."""
-        return [{"id": c.id, "title": c.title, "brief": c.brief} for c in self.challenges.values() if self._offered(c)]
+        return [
+            {
+                "id": c.id,
+                "title": c.title,
+                "brief": c.brief,
+                "prompt": c.prompt.strip() or c.brief,
+                "goals": [g.label for g in c.goals],
+                "time_limit_s": c.time_limit_s,
+            }
+            for c in self.challenges.values()
+            if self._offered(c)
+        ]
 
     def _block(self, challenge: Challenge | None) -> dict:
         # Only what can change rides the state stream. Progress is a few

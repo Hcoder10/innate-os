@@ -5,11 +5,13 @@ from mars_sim_driver.props import Prop
 PROP = Prop(
     name="workshop_mug_hidden",
     label="☕",
-    title="Mug Hidden",
-    mesh="../objects/workshop_mug_hidden.stl",
+    title="Yellow mug",
+    mesh="../objects/workshop_mug_hidden.obj",
+    viewer={"glb": "/models/workshop/workshop_mug_hidden.glb", "preNormalized": True},
     collision="cylinder",
     size=(0.0425, 0.0475),
     rgba=(0.902, 0.7294, 0.2431, 1.0),
+    initial_pose=(-0.24, -1.55, 0),
     rest_z=0.0475,
     drop_z=0.0575,
 )

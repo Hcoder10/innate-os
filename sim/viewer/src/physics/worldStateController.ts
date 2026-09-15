@@ -13,6 +13,9 @@ export interface ChallengeInfo {
   id: string;
   title: string;
   brief: string;
+  prompt?: string;
+  goals?: string[];
+  time_limit_s?: number | null;
 }
 
 /** A challenge's persisted record (workspace/challenges.json). */
@@ -145,8 +148,10 @@ export class WorldStateController {
   /** Send a stage command (e.g. place_group) back up the observer socket.
    * Dropped silently while the socket is (re)connecting -- it is a button
    * press, not something worth queueing. */
-  send(cmd: object): void {
-    if (this.#ws.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify(cmd));
+  send(cmd: object): boolean {
+    if (this.#ws.readyState !== WebSocket.OPEN) return false;
+    this.#ws.send(JSON.stringify(cmd));
+    return true;
   }
 
   dispose(): void {

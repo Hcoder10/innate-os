@@ -962,7 +962,10 @@ export class SimScene {
   /** Pick how the orbit camera behaves; see CameraMode. "top" flies out to the
    * apartment framing, after which it is an ordinary orbit you can drag. */
   setCameraMode(mode: CameraMode): void {
-    if (mode === this.cameraMode) return;
+    if (mode === this.cameraMode) {
+      if (mode === "top") this.flyToOverview();
+      return;
+    }
     this.cameraMode = mode;
     this.cameraTween = undefined;
     this.cameraClock.getDelta(); // drop the gap since the last frame, or the first step is a jump
@@ -1131,7 +1134,8 @@ export class SimScene {
     // session and, before the first pose, the orbit camera gets the same
     // overview the apartment's placeholder boxes give.
     this.layoutBounds = bounds;
-    if (!this.spawned) this.frameBounds(bounds);
+    if (this.cameraMode === "top") this.flyToOverview();
+    else if (!this.spawned) this.frameBounds(bounds);
   }
 
   /** Mirror authoritative signal aspects and car poses from MuJoCo. */
@@ -1248,7 +1252,8 @@ export class SimScene {
     this.robotRoot.visible = true;
     this.robotRoot.position.set(x, y, 0);
     this.robotRoot.rotation.set(0, 0, yaw);
-    this.frameFacing(x, y, yaw);
+    if (this.cameraMode === "top") this.flyToOverview();
+    else this.frameFacing(x, y, yaw);
     this.renderer.domElement.style.visibility = "";
     this.followPrevXY = [x, y];
   }
@@ -1256,7 +1261,8 @@ export class SimScene {
   /** Re-frame on the robot where it stands (see simStage's attach). */
   frameRobot(): void {
     if (!this.spawned) return; // no real pose yet -- spawnAt still owes the first framing
-    this.frameFacing(this.robotRoot.position.x, this.robotRoot.position.y, this.robotRoot.rotation.z);
+    if (this.cameraMode === "top") this.flyToOverview();
+    else this.frameFacing(this.robotRoot.position.x, this.robotRoot.position.y, this.robotRoot.rotation.z);
   }
 
   private frameFacing(x: number, y: number, yaw: number): void {

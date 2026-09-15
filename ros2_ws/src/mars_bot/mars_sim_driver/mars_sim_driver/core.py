@@ -402,7 +402,7 @@ class VirtualMars:
         self.reset()
         release_freed_heap()
 
-    def reset(self, *, spawn: tuple[float, float, float] | None = None) -> None:
+    def reset(self, *, spawn: tuple[float, float, float] | None = None, populate: bool = True) -> None:
         self.world_epoch += 1
         mujoco.mj_resetData(self.model, self.data)
         spawn_x, spawn_y, spawn_yaw_deg = spawn if spawn is not None else self._spawn
@@ -419,6 +419,10 @@ class VirtualMars:
         self._cmd_sim_time = -math.inf
         self._hold = None
         self._still_since = None
+        for prop in self.props.props.values():
+            if populate and prop.initial_pose is not None:
+                x, y, yaw_deg = prop.initial_pose
+                self.props.drop_at(self.data, prop.name, x, y, math.radians(yaw_deg))
         mujoco.mj_forward(self.model, self.data)
 
     def close(self) -> None:
@@ -950,10 +954,11 @@ class VirtualMars:
         """Authoritative traffic state on the same sim clock as robot pose."""
         return self.traffic.state(self.world_epoch)
 
-    def drop_prop_at(self, name: str, x: float, y: float, yaw: float = 0.0) -> bool:
+    def drop_prop_at(self, name: str, x: float, y: float, yaw: float = 0.0, *, z: float | None = None) -> bool:
         """Release one prop above (x, y) and let physics settle it onto
-        whatever is below (floor, sofa, table). False when prop does not exist."""
-        if not self.props.drop_at(self.data, name, x, y, yaw):
+        whatever is below (floor, sofa, table). An explicit z selects a shelf.
+        False when prop does not exist."""
+        if not self.props.drop_at(self.data, name, x, y, yaw, z=z):
             return False
         mujoco.mj_forward(self.model, self.data)
         return True

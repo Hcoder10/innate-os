@@ -27,7 +27,7 @@ from export_nav_map import RESOLUTION, floor_slabs, slab_cells
 from mars_sim_driver.statics import Geom, Room, RoomRegistry
 
 REPO = Path(__file__).resolve().parents[2]
-PORCH = (-3.25, -3.3, -1.65, -2.4)  # sim/bundles/blaze/challenges/_zones.py
+PORCH = (-3.25, -3.3, -1.65, -2.4)  # Blaze porch bounds
 
 
 def test_only_level_collidable_slabs_at_floor_height_are_floor() -> None:

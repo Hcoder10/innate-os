@@ -4,10 +4,10 @@ from mars_sim_driver.props import Prop
 
 PROP = Prop(
     name="counter_cup_red",
-    label="?",
+    label="☕",
     title="Cup Red",
-    mesh="../objects/counter_cup_red.stl",
-    mesh_scale=0.6410,
+    mesh="../objects/counter_cup_red.obj",
+    viewer={"glb": "/models/counter/counter_cup_red.glb", "preNormalized": True},
     collision="cylinder",
     size=(0.0250, 0.0263),
     # (0.80, 0.12, 0.12): actually red. The original (0.698, 0.31, 0.19) is
@@ -17,6 +17,7 @@ PROP = Prop(
     # the answer key for a colour question must be the colour it is named.
     # NOTE: changed after the Aug 16 live run -- live scores predate this.
     rgba=(0.80, 0.12, 0.12, 1.0),
-    rest_z=0.0314,
+    initial_pose=(-0.62, 1.5, 0),
+    rest_z=0.0263,
     drop_z=0.299,
 )

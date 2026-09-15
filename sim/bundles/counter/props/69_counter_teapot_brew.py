@@ -4,12 +4,14 @@ from mars_sim_driver.props import Prop
 
 PROP = Prop(
     name="counter_teapot_brew",
-    label="?",
+    label="☕",
     title="Teapot Brew",
-    mesh="../objects/counter_teapot_brew.stl",
+    mesh="../objects/counter_teapot_brew.obj",
+    viewer={"glb": "/models/counter/counter_teapot_brew.glb", "preNormalized": True},
     collision="cylinder",
     size=(0.075, 0.055),
     rgba=(0.2902, 0.3137, 0.3373, 1.0),
+    initial_pose=(1.1, 1.44, 0),
     rest_z=0.055,
     drop_z=0.305,
 )

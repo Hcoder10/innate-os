@@ -5,12 +5,13 @@ from mars_sim_driver.props import Prop
 PROP = Prop(
     name="gallery_mug_h00",
     label="☕",
-    title="Mug h00",
-    mesh="../objects/gallery_mug_h00.stl",
-    mesh_scale=0.5882,
+    title="Red floor mug",
+    mesh="../objects/gallery_mug_h00.obj",
     collision="cylinder",
     size=(0.0250, 0.0279),
     rgba=(0.7882, 0.2275, 0.1882, 1.0),
     rest_z=0.0279,
     drop_z=0.0575,
+    initial_pose=(-3.0, 3.2, 0.0),
+    viewer={"glb": "/models/gallery/gallery_mug_h00.glb", "preNormalized": True},
 )

@@ -7,6 +7,7 @@ judged.
 from mars_sim_driver.challenges import Answered, Challenge, Drop, Goal, Near
 
 CHALLENGE = Challenge(
+    populate_world=True,
     id="gallery_count_ring",
     title="Count the cans",
     category=1,
@@ -17,8 +18,10 @@ CHALLENGE = Challenge(
     # to the far side. The walk is a fine anti-guess requirement; hiding it
     # in an unstated goal made a correct count score zero.
     brief=(
-        "Blue cans are placed all around this room. Go across and check the "
-        "far side of the room too, then tell me how many there are."
+        "Blue cans are placed all around this room. First, go within one "
+        "metre of the blue can straight ahead of your starting position. "
+        "Then look around the whole ring and tell me how many blue cans "
+        "there are in total. Count only the cans, not the red mugs."
     ),
     setup=[
         Drop("gallery_can_000", 0.0, -2.6),

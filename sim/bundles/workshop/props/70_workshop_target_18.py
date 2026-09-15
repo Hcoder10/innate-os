@@ -4,12 +4,14 @@ from mars_sim_driver.props import Prop
 
 PROP = Prop(
     name="workshop_target_18",
-    label="?",
-    title="Target 18",
-    mesh="../objects/workshop_target_18.stl",
+    label="🥫",
+    title="Paint can — 18 cm bench",
+    mesh="../objects/workshop_target_18.obj",
+    viewer={"glb": "/models/workshop/workshop_target_18.glb", "preNormalized": True},
     collision="cylinder",
     size=(0.033, 0.0575),
     rgba=(0.7882, 0.2275, 0.1882, 1.0),
+    initial_pose=(0, 2.3, 0),
     rest_z=0.0575,
     drop_z=0.2475,
 )

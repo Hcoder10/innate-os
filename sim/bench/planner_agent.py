@@ -72,7 +72,8 @@ class PlannerAgent:
     name = "oracle"
 
     def __init__(self, steps: list[tuple]):
-        self.steps = steps
+        self._authored_steps = list(steps)
+        self.steps = list(steps)
         self.i = 0
         self._post = None
         self.nav: NavMap | None = None
@@ -101,6 +102,67 @@ class PlannerAgent:
         # A real robot's nav map is the static world too; props are runtime
         # obstacles, not map features.
         self.nav = nav or NavMap.from_sim(mars)
+        self.steps = self._floor_placements(mars, challenge)
+
+    def _floor_placements(self, mars, challenge) -> list[tuple]:
+        """Reserve separate, navigable release spots inside floor goals.
+
+        A put is still teleport-assisted. It must nevertheless land beside
+        the robot, not on its chassis or on a previously delivered object.
+        """
+        from capabilities import _predicates
+        from mars_sim_driver.challenges import InCircle, InRect, WorldState
+
+        regions = [
+            p
+            for g in challenge.goals
+            for p in _predicates(g.predicate)
+            if isinstance(p, (InCircle, InRect)) and p.max_z is not None
+        ]
+        steps = list(self._authored_steps)
+        reserved = []
+        for i, step in enumerate(steps):
+            if step[0] != "put":
+                continue
+            _, name, x, y = step
+            prop = mars.props.props[name]
+            height = prop.rest_z
+            region = next(
+                (
+                    p
+                    for p in regions
+                    if p.target == name
+                    and p.update(WorldState(0, (0, 0, 0), {name: (x, y)}, heights={name: height}), [])
+                ),
+                None,
+            )
+            if region is None:
+                continue
+            radius = math.hypot(*prop.size[:2]) if prop.collision == "box" else prop.size[0]
+            offsets = [(0, 0)] + [
+                (r * math.cos(a), r * math.sin(a))
+                for r in (0.12, 0.20, 0.30)
+                for a in (0, math.pi / 2, math.pi, 3 * math.pi / 2)
+            ]
+            for dx, dy in offsets:
+                px, py = x + dx, y + dy
+                if not region.update(WorldState(0, (0, 0, 0), {name: (px, py)}, heights={name: height}), []):
+                    continue
+                if any(
+                    math.hypot(px - ox, py - oy) < radius + other_radius + 0.025 for ox, oy, other_radius in reserved
+                ):
+                    continue
+                route = self.nav.plan(mars.pose()[:2], (px, py))
+                if route is None or math.dist(route[-1], (px, py)) > 0.08:
+                    continue
+                steps[i] = ("put", name, px, py, height + 0.01)
+                if i and steps[i - 1][0] == "goto":
+                    steps[i - 1] = ("goto", px, py)
+                reserved.append((px, py, radius))
+                break
+            else:
+                self.failed_reason = f"no clear floor release point for {name}"
+        return steps
 
     def bind_events(self, post) -> None:
         """Channel for answers (see challenges.Answered). Goal-position
@@ -143,7 +205,10 @@ class PlannerAgent:
         op = step[0]
 
         if op == "goto":
-            self._leg(mars, t, step[1], step[2])
+            following = self.steps[self.i + 1] if self.i + 1 < len(self.steps) else ()
+            # Floor release needs room for the base and the object.
+            standoff = 0.28 if following and following[0] == "put" and len(following) == 5 else 0.0
+            self._leg(mars, t, step[1], step[2], stop_short=standoff)
         elif op == "near":
             p = mars.object_centers().get(step[1])
             if p is None:
@@ -159,7 +224,8 @@ class PlannerAgent:
             mars.set_cmd_vel(0.0, 0.0)
             self._advance()
         elif op == "put":
-            mars.drop_prop_at(step[1], step[2], step[3])
+            height = {"z": step[4]} if len(step) == 5 else {}
+            mars.drop_prop_at(step[1], step[2], step[3], **height)
             mars.set_cmd_vel(0.0, 0.0)
             self._advance()
         elif op == "put_near":

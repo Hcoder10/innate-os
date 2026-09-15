@@ -416,8 +416,8 @@ export class SimSession {
   }
 
   /** Start a challenge by id (resets the world and drops its props). */
-  startChallenge(id: string): void {
-    this.#controller?.send({ op: "start_challenge", id });
+  startChallenge(id: string): boolean {
+    return this.#controller?.send({ op: "start_challenge", id }) ?? false;
   }
 
   /** Abort the active challenge (or dismiss a finished one). */

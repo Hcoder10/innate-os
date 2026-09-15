@@ -99,6 +99,9 @@ class Prop:
     # MuJoCo's mocap pose arrays. This is for stationary scenery such as an NPC,
     # not for manipulation targets that need gravity and contact response.
     kinematic: bool = field(default=False, kw_only=True)
+    # Optional exhibit placement (x, y, yaw degrees), restored on world reset.
+    # Unset props retain the usual off-map parking behavior. Height is drop_z.
+    initial_pose: tuple[float, float, float] | None = field(default=None, kw_only=True)
     # Where the robot puts this prop when asked to place it in front of itself:
     # robot-frame metres. The manipulation props' values place them on an arc
     # the arm can reach top-down -- do NOT round them off.
@@ -124,6 +127,10 @@ class Prop:
             self.drop_z = self.rest_z
         if self.collision == "open_box" and len(self.size) != 3:
             raise ValueError(f"{self.name}: an open_box needs three half-extents, got {self.size}")
+        if self.initial_pose is not None and (
+            len(self.initial_pose) != 3 or not all(math.isfinite(v) for v in self.initial_pose)
+        ):
+            raise ValueError(f"{self.name}: initial_pose must contain finite x, y and yaw degrees")
 
     # -- resolved asset paths --
 
@@ -374,12 +381,16 @@ class PropRegistry:
             data.qvel[dadr : dadr + 6] = 0.0
         self.out.add(name)
 
-    def drop_at(self, data, name: str, x: float, y: float, yaw: float = 0.0) -> bool:
+    def drop_at(self, data, name: str, x: float, y: float, yaw: float = 0.0, *, z: float | None = None) -> bool:
         """Release a dynamic prop at drop_z, or snap a kinematic one there,
-        yawed about +z. False when the prop does not exist."""
+        yawed about +z. An explicit z selects a shelf without changing the
+        prop's default release height. False when the prop does not exist."""
         if name not in self._addr:
             return False
-        self._set_pose(data, name, x, y, self.props[name].drop_z, yaw)
+        height = self.props[name].drop_z if z is None else z
+        if not math.isfinite(height):
+            raise ValueError("prop release height must be finite")
+        self._set_pose(data, name, x, y, height, yaw)
         return True
 
     def place_at_robot(self, data, name: str, pose: tuple[float, float, float]) -> bool:

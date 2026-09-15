@@ -4,12 +4,14 @@ from mars_sim_driver.props import Prop
 
 PROP = Prop(
     name="workshop_gauge_040",
-    label="?",
-    title="Gauge 040",
-    mesh="../objects/workshop_gauge_040.stl",
+    label="🥫",
+    title="Small oil can",
+    mesh="../objects/workshop_gauge_040.obj",
+    viewer={"glb": "/models/workshop/workshop_gauge_040.glb", "preNormalized": True},
     collision="cylinder",
     size=(0.02, 0.0575),
     rgba=(0.1725, 0.4157, 0.7765, 1.0),
+    initial_pose=(-3.4, -2.4, 0),
     rest_z=0.0575,
     drop_z=0.0675,
 )

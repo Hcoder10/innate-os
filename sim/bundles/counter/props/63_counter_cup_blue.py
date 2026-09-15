@@ -4,13 +4,14 @@ from mars_sim_driver.props import Prop
 
 PROP = Prop(
     name="counter_cup_blue",
-    label="?",
+    label="☕",
     title="Cup Blue",
-    mesh="../objects/counter_cup_blue.stl",
-    mesh_scale=0.6410,
+    mesh="../objects/counter_cup_blue.obj",
+    viewer={"glb": "/models/counter/counter_cup_blue.glb", "preNormalized": True},
     collision="cylinder",
     size=(0.0250, 0.0263),
     rgba=(0.1882, 0.3608, 0.6588, 1.0),
-    rest_z=0.0314,
+    initial_pose=(0.02, 1.5, 0),
+    rest_z=0.0263,
     drop_z=0.299,
 )

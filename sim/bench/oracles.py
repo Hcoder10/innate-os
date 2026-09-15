@@ -28,14 +28,11 @@ navigable geometry, nothing about manipulation.
 ORACLES: dict[str, list[tuple]] = {
     # --- gallery ---
     "gallery_ring_tour": [
-        # North, east, south, west on a RIGHT-HANDED compass with north behind
-        # the spawn: east is at -x. The previous route toured the mirrored
-        # frame the goals used to encode and failed its own gate the moment
-        # the goals were corrected -- which is the gate doing its job.
-        ("goto", 0.0, -2.6),
-        ("goto", -2.6, 0.0),
+        # Start straight ahead (+y), then tour the four wall-aligned cans.
         ("goto", 0.0, 2.6),
         ("goto", 2.6, 0.0),
+        ("goto", 0.0, -2.6),
+        ("goto", -2.6, 0.0),
     ],
     # Plinth face is at y=3.01 and the base is 0.094 deep, so 2.85 leaves ~7 cm
     # while sitting 0.35 m from the mug -- inside 0.45 even after arrival slop.

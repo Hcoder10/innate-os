@@ -4,9 +4,10 @@ Authored in Roblox Studio and exported as primitives -- see that tool's header
 for the axis conversion. 83 collidable geoms plus 47 decor geoms
 (floor seams and skirting) that are drawn but never collided with.
 
-Do not hand-edit: rebuild the map and re-run the exporter.
+Structural geometry is exported; the finish layer below is hand-authored.
 """
 
+from mars_sim_driver.scene_details import counter as finish_room
 from mars_sim_driver.statics import Geom, Room
 
 ROOM = Room(
@@ -146,3 +147,7 @@ ROOM = Room(
     Geom("box", (0.06, 1.8, 0.7), (-2.3, -0.0, 0.7), quat=(1.0, 0.0, 0.0, 0.0), rgba=(0.58, 0.58, 0.58, 1.0), name="wallw_1"),
     ],
 )
+
+# Shared camera-visible finishes; supports and door clearances remain above.
+
+finish_room(ROOM)

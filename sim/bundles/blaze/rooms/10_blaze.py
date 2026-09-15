@@ -4,9 +4,10 @@ Authored in Roblox Studio and exported as primitives -- see that tool's header
 for the axis conversion. 50 collidable geoms plus 22 decor geoms
 (floor seams and skirting) that are drawn but never collided with.
 
-Do not hand-edit: rebuild the map and re-run the exporter.
+Structural geometry is exported; the finish layer below is hand-authored.
 """
 
+from mars_sim_driver.scene_details import blaze as finish_room
 from mars_sim_driver.statics import Geom, Room
 
 ROOM = Room(
@@ -88,3 +89,17 @@ ROOM = Room(
     Geom("box", (0.025, 0.16, 0.13), (-3.0, -0.8, 0.13), quat=(0.707107, 0.0, 0.0, 0.707107), rgba=(0.502, 0.3569, 0.2118, 1.0), name="upright"),
     ],
 )
+
+# A solid bed makes the bedroom identifiable from inside the room. Its
+# footprint stays clear of the door and the photo table's approach.
+ROOM.geoms.extend([
+    Geom("box", (0.36, 0.40, 0.12), (1.08, -1.78, 0.12), rgba=(0.42, 0.25, 0.12, 1), name="bed_base"),
+    Geom("box", (0.35, 0.39, 0.04), (1.08, -1.78, 0.28), rgba=(0.88, 0.84, 0.73, 1), name="bed_mattress"),
+    Geom("box", (0.35, 0.24, 0.006), (1.08, -1.62, 0.326), rgba=(0.57, 0.37, 0.13, 1), name="bed_blanket", collide=False),
+    Geom("box", (0.24, 0.08, 0.02), (1.08, -2.04, 0.34), rgba=(0.93, 0.91, 0.84, 1), name="bed_pillow", collide=False),
+    Geom("box", (0.37, 0.02, 0.23), (1.08, -2.20, 0.23), rgba=(0.42, 0.25, 0.12, 1), name="bed_headboard"),
+])
+
+# Shared camera-visible finishes; supports and door clearances remain above.
+
+finish_room(ROOM)

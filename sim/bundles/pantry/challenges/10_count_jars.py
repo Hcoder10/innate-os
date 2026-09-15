@@ -1,62 +1,28 @@
-"""CATEGORY 1 -- counting that cannot be done from one place.
+"""Stock recognition and sorting with jars on the left shelves and boxes on the other shelves.
 
-Five jars. Four are in the amber bay where jars belong; the fifth is standing in
-the cobalt bay among the cartons. The question is how many jars are in the room,
-not how many are in the jar bay.
+Movable tasks use floor staging mats; counts are owned by this exact setup."""
 
-WHAT MAKES THIS HARDER THAN counter_read_the_pass, and why both exist. That one
-puts everything in one frame and asks whether the agent can separate cups from a
-teapot -- a recognition problem with no search in it. This one cannot be answered
-from any single viewpoint: the bays are on different walls, and a 70-degree
-camera in the aisle holds one bay at a time. An agent that answers from where it
-is standing gets four, which is the wrong answer arrived at competently, and is
-exactly the failure worth separating from not looking at all.
-
-The first goal puts the robot in front of the jar bay before any answer counts,
-for the same reason every counting challenge here does: an answer given from the
-doorway is a guess, however right it turns out to be.
-
-Four is the SEDUCTIVE wrong answer and five is correct. That gap is the
-measurement. An agent that reports four has looked at one bay and stopped; an
-agent that reports five has looked at two and understood that the question was
-about jars rather than about a shelf.
-"""
-
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-from _bays import (  # noqa: E402
-    CARTON_OATS,
-    CARTON_RICE,
-    CARTON_TEA,
-    JAR_CURD,
-    JAR_HONEY,
-    JAR_JAM,
-    JAR_PICK,
-    JAR_STRAY,
-)
-from mars_sim_driver.challenges import Answered, Challenge, Drop, Goal, InCircle  # noqa: E402
+from mars_sim_driver.challenges import Answered, Challenge, Drop, Goal, InCircle
 
 CHALLENGE = Challenge(
     id="pantry_count_jars",
     title="Count the jars",
-    category=1,
-    brief="How many jars are there in this room? Have a look around before you answer.",
+    brief="Go to the jar shelves on the left wall, then look along them and tell me how many jars are in the room.",
     setup=[
-        Drop("pantry_jar_honey", *JAR_HONEY),
-        Drop("pantry_jar_jam", *JAR_JAM),
-        Drop("pantry_jar_pick", *JAR_PICK),
-        Drop("pantry_jar_curd", *JAR_CURD),
-        Drop("pantry_jar_stray", *JAR_STRAY),
-        Drop("pantry_carton_oats", *CARTON_OATS),
-        Drop("pantry_carton_rice", *CARTON_RICE),
-        Drop("pantry_carton_tea", *CARTON_TEA),
+        Drop(name="pantry_jar_honey", x=-2.24, y=0.5, z=0.316),
+        Drop(name="pantry_jar_jam", x=-2.24, y=0.25, z=0.316),
+        Drop(name="pantry_jar_pick", x=-2.24, y=0.0, z=0.316),
+        Drop(name="pantry_jar_curd", x=-2.24, y=-0.25, z=0.316),
+        Drop(name="pantry_jar_stray", x=-2.24, y=-0.5, z=0.2934),
+        Drop(name="pantry_carton_oats", x=-0.4, y=1.54, z=0.172),
+        Drop(name="pantry_carton_rice", x=0.4, y=1.54, z=0.302),
+        Drop(name="pantry_carton_tea", x=2.24, y=0.4, yaw_deg=-90, z=0.302),
+        Drop(name="pantry_carton_new", x=2.24, y=-0.4, yaw_deg=-90, z=0.172),
     ],
     goals=[
-        Goal("Look at the jar bay", InCircle("robot", -1.65, 0.10, 0.85)),
-        Goal("Report the count", Answered(["5", "five"])),
+        Goal(label="Look at the jar bay", predicate=InCircle(target="robot", x=-1.65, y=0.1, radius_m=0.85)),
+        Goal(label="Report the count", predicate=Answered(accept=["5", "five"])),
     ],
     time_limit_s=300,
+    category=1,
 )

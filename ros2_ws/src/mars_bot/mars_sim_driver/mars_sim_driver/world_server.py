@@ -241,8 +241,9 @@ class WorldServer:
         if op == "drop_prop_at":  # user picked the spot: release + settle
             name, x, y = str(cmd["name"]), float(cmd["x"]), float(cmd["y"])
             yaw = float(cmd.get("yaw", 0.0))
+            z = float(cmd["z"]) if cmd.get("z") is not None else None
             with self.lock:
-                ok = self.sim.drop_prop_at(name, x, y, yaw)
+                ok = self.sim.drop_prop_at(name, x, y, yaw, z=z)
         elif op == "place_prop_at_robot":  # at rest, at the prop's own reach offset
             name = str(cmd["name"])
             with self.lock:

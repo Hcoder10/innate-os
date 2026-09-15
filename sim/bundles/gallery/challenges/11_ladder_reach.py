@@ -5,13 +5,17 @@ that assumption is pushed on this map.
 from mars_sim_driver.challenges import Challenge, Drop, Goal, Hold, Near
 
 CHALLENGE = Challenge(
+    populate_world=True,
     id="gallery_ladder_reach",
-    title="Top of the ladder",
+    title="Highest exhibit",
     category=1,
     # TWO mugs, because the setup drops two. The brief said five, which is a
     # claim about a world that does not exist -- an agent asked for the
     # highest of five sees two and has to decide which of us is wrong.
-    brief="Two mugs sit at different heights. Go to the highest one and stay in front of it.",
+    brief=(
+        "Two red mugs sit at different heights. Find the one on the tallest "
+        "plinth, approach within half a metre, and stay there for two seconds."
+    ),
     setup=[Drop("gallery_mug_h50", 3.0, 3.2), Drop("gallery_mug_h00", -3.0, 3.2)],
     # 0.6, not 0.45: every other stand-near goal in the suite uses 0.55-0.75,
     # and 0.45 to a mug atop a plinth means the base is nearly touching it. A
