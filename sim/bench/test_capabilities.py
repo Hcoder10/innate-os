@@ -17,7 +17,7 @@ if __name__ == "__main__":  # run directly: let pytest collect this file (confte
 
 from pathlib import Path
 
-from capabilities import missing_capabilities, needs_manipulation, needs_move, runtime_env
+from capabilities import VISION_BACKEND_KEYS, missing_capabilities, needs_manipulation, needs_move, runtime_env
 from mars_sim_driver.challenges import (
     Challenge,
     Drop,
@@ -187,12 +187,12 @@ def test_runtime_env_sees_every_grasp_credential_env_declares() -> None:
         [
             line.split("=", 1)[0]
             for line in env_path.read_text().splitlines()
-            if line.split("=", 1)[0] in ("GEMINI_BASE_URL", "INNATE_SERVICE_KEY") and line.split("=", 1)[1].strip()
+            if line.split("=", 1)[0] in VISION_BACKEND_KEYS and line.split("=", 1)[1].strip()
         ]
         if env_path.exists()
         else []
     )
-    assert sorted(k for k in ("GEMINI_BASE_URL", "INNATE_SERVICE_KEY") if resolved.get(k)) == sorted(declared)
+    assert sorted(k for k in VISION_BACKEND_KEYS if resolved.get(k)) == sorted(declared)
 
 
 def test_an_explicit_empty_env_still_reports_the_capability_missing() -> None:
@@ -201,3 +201,4 @@ def test_an_explicit_empty_env_still_reports_the_capability_missing() -> None:
 
 def test_a_configured_backend_reports_nothing_missing() -> None:
     assert missing_capabilities({"GEMINI_BASE_URL": "http://x"}) == set()
+    assert missing_capabilities({"GEMINI_API_KEY": "k"}) == set()

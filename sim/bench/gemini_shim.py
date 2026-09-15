@@ -2,15 +2,15 @@
 """Stand in for the Innate proxy so grasping works without a service key.
 
 WHY. `pick_any_object` finds the object and verifies the grasp through
-`innate.gemini.make_client()`, which returns a ProxyClient when
-INNATE_SERVICE_KEY is set, a `_DirectClient(GEMINI_BASE_URL)` when that is set
-instead, and None when neither is -- and `execute()` fails on the first line
-when it is None. That blocks the 22 of 45 challenges that need a pick, 13 of
+`innate.gemini.make_client()`, which returns the proxy when INNATE_SERVICE_KEY
+is set, Google direct when GEMINI_API_KEY is, a keyless client on
+GEMINI_BASE_URL when that is set instead, and None when none is -- and
+`execute()` fails on the first line when it is None. That blocks the 22 of 45 challenges that need a pick, 13 of
 the 17 in category 2 (see capabilities.py). Innate built the GEMINI_BASE_URL seam for exactly this case; it just needs
 something at the other end.
 
-WHY A SHIM AND NOT THE URL ON ITS OWN. `_DirectClient` sends no auth header and
-appends a fixed `/v1/chat/completions`. Google's OpenAI-compatible surface
+WHY A SHIM AND NOT THE URL ON ITS OWN. The keyless client sends no auth header
+and appends a fixed `/v1/chat/completions`. Google's OpenAI-compatible surface
 wants `Authorization: Bearer` and lives at `/v1beta/openai/chat/completions`.
 Both disagree, so GEMINI_BASE_URL cannot point straight at Google.
 

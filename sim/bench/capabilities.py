@@ -57,6 +57,8 @@ from pathlib import Path
 _PLACEMENT_PREDICATES = ("InCircle", "InRect", "Near")
 
 MANIPULATION = "pick_any_object"
+# Any one of these gives innate.gemini.make_client() a grasp-vision backend.
+VISION_BACKEND_KEYS = ("INNATE_SERVICE_KEY", "GEMINI_API_KEY", "GEMINI_BASE_URL")
 
 
 def _predicates(node) -> list:
@@ -211,22 +213,18 @@ def missing_capabilities(env: dict[str, str] | None = None) -> set[str]:
     """Capabilities this deployment cannot perform, from the environment.
 
     Grasping needs a VISION backend, not specifically an Innate key. The chain
-    is `pick_any_object._proxy` -> `innate.gemini.make_client()`, which returns
-    a ProxyClient when `INNATE_SERVICE_KEY` is set (proxy_url already defaults
-    to Innate's), OTHERWISE a `_DirectClient` when `GEMINI_BASE_URL` is set,
-    and only `None` when neither is. `execute()` fails on `None`.
+    is `pick_any_object._gemini` -> `innate.gemini.make_client()`, which returns
+    the proxy when `INNATE_SERVICE_KEY` is set (proxy_url already defaults to
+    Innate's), else a direct Google client on `GEMINI_API_KEY`, else a keyless
+    client on `GEMINI_BASE_URL`, and only `None` when none is. `execute()`
+    fails on `None`.
 
-    Innate's own docstring on `_DirectClient` says GEMINI_BASE_URL exists for
-    exactly this case: "a dev setup with no service key gets a working brain
-    and skills that still fail with 'Innate proxy not configured'.
-    GEMINI_BASE_URL now covers both."
-
-    Gating on the key alone would block twenty-two challenges that a base URL
-    would have run.
+    Gating on the Innate key alone would block twenty-two challenges that a
+    key or base URL would have run.
     """
     env = env if env is not None else runtime_env()
     missing = set()
-    if not (env.get("INNATE_SERVICE_KEY", "").strip() or env.get("GEMINI_BASE_URL", "").strip()):
+    if not any(env.get(key, "").strip() for key in VISION_BACKEND_KEYS):
         missing.add(MANIPULATION)
     return missing
 
@@ -257,7 +255,7 @@ def blocked_reason(challenge, env: dict[str, str] | None = None) -> str | None:
     if MANIPULATION in missing_capabilities(env) and needs_manipulation(challenge):
         return (
             "needs pick_any_object, which needs a grasp-vision backend: "
-            "INNATE_SERVICE_KEY, or GEMINI_BASE_URL on an OpenAI-compatible endpoint"
+            "INNATE_SERVICE_KEY, GEMINI_API_KEY, or GEMINI_BASE_URL on an OpenAI-compatible endpoint"
         )
     too_wide = _ungraspable().get(getattr(challenge, "id", ""))
     if too_wide:

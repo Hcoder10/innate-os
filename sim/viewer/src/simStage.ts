@@ -141,7 +141,7 @@ export function createSimStage(
   onRespawn: () => void,
 ): {
   audioEl: null;
-  setSafeInsets: (insets: { right?: number }) => void;
+  setSafeInsets: (insets: { right?: number; bottom?: number; top?: number; left?: number }) => void;
   attach: (parent: HTMLElement) => void;
   detach: () => void;
   destroy: () => void;

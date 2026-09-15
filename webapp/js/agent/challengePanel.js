@@ -241,19 +241,20 @@ export function createChallengePanel(root, session, actions) {
   function renderList(list) {
     const wrap = document.createElement("div");
     wrap.className = "challenge-list";
-    if (list.length) {
+    const listed = list.filter((/** @type {any} */ c) => c.listed !== false);
+    if (listed.length) {
       const hint = document.createElement("p");
       hint.className = "challenge-preview-hint";
       hint.textContent = coarsePointer.matches ? "Select a challenge to see its goals." : "Hover to preview the prompt · Select for details";
       wrap.append(hint);
     }
-    if (!list.length) {
+    if (!listed.length) {
       const empty = document.createElement("div");
       empty.className = "challenge-empty";
       empty.textContent = "No challenges in this environment yet.";
       wrap.append(empty);
     }
-    for (const c of list) {
+    for (const c of listed) {
       const item = document.createElement("button");
       item.type = "button";
       item.className = "challenge-item";

@@ -20,9 +20,10 @@
 #   pick_any_object       Needs a VISION backend to find the object and verify
 #                         the grasp -- not specifically an Innate key, despite
 #                         what its error message says. innate.gemini.make_client
-#                         returns a ProxyClient when INNATE_SERVICE_KEY is set,
-#                         else a _DirectClient when GEMINI_BASE_URL is set, and
-#                         only None when NEITHER is; execute() fails on None.
+#                         returns the proxy when INNATE_SERVICE_KEY is set, else
+#                         Google direct on GEMINI_API_KEY, else a keyless client
+#                         on GEMINI_BASE_URL, and None when NONE is; execute()
+#                         fails on None.
 #                         19 of the 38 challenges need a pick, 12 of the 14 in
 #                         category 2, so with neither set live_runner reports
 #                         those BLOCKED rather than scoring them 0.

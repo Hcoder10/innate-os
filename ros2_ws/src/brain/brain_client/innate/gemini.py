@@ -1,21 +1,28 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2026 Innate Inc
-"""Gemini vision via Innate proxy (/v1/chat/completions). Service key needs
-"gemini" access or the proxy returns 403. Import as ``from innate import gemini``.
+"""Gemini vision for skills, through the Innate proxy or directly with
+GEMINI_API_KEY — the same precedence as the brain. Both routes take one
+OpenAI-compatible chat-completions body; a proxy service key needs "gemini"
+access or the proxy returns 403. Import as ``from innate import gemini``.
 """
 
 import json
 import os
 import time
+from collections.abc import Callable
+
+import httpx
 
 from brain_client.skills.types import cancellable_sleep
 from innate_proxy import ProxyClient
 
 SERVICE = "gemini"
 ENDPOINT = "/v1/chat/completions"
+DIRECT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 MODEL = "gemini-3.5-flash"
 
+Client = Callable[[dict], dict]
 
 # Opt-in: no path, no writes. The benchmark sets GEMINI_USAGE_LOG so it can
 # report cost; a normal robot writes nothing and keeps no record.
@@ -51,47 +58,49 @@ def _meter_vision(model: str, data: dict) -> None:
         pass
 
 
-class _DirectClient:
-    """Same request_stream shape as ProxyClient, against a plain base URL.
+def make_client() -> Client | None:
+    """A chat-completions caller, or None when neither the proxy, GEMINI_API_KEY nor GEMINI_BASE_URL is configured.
 
-    Skills reach vision through the Innate proxy, while the brain reaches its
-    model through brain/transport.py. Those are two independent seams, so a dev
-    setup with no service key gets a working brain and skills that still fail
-    with "Innate proxy not configured". GEMINI_BASE_URL now covers both.
+    GEMINI_BASE_URL is the keyless seam the benchmark uses: the same variable the
+    brain's transport honours, so one setting points both at a local stand-in.
     """
-
-    def __init__(self, base_url: str):
-        self.base_url = base_url.rstrip("/")
-        self._client = None
-
-    def is_available(self) -> bool:
-        return True
-
-    def request_stream(self, _service, endpoint, method="POST", **kwargs):
-        # ONE client for the life of this object. Building one per call leaked
-        # a connection pool every time -- and a grasp-heavy episode makes three
-        # vision calls per attempt. This object is long-lived (make_client
-        # returns it and the skill holds it), so a single client is the right
-        # shape as well as the cheap one.
-        import httpx
-
-        if self._client is None:
-            self._client = httpx.Client(timeout=180.0)
-        return self._client.stream(method, self.base_url + endpoint, **kwargs)
-
-    def close(self) -> None:
-        if self._client is not None:
-            self._client.close()
-            self._client = None
+    proxy = ProxyClient()
+    if proxy.is_available():
+        return _proxy_client(proxy)
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if api_key:
+        return _direct_client(api_key)
+    base_url = os.environ.get("GEMINI_BASE_URL", "").strip()
+    return _base_url_client(base_url) if base_url else None
 
 
-def make_client():
-    """ProxyClient, or a direct client when GEMINI_BASE_URL is set, else None."""
-    client = ProxyClient()
-    if client.is_available():
-        return client
-    base = os.environ.get("GEMINI_BASE_URL", "").strip()
-    return _DirectClient(base) if base else None
+def _proxy_client(proxy: ProxyClient) -> Client:
+    def complete(body: dict) -> dict:
+        with proxy.request_stream(SERVICE, ENDPOINT, method="POST", json=body) as resp:
+            resp.raise_for_status()
+            return json.loads(resp.read())
+
+    return complete
+
+
+def _direct_client(api_key: str) -> Client:
+    def complete(body: dict) -> dict:
+        resp = httpx.post(DIRECT_URL, json=body, headers={"Authorization": f"Bearer {api_key}"}, timeout=60.0)
+        resp.raise_for_status()
+        return resp.json()
+
+    return complete
+
+
+def _base_url_client(base_url: str) -> Client:
+    url = base_url.rstrip("/") + ENDPOINT
+
+    def complete(body: dict) -> dict:
+        resp = httpx.post(url, json=body, timeout=180.0)
+        resp.raise_for_status()
+        return resp.json()
+
+    return complete
 
 
 def ask_image(client, images_b64, question, logger=None, retries=3):
@@ -114,14 +123,7 @@ def ask_image(client, images_b64, question, logger=None, retries=3):
     for attempt in range(retries):
         cancellable_sleep(0)
         try:
-            with client.request_stream(
-                SERVICE,
-                ENDPOINT,
-                method="POST",
-                json=body,
-            ) as resp:
-                resp.raise_for_status()
-                data = json.loads(resp.read())
+            data = client(body)
             _meter_vision(MODEL, data)
             return data["choices"][0]["message"]["content"] or ""
         except Exception as e:  # noqa: BLE001
