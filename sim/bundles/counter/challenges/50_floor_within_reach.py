@@ -2,7 +2,7 @@
 
 This layout supersedes the shelf-pick benchmark; historical scores are not comparable."""
 
-from mars_sim_driver.challenges import Challenge, Drop, Goal, Hold, InCircle, Said, SkillDone
+from mars_sim_driver.challenges import Challenge, Drop, Goal, Hold, InCircle, SkillDone
 
 CHALLENGE = Challenge(
     id="counter_floor_within_reach",
@@ -18,16 +18,9 @@ CHALLENGE = Challenge(
                 seconds=0.75,
             ),
         ),
-        Goal(
-            label="Never claimed it was out of reach",
-            predicate=Said(
-                patterns=[
-                    "can'?t reach|cannot reach|can not reach|unable to reach",
-                    "out of (my )?reach|too high|beyond my reach",
-                ],
-                negate=True,
-            ),
-        ),
+        # No "never claimed it was out of reach" goal: the pick and the
+        # delivery show the robot did not refuse, and the negated patterns
+        # only failed harmless narration ("it's not too high").
     ],
     time_limit_s=420,
     category=1,

@@ -2,7 +2,7 @@
 
 Movable tasks use floor staging mats; counts are owned by this exact setup."""
 
-from mars_sim_driver.challenges import Answered, Challenge, Drop, Goal, InCircle
+from mars_sim_driver.challenges import Answered, Challenge, Drop, Goal, InRect
 
 CHALLENGE = Challenge(
     id="pantry_count_jars",
@@ -20,8 +20,16 @@ CHALLENGE = Challenge(
         Drop(name="pantry_carton_new", x=2.24, y=-0.4, yaw_deg=-90, z=0.172),
     ],
     goals=[
-        Goal(label="Look at the jar bay", predicate=InCircle(target="robot", x=-1.65, y=0.1, radius_m=0.85)),
-        Goal(label="Report the count", predicate=Answered(accept=["5", "five"])),
+        # The whole front of the jar shelves, not a 0.85 m circle on their
+        # middle: a robot at the south end was at the shelves and outside it.
+        # One phase: a count spoken before arriving was discarded, and the
+        # brain is told never to repeat itself.
+        Goal(
+            label="Look at the jar bay",
+            predicate=InRect(target="robot", x0=-2.1, y0=-1.2, x1=-0.9, y1=1.3),
+            parallel_group="count",
+        ),
+        Goal(label="Report the count", predicate=Answered(accept=["5", "five"]), parallel_group="count"),
     ],
     time_limit_s=300,
     category=1,

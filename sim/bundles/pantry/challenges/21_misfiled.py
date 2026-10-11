@@ -2,7 +2,7 @@
 
 Movable tasks use floor staging mats; counts are owned by this exact setup."""
 
-from mars_sim_driver.challenges import Answered, Challenge, Drop, Goal, Hold, InCircle
+from mars_sim_driver.challenges import Challenge, Drop, Goal, Hold, InCircle, Said
 
 CHALLENGE = Challenge(
     id="pantry_misfiled",
@@ -17,20 +17,20 @@ CHALLENGE = Challenge(
         Drop(name="pantry_jar_jam", x=-2.24, y=0.25),
     ],
     goals=[
+        # An identification, not the word: the accept list held the bare
+        # "jar", so "On my way to the jar shelves" -- or the brief read back
+        # -- passed from t=0. The jar shelves and mats are not the answer.
         Goal(
             label="Say what is misfiled",
-            predicate=Answered(
-                accept=[
-                    "jar",
-                    "a jar",
-                    "the jar",
-                    "jar of jam",
-                    "the jam jar",
-                    "red jar",
-                    "the red jar",
-                    "the red one",
-                    "jam",
-                ]
+            predicate=Said(
+                patterns=[
+                    r"(\bis|'s|\bsee|\bfound|\bspotted)"
+                    r" (a|an|the|one)?\s?([\w-]+ ){0,3}jar\b(?!s| ?(shel|sort|bay|mat))",
+                    r"\bjars? of\b",
+                    r"\b(red|jam|stray|misplaced|misfiled|small) jar\b(?! ?(shel|sort|bay|mat))",
+                    r"\bjam\b",
+                ],
+                oracle_line="It's a red jar of jam.",
             ),
         ),
         Goal(

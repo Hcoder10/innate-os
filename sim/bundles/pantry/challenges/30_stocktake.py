@@ -7,7 +7,7 @@ from mars_sim_driver.challenges import AllOf, Answered, Before, Challenge, Cue, 
 CHALLENGE = Challenge(
     id="pantry_stocktake",
     title="Stocktake",
-    brief="Full stocktake, in this order. Count all the jars, including any on the floor, and tell me how many. Then count only the cartons on the shelves and report that count. Move the delivery carton from the floor by the bench to the blue box sorting mat. Move the jar left on the floor by the wrong bay to the amber jar sorting mat. Finally, return to the green starting pad by the door.",
+    brief="Full stocktake, in this order. Count all the jars, including any on the floor, and tell me the total. Then count only the cartons on the shelves and report that count. Move the delivery carton from the floor by the bench to the blue box sorting mat. Move the jar left on the floor by the wrong bay to the amber jar sorting mat. Finally, return to the green starting pad by the door.",
     setup=[
         Drop(name="pantry_jar_honey", x=-2.24, y=0.8),
         Drop(name="pantry_jar_jam", x=-2.24, y=0.25),

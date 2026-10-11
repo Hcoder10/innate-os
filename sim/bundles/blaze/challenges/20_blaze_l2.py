@@ -54,7 +54,7 @@ CHALLENGE = Challenge(
     ),
     fail_reason="cut off by the fire",
     script=[
-        Cue(text="Kitchen first if you're getting the medicine at all.", after_s=1.0),
+        Cue(text="Kitchen first -- the medicine comes out before the phone.", after_s=1.0),
         Cue(text="Kitchen's got under two minutes in it.", after_s=50.0),
         Cue(text="You've got about a minute in that kitchen.", after_s=90.0),
         Cue(text="Kitchen's gone.", after_s=148.0),

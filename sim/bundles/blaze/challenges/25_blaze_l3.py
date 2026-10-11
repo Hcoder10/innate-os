@@ -50,7 +50,7 @@ CHALLENGE = Challenge(
     fail_if=AnyOf(preds=[After(seconds=330.0, inner=InRect(target="robot", x0=-3.2, y0=0.7, x1=-0.35, y1=2.3))]),
     fail_reason="cut off by the fire",
     script=[
-        Cue(text="Both of them are in the kitchen. You won't get long in there.", after_s=1.0),
+        Cue(text="Both of them are in the kitchen. Medicine first, and don't hang about.", after_s=1.0),
         Cue(text="Kitchen's about to go -- get out of there NOW.", after_s=285.0),
     ],
     category=3,

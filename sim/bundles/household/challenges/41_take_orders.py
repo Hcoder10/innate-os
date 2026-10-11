@@ -31,8 +31,8 @@ CHALLENGE = Challenge(
     title="Check on the house",
     category=3,
     brief=(
-        "Someone has fallen in the living room. Go and check on them, then check the kitchen "
-        "where the dog is, and finally the bedroom."
+        "Someone has fallen in the living room. Go and check on them, then go to the dog in the kitchen, "
+        "and finally check the bedroom."
     ),
     setup=[
         # (-2.0, 1.2) at yaw 0: the WHOLE body inside the living room (the

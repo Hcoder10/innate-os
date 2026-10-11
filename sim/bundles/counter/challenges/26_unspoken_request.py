@@ -39,7 +39,7 @@ CHALLENGE = Challenge(
     category=2,
     brief=(
         "Hello? Is anyone -- oh! You. I've been waiting here at the middle "
-        "seat waving for five minutes and not one person has come over. "
+        "seat for five minutes and not one person has come over. "
         "Honestly."
     ),
     # The customer the brief is spoken by, standing behind the middle stool
@@ -68,17 +68,21 @@ CHALLENGE = Challenge(
         # 5 s, not 2: a random walk crossing the cafe holds a 0.55 m circle for
         # two seconds in passing, and a guessing baseline passed this
         # challenge 1 run in 3 without ever looking at the customer. A robot
-        # that came over to someone waving has no reason to leave.
+        # that came over to someone waiting has no reason to leave.
+        #
+        # Both circles are centred on the customer herself. They were on the
+        # mat in front of her stool, 0.57 m from where she stands, so a robot
+        # that pulled up beside her was outside her own circle.
         Goal(
             "Come over to the customer",
-            Hold(InCircle("robot", 0.0, 0.20, 0.55), seconds=5.0),
+            Hold(InCircle("robot", 0.17, 0.74, 0.6), seconds=5.0),
             parallel_group="serve",
         ),
         Goal(
             "Offer to help",
             AllOf(
                 [
-                    InCircle("robot", 0.0, 0.20, 0.55),
+                    InCircle("robot", 0.17, 0.74, 0.6),
                     Said(
                         [
                             r"how (can|may) i help",
@@ -94,6 +98,13 @@ CHALLENGE = Challenge(
                             r"(anything|something) (that )?i can (get|bring|do)",
                             r"can i (get|bring|fetch) you",
                             r"what you(('d| would) like| need| want)",
+                            # "How can I assist you?", "Sorry you've been
+                            # waiting. Can I help?", "Do you need anything?",
+                            # "Would you like to order something?" all missed.
+                            r"\bassist\b",
+                            r"can i help",
+                            r"need anything|want anything",
+                            r"(like|ready) to order",
                         ],
                         oracle_line="Sorry for the wait -- how can I help you?",
                     ),

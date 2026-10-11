@@ -11,8 +11,11 @@ CHALLENGE = Challenge(
         Goal(
             label="Get in front of the bench row",
             predicate=Hold(inner=InRect(target="robot", x0=-3.6, y0=1.4, x1=3.6, y1=2.0), seconds=1.0),
+            # One phase: a count spoken on the way was discarded, and the
+            # brain is told never to repeat itself.
+            parallel_group="count",
         ),
-        Goal(label="Report the count", predicate=Answered(accept=["5", "five"])),
+        Goal(label="Report the count", predicate=Answered(accept=["5", "five"]), parallel_group="count"),
     ],
     time_limit_s=420,
     category=1,

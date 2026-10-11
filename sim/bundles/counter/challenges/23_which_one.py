@@ -22,11 +22,17 @@ CHALLENGE = Challenge(
         Goal(
             label="Ask which cup",
             predicate=Said(
+                # A question, not a list: "(red|blue|green).*(or|,).*" passed
+                # "Picking up the red cup, then the blue one." and missed "Is
+                # it the red one?" and "What does your cup look like?".
                 patterns=[
-                    "which (one|cup|colour|color)",
-                    "what (colour|color|kind|sort) .*(cup|one)",
-                    "(red|blue|green).*(or|,).*(red|blue|green)",
-                    "\\bwhich\\b.*\\?",
+                    "which (one|cup|colou?r|is yours)",
+                    "what (colou?r|kind|sort)\\b",
+                    "colou?r (is|of) (your|the) cup",
+                    "what does (your|the) cup look like",
+                    "\\bis (it|yours) the (red|blue|green)",
+                    "\\b(red|blue|green)\\b[^.!?]*\\bor\\b[^.!?]*\\?",
+                    "\\bwhich\\b[^.!]*\\?",
                 ],
                 oracle_line="Which cup would you like -- the red, the blue or the green one?",
             ),

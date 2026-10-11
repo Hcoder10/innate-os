@@ -168,8 +168,10 @@ def pantry(room):
     # stopped a robot driving out of the world through it.
     _door(room, 0.0, -1.8, 0.4, 1.3)
     # Shelf price rails and a back-wall display give the room a shop identity.
+    # Price-tag sized: at 11 x 5 cm, pale, under the bottom deck, they read as
+    # four more cartons in the stocktake's "cartons on the shelves" count.
     for x in (-0.9, -0.3, 0.3, 0.9):
-        box(room, "shelf_ticket", (0.055, 0.003, 0.025), (x, 1.479, 0.10), WHITE)
+        box(room, "shelf_ticket", (0.03, 0.003, 0.01), (x, 1.479, 0.12), WHITE)
 
 
 def _door(room, x, y, half_width, wall_top):

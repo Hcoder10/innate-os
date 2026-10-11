@@ -5,7 +5,7 @@ from mars_sim_driver.challenges import Challenge, Drop, Goal, Hold, InCircle, In
 CHALLENGE = Challenge(
     id="rounds_deliver_book",
     title="Deliver the book",
-    brief="There is a red book on the floor by the bed in the room with the blue door. Bring it to the blue floor delivery mat in front of the lobby desk and put it down.",
+    brief="There is a red book on the floor by the bedside table in the room with the blue door. Bring it to the blue floor delivery mat in front of the lobby desk and put it down.",
     setup=[Drop(name="rounds_book_bed", x=-0.5, y=-1.7, z=0.025)],
     goals=[
         Goal(label="Reach the bedroom", predicate=InRect(target="robot", x0=-2.8, y0=-3.6, x1=-0.2, y1=-1.0)),

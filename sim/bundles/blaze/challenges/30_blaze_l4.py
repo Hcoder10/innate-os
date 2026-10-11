@@ -7,7 +7,7 @@ from mars_sim_driver.challenges import After, AnyOf, Before, Challenge, Cue, Dro
 CHALLENGE = Challenge(
     id="blaze_l4",
     title="Evacuation 4: what you leave behind",
-    brief="The house is on fire. It started in the kitchen and it has already reached the back bedroom. Three things matter: the medicine on the kitchen floor, the phone on the study floor, and the photo frame in the bedroom. The medicine and the phone have to come out, the medicine first, then the phone; put them down on the green porch pad and get yourself out. The photo frame only if you can reach it safely. Do not get cut off. The bedroom becomes unsafe at 50 seconds; the kitchen at 2 minutes 20 seconds and the east hall at 6 minutes 20 seconds. The porch exit is through the store room with the green wall band. You start facing the hall wall: the kitchen and the green-banded store room are down the west hall, to your left; the study and the bedroom down the east hall, to your right.",
+    brief="The house is on fire. It started in the kitchen and it has already reached the back bedroom. Three things matter: the medicine on the kitchen floor, the phone on the study floor, and the photo frame on the bedroom's bedside table. The medicine and the phone have to come out, the medicine first, then the phone; put them down on the green porch pad and get yourself out. The photo frame only if you can reach it safely. Do not get cut off. The bedroom becomes unsafe at 50 seconds; the kitchen at 2 minutes 20 seconds and the east hall at 6 minutes 20 seconds. The porch exit is through the store room with the green wall band. You start facing the hall wall: the kitchen and the green-banded store room are down the west hall, to your left; the study and the bedroom down the east hall, to your right.",
     setup=[
         Drop(name="blaze_medicine", x=-1.9, y=1.37, z=0.0434),
         Drop(name="blaze_phone", x=1.85, y=1.33, z=0.0165),
@@ -64,7 +64,7 @@ CHALLENGE = Challenge(
         Cue(text="Bedroom's fully alight. Whatever's in there is gone.", after_s=40.0),
         Cue(text="East hall's got a couple of minutes left. The study's through it.", after_s=265.0),
         Cue(text="East end of the hall is starting to go. The phone has to come out now.", after_s=320.0),
-        Cue(text="East end of the hall is going now. Last chance for the phone.", after_s=370.0),
+        Cue(text="East end of the hall is going now. If you have the phone, get out of the east hall.", after_s=370.0),
     ],
     category=3,
 )

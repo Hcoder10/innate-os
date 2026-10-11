@@ -28,10 +28,25 @@ from mars_sim_driver.challenges import Answered
         "3 cups",
         "I count 3 cups on the pass",
         "it is 3, not 4",  # the negation lands on the OTHER value
+        # Negators were substrings: "or" inside "for" and "color", "no" in
+        # "No problem", "maybe" anywhere after the answer.
+        "Looking for cups on the counter: there are 3.",
+        "No problem - there are 3 cups on the counter.",
+        "There are 3. Maybe you'd like one?",
+        # The brief's own exclusion said back; a second mention; a belief.
+        "Not counting the red mugs there are 3 blue cans",
+        "I can't see more than 3; there are 3",
+        "3, I think",
+        "I think there are 3",
     ],
 )
 def test_a_real_answer_counts(text: str) -> None:
     assert Answered(["3"])._says_it(text) is True
+
+
+def test_the_word_color_is_not_an_alternative() -> None:
+    assert Answered(["blue"])._says_it("The color of the middle cup is blue.") is True
+    assert Answered(["blue"])._says_it("It's blue or green.") is False
 
 
 @pytest.mark.parametrize(
@@ -44,7 +59,10 @@ def test_a_real_answer_counts(text: str) -> None:
         "I don't know, maybe 3?",
         "3 or 4",  # an alternative is not an answer
         "3/4",
-        "3, I think",  # a trailing hedge disowns it
+        "3, I guess",  # a trailing hedge disowns it
+        "I'm not sure, could be 3",
+        "I don't think it's 3",
+        "it isn't 3",
     ],
 )
 def test_a_disowned_answer_does_not(text: str) -> None:

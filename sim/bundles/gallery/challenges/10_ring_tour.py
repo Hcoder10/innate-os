@@ -8,7 +8,7 @@ CHALLENGE = Challenge(
     title="Ring tour",
     category=3,
     brief=(
-        "Eight blue cans form a ring. Visit the four cans aligned with the "
+        "Blue cans form a ring. Visit the four cans aligned with the "
         "middle of each wall, skipping the diagonal cans. Start with the can "
         "straight ahead of your starting position, then continue clockwise "
         "around the ring, getting within 60 cm of each can."

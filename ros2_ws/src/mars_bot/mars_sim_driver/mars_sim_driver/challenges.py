@@ -286,8 +286,9 @@ class Answered(Predicate):
     # maybe 3?" both used to score as the answer 3: whole-word matching stops
     # "3" matching "30" but says nothing about the clause around it.
     # Hedges that disown the answer when they FOLLOW it.
+    # Not "i think": "There are four doorways, I think" is how people state a
+    # count they are confident of, and failing it failed honest answers.
     _TRAILING_HEDGES = (
-        "i think",
         "i guess",
         "not sure",
         "unsure",
@@ -298,28 +299,13 @@ class Answered(Predicate):
         "do not know",
     )
 
-    _NEGATORS = (
-        "not ",
-        "n't ",
-        "no ",
-        "isn't",
-        "aren't",
-        "wasn't",
-        "cannot",
-        "can't",
-        "don't know",
-        "do not know",
-        "unsure",
-        "not sure",
-        "maybe",
-        "might be",
-        "i think",
-        "possibly",
-        "perhaps",
-        "guess",
-        "could be",
-        "or ",
-    )
+    # Whole words only, and only in the last few words of the clause that
+    # leads up to the token: as substrings, "or " matched inside "color" and
+    # "for", and "no " in "No problem - there are 3"; and scoped to the whole
+    # clause, "Not counting the red mugs there are eight" -- the brief's own
+    # exclusion said back -- was a negated eight. So honest answers failed.
+    _NEGATORS = re.compile(r"\b(?:not|no|cannot|unsure|maybe|might be|possibly|perhaps|guess|could be|or)\b|n't\b")
+    _RUN_UP_WORDS = 3
 
     #: distinct wrong answers on the structured channel before the robot is
     #: judged to be enumerating rather than answering. The widest challenge in
@@ -345,21 +331,24 @@ class Answered(Predicate):
             token = str(a).strip().lower()
             if not token:
                 continue
-            m = re.search(rf"(?<![\w]){re.escape(token)}(?![\w])", low)
-            if not m:
-                continue
-            # The run-up: "3, not 4" answers 3; "not 3" does not.
-            lead = low[: m.start()]
-            clause = lead.rsplit(",", 1)[-1].rsplit(";", 1)[-1]
-            if any(neg in clause for neg in self._NEGATORS):
-                continue
-            # What follows: an alternative ("3 or 4") or a trailing hedge
-            # ("3, I think") is not an answer either. A trailing bare negation
-            # is fine -- it negates the OTHER value, as in "3, not 4".
-            tail = low[m.end() :]
-            if re.match(r"\s*(or|/)\s*\w", tail) or any(h in tail for h in self._TRAILING_HEDGES):
-                continue
-            return True
+            # Every occurrence: "I can't see more than eight; there are eight"
+            # answers with its second.
+            for m in re.finditer(rf"(?<![\w]){re.escape(token)}(?![\w])", low):
+                # The run-up: "3, not 4" answers 3; "not 3" does not.
+                clause = re.split(r"[,;:.!?–—]|\s-\s", low[: m.start()])[-1]
+                run_up = " ".join(clause.split()[-self._RUN_UP_WORDS :])
+                if self._NEGATORS.search(run_up):
+                    continue
+                # What follows: an alternative ("3 or 4") or a trailing hedge
+                # ("3, maybe") is not an answer either. A trailing bare negation
+                # is fine -- it negates the OTHER value, as in "3, not 4".
+                # Only its own sentence: "3 cups. Maybe you'd like one?" answered.
+                tail = re.split(r"[.!?]", low[m.end() :])[0]
+                if re.match(r"\s*(or|/)\s*\w", tail) or any(
+                    re.search(rf"\b{h}\b", tail) for h in self._TRAILING_HEDGES
+                ):
+                    continue
+                return True
         return False
 
     def update(self, state: WorldState, events: list[dict]) -> bool:

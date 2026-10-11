@@ -53,8 +53,12 @@ CHALLENGE = Challenge(
         ),
     ],
     goals=[
-        Goal("Out to the left seat", Hold(InCircle("robot", -0.90, 0.20, 0.55), seconds=2.0)),
-        Goal("Across to the right seat", Hold(InCircle("robot", 0.90, 0.20, 0.55), seconds=2.0)),
+        # Centred on the stools themselves, as in counter_route_change. These
+        # circles used to sit on the mats in front of the stools, where a
+        # robot waiting beside a stool was 0.58 m out and failed here while
+        # the same spot passed there.
+        Goal("Out to the left seat", Hold(InCircle("robot", -0.90, 0.62, 0.55), seconds=2.0)),
+        Goal("Across to the right seat", Hold(InCircle("robot", 0.90, 0.62, 0.55), seconds=2.0)),
         # The full corridor along the counter front, not a circle at its
         # middle: a probe agent completed the round ending at the counter's
         # right end -- exactly what "come back toward the counter" asks -- and

@@ -14,7 +14,10 @@ CHALLENGE = Challenge(
         Drop(name="counter_cup_green", x=0.6, y=-0.7, z=0.037),
     ],
     goals=[
-        Goal(label="Reach the cups", predicate=Near(a="robot", b="counter_cup_red", radius_m=0.45)),
+        # 0.7 m, not 0.45: the correction is gated on this, and at 0.45 m the
+        # pick is already closing on the red cup, so "leave the red where it
+        # is" arrived with it in the claw. Spawn is 0.88 m away.
+        Goal(label="Reach the cups", predicate=Near(a="robot", b="counter_cup_red", radius_m=0.7)),
         Goal(
             label="Green cup to the middle seat",
             predicate=Hold(

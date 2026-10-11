@@ -6,10 +6,13 @@ CHALLENGE = Challenge(
     id="workshop_fetch_gauge",
     title="Fetch the small can",
     brief="Three oil cans of different widths stand in a row on the floor. Bring the smallest one back to the green starting pad and put it down.",
+    # 0.4 m east of where the row was: the smallest can stood 0.42 m from the
+    # terracotta plant pot at (-3.7, -2.7), which from the robot's height read
+    # as a fourth, bigger can.
     setup=[
-        Drop(name="workshop_gauge_040", x=-3.4, y=-2.4),
-        Drop(name="workshop_gauge_070", x=-2.16, y=-2.4),
-        Drop(name="workshop_gauge_100", x=-0.92, y=-2.4),
+        Drop(name="workshop_gauge_040", x=-3.0, y=-2.4),
+        Drop(name="workshop_gauge_070", x=-1.76, y=-2.4),
+        Drop(name="workshop_gauge_100", x=-0.52, y=-2.4),
     ],
     goals=[
         Goal(label="Reach the smallest can", predicate=Near(a="robot", b="workshop_gauge_040", radius_m=0.45)),

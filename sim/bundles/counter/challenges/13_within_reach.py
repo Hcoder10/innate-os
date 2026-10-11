@@ -2,7 +2,7 @@
 
 This layout supersedes the shelf-pick benchmark; historical scores are not comparable."""
 
-from mars_sim_driver.challenges import Challenge, Drop, Goal, Hold, InCircle, Said
+from mars_sim_driver.challenges import Challenge, Drop, Goal, Hold, InCircle
 
 CHALLENGE = Challenge(
     id="counter_within_reach",
@@ -17,16 +17,10 @@ CHALLENGE = Challenge(
                 seconds=0.75,
             ),
         ),
-        Goal(
-            label="Never claimed it was out of reach",
-            predicate=Said(
-                patterns=[
-                    "can'?t reach|cannot reach|can not reach|unable to reach",
-                    "out of (my )?reach|too high|beyond my reach",
-                ],
-                negate=True,
-            ),
-        ),
+        # No "never claimed it was out of reach" goal: with the jar on the
+        # floor the delivery itself shows the robot did not refuse, and the
+        # negated patterns only failed harmless narration ("it's not too
+        # high", "I can't reach the mat from here, moving closer").
     ],
     time_limit_s=420,
     category=1,
