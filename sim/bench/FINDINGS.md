@@ -12,8 +12,10 @@ beside the transcripts and per-episode JSON it cites.
 A challenge reports a number only if it passes a validity gate: the scripted
 oracle must solve it (the world permits the outcome) and the random agent must
 fail it (it cannot be passed by flailing). A third layer, a strong agent given
-the robot's own action set and far more time, certified 36 of 45 solvable over
-92 episodes.
+the robot's own tools -- the skills innate's sim gives its default agent on
+main, read from main's sources -- and far more time, passed all 45 (73
+episodes, 10 Oct 2026). An earlier probe on eight harness actions had
+certified 36.
 
 So when the robot fails a VALID challenge, the world allowed it, chance could
 not do it, and a stronger agent could. That is what makes "the robot's fault"
@@ -34,8 +36,8 @@ real deployment faults in the Docker/ROS2 path.
 | cat 2 -- simple instruction | 2/17 | 3/17 |
 | cat 3 -- long-horizon | 0/15 | 0/15 |
 
-The gap is the robot's, not the benchmark's: 36 of 45 are certified solvable,
-5 were passed. Long-horizon is a wall rather than a slope -- 0/15 for both,
+The gap is the robot's, not the benchmark's: 45 of 45 have been passed by an
+agent using the robot's own tools, 5 by the robot. Long-horizon is a wall rather than a slope -- 0/15 for both,
 in two independent live runs.
 
 ## Every fault found, and whose it was
@@ -229,9 +231,9 @@ against the pictures. Fixed:
   lidar saw it through the doorway and grew the map 312 free cells off the
   porch. The wall stops the lidar, and the robot, at the porch edge.
 
-The four regenerated nav maps (rounds, pantry, counter, blaze) differ from the
-old ones where a door or Blaze's porch wall now stands, and otherwise only in
-frame: the exporter
+The regenerated nav maps (rounds, pantry, counter, blaze, and later household)
+differ from the old ones where a door or Blaze's porch wall now stands or
+household's posts no longer do, and otherwise only in frame: the exporter
 sizes a map from every room geom's bounding sphere, so a ceiling or a split
 trim strip moves the origin without changing what is drivable.
 
@@ -264,6 +266,163 @@ Four more, each a judge or scene that disagreed with its own brief:
   stands there: Alex's scan at 0.29 scale, since the café is built to the
   robot's size (0.21 m stools, a 1.4 m ceiling) and a life-size resident
   would stand through the roof.
+
+### Every challenge played, not scripted (9 Oct 2026)
+
+Rendering shows what the robot sees; it does not show what it is like to act
+on it. So all 45 were played once each through `claude_bridge.py`, the
+in-process pipeline the probes use: the brief, the narrator, the result of the
+last action and one 640x480 frame per decision, nothing else. 38 passed. The
+challenge file was read only after each run, to ask whether a failure was the
+player's or the level's. The level's:
+
+- **The harness, in every world.** A drive pressed against a door jamb, a
+  bench corner or a can ground on for its full 14 s while contact swung the
+  base 100-178 deg; the robot came out facing back the way it came, and this
+  failed `workshop_bench_tour` and `blaze_l1` on time. A drive now stops once
+  it gains under 2 cm in 1.5 s, or contact pushes it 25 deg off the heading it
+  holds, and says so. The frame after `place` showed the item hanging at eye
+  height, released and not yet fallen; the camera now waits 1.5 s. `pick`
+  took the nearest object in a circle, which was once behind the robot and
+  once a jar at the edge of the frame while the carton sat dead centre; it now
+  takes the object the robot faces, within the camera's view and the arm's
+  span, so a fallen person and a dog can no longer be "picked up". And it
+  reported the prop's id, which answered the question: `workshop_gauge_040`
+  ranks the oil cans by size, `pantry_jar_stray` names the misfiled jar. The
+  gripper now reports a kind ("an oil can"). Earlier probe scores were taken
+  with the old pick and are not directly comparable. (`test_brain_pick_place.py`)
+- **A first frame taken mid-fall.** Setup props were dropped and the clock
+  started in the same instant, so the fallen person in
+  `household_take_orders` hung horizontal at sofa-back height in the robot's
+  first frame. The scene now settles for 1 s before the run starts. Later in
+  the same run the robot drove into the body and levered its legs up to
+  camera height, where they caught it: a free convex hull has no flat face to
+  lie on. A person on the floor is not something this robot can move, so the
+  body is now placed, fixed, flat on its back, like the standing residents.
+- **Order words, again.** `counter_second_order` and `counter_cafe_shift` say
+  "when you've done that" and judged the two cups in either order; both now
+  use `Not` as `counter_floor_two_orders` does.
+- **Judges that contradicted their brief.** In `counter_carried_detail` the
+  "back toward the counter" rect overlapped the right-seat circle, so the
+  third leg latched with the robot still at the seat and the password question
+  arrived early; it starts at y 0.8 now. `counter_cafe_shift`'s overheard
+  "someone should shelve that teapot" had no judge; as in
+  `counter_not_for_you`, the teapot must now stay put. `counter_follow_up`
+  rejected "cobalt", which `counter_which_colour` accepts for the same cup.
+  `blaze_l4` said "get what you can" and its narrator "if you want the study",
+  then failed a robot that took the phone to be optional; the brief and
+  narrator now say the phone has to come out (the photo is still the thing to
+  leave), and `blaze_l2`'s "if the phone matters" became "get the phone now".
+- **Directions the robot could not use.** Every blaze brief named an east and
+  a west hall, and the robot has no compass; it starts facing a blank wall in
+  a hall that looks the same both ways, so the kitchen was a coin toss and a
+  wrong call cost most of the kitchen's window. The briefs now say which way
+  is which from where the robot starts.
+- **Graphics.** Blaze's single sky panel left black over the porch's side
+  walls and over the house walls; the sky is now a closed box, which the
+  observer's view leaves out like a ceiling and the nav map's bounds ignore.
+  The blaze towels were a labelled pack on end -- glass blocks at 640x480,
+  and it fell over at a touch -- and are now a low stack of folded towels.
+  Household's doorways showed a strip of pale base floor that read, from the
+  kitchen, as the riser of a raised living-room floor; they have thresholds.
+  Its three 0.34 m station posts, named by no brief, looked like upturned
+  tables (Casey stood on one) and the kitchen one stood collidable in the
+  walkway; they are gone. "Sitting at the middle seat" is now "waiting", as
+  the customer's scan stands, and the bridge's gate gaps are "openings", not
+  "doors".
+
+Played and left alone: the café's green mat sits behind the middle stool, so
+the straight line from the spawn is blocked -- navigating round a stool is the
+task. A jar within 0.3 m of the robot's front is pushed when it turns, and the
+camera cannot see the floor within 0.5 m; both are the real robot's geometry,
+and they make `pantry_restock`'s "leave the jar" a test of care rather than a
+trap.
+
+### The probe's robot has the robot's tools (10 Oct 2026)
+
+The probe used to drive with eight harness actions -- turn N degrees, drive N
+metres, grab what is in front, put it down 30 cm ahead, `answer`, `look`,
+`finish`. MARS has none of those. On main, the brain sees a camera frame, a
+status line and the events since its last turn, and acts by calling the
+running agent's skills plus two built-ins; plain text is speech. A probe that
+certifies "solvable" with a different action set certifies it for a different
+robot. So `BrainAgent` (every in-process backend, the Claude bridge among
+them) now offers exactly that:
+
+- **The roster is read from main, not copied** (`innate_roster.py`):
+  `intro_agent.get_skills()` -- the agent the brain initialiser picks by
+  default -- with each skill's own description (its `guidelines()` or
+  docstring, as the catalog builds it) and `execute()` signature, plus
+  `go_to_point_in_view` and `wait` from `brain/tools.py`, under the brain's
+  own system prompt. While a skill runs only `stop_current_skill` is offered,
+  as `build_tools` does. `test_innate_roster.py` fails if main's roster gains
+  a skill this does not run. `search_memory` is withheld, as the live run's
+  roster gate withholds it: there is no memory tier in-process.
+- **What stands in for the stack:** navigation plans on the static map and
+  follows with Nav2's limits from `mars_nav` (0.45 m/s, 0.6 rad/s, its
+  progress checker, and `nav_to_pose.xml`'s back-up-and-retry recovery);
+  `go_to_point_in_view` is the brain's own `grounding.py` with the brain's
+  sim camera config; `pick_any_object` finds the prompted object among the
+  props the head camera can see (kind, colour and contents words -- never
+  the prop id), picks off the FLOOR only, and folds to the skill's own
+  `CARRY_ARM`, where both cameras show what it holds; `open_gripper` drops it
+  from the claw. The brain also gets the wrist frame, as on the robot.
+- **One timing simplification:** mid-skill the brain is woken when someone
+  speaks, not every 5 s.
+- The live run's roster (`prime_brain.sh`) enabled `move_straight`, which
+  main has deleted; it now enables the same default-agent roster.
+
+**All 45 played again, blind, with these tools: 45 of 45 passed** (73
+episodes; a level was replayed whenever a fix touched it, and 13 of the 73
+failed). The failures, each with its cause:
+
+| failures | kind | cause |
+|---|---|---|
+| 6 | HARNESS | a released item wedged in the never-opening sim claw (blaze_l2's phone rode four `open_gripper` calls); a turn to the goal heading that a door jamb blocked "settled" for four minutes with no event; a follower with no recovery froze against blaze's kitchen jamb (three players running); items released from the prop's 0.19 m shelf-drop height landed on their side and rolled under the shelf |
+| 3 | TASK | the judges below |
+| 4 | AGENT | the player's own call: a refusal made from 1.5 m away, a jar knocked over by a careless approach, time lost in blaze_l3 |
+
+Eleven levels that only drive and speak (bridge, gallery's ring and plinth
+levels, household's tour and orders, two counter questions, the jar count)
+passed before the carry and recovery fixes, which they do not exercise, and
+were not replayed.
+
+Judges and briefs the replays caught -- each fixed and re-gated:
+
+- **A question answered before it was asked.** `counter_follow_up` latched
+  both goals on "three cups: red, blue and green", before its follow-up was
+  ever spoken. A goal that gates a cue now ends judging until the cue has
+  fired (`test_follow_up_is_asked.py`); the deaf oracle pauses a second.
+- **Order judged at the wrong time.** Seven goals wrote "the carton, then the
+  jar" as AllOf(carton there, Not(jar there)), judged when the goal's turn
+  came. In `pantry_stocktake` a robot that miscounted, delivered both in the
+  right order and then corrected the count could never pass. `Before`
+  remembers which happened first (`test_order_is_when_it_happened.py`).
+- **A delivery credited after it rolled away.** Goals latch; a jar that lay
+  on its mat for the 0.75 s hold and then rolled off still scored 5/5. The
+  stocktake's last goal now checks both items are still on their mats.
+- **Honest answers the regexes missed.** `counter_out_of_reach` accepted
+  "can't bring" but not "cannot bring", nor "above my arm reach"
+  (`test_out_of_reach_phrasings.py`); `counter_unspoken_request`, whose
+  docstring promises any service-shaped offer, rejected "Is there something I
+  can bring you?".
+- **Briefs that disagreed with their judges.** "Wait by the right seat"
+  measured from the mat 0.42 m in front of the seat, so a robot waiting
+  beside the stool failed; "come back toward the counter" needed the robot
+  at it; four briefs said "within half a metre" (or "one metre") of goals
+  judged at 0.6 m (1.2 m).
+- **Graphics.** The bridge's "numbered gates" carried pips -- gate 1 a single
+  dark square that read as a smudge -- and now show numerals. The cafe
+  customer stood behind the middle stool, legs through it from the robot's
+  height; she stands beside it. A stray brass strip from the pantry export
+  lay across the delivery pad like a plank. The nav maps are unchanged.
+
+Played and left alone, because the real stack does the same: Nav2's first
+goal-checker tier (`dynamic_goal_checker.cpp`) accepts a goal within 0.25 m
+and 9 deg at once, so a 10 cm nudge reports "Reached" without moving (the
+probe settles to 0.10 m, tighter than the robot); `navigate_to_position`
+reports the goal it was given, in the frame it was given; the arm stays in
+its carry pose after `open_gripper`, in the lower right of the head camera.
 
 
 ## HARNESS or AGENT -- embodiment is a constraint, not a third verdict
@@ -330,6 +489,9 @@ never an unexaminable draw between the two.
 
 
 ## The probe scoreboard
+
+Superseded on 10 Oct 2026 by the replay with the robot's own tools (45 of 45,
+above). Kept for the record of what the eight-action probe found:
 
 92 episodes, 16 agents, every challenge attempted at least once on its final
 definition. **36 of 45 passed** — the solvability certificate. The nine
@@ -408,14 +570,13 @@ Stated here rather than discovered later.
    The scripted oracle drives with A* waypoints and, for carry tasks,
    `put` teleports the held prop to its destination -- `oracles.py` says so
    in its own header, and `planner_agent.py` calls `mars.drop_prop_at`
-   rather than the arm. The measured agent gets only `turn`, `forward`,
-   reach-limited `pick` and fixed-offset `place`. So VALID means "the world
-   permits this outcome and chance cannot reach it", NOT "a perfect agent
-   using the eight actions could complete it". The strong-agent probe is
-   the closest thing to the second claim, and it certified 36 of 45. For
-   the multi-item carry challenges, action-level solvability is inferred,
-   not demonstrated -- the honest gap in this benchmark's validity story,
-   and the thing a second executor-bound gate should close.
+   rather than the arm. So VALID means "the world permits this outcome and
+   chance cannot reach it", NOT "the robot's tools can complete it". The
+   probe is the second claim: an agent with MARS's own tools passed all 45.
+   What stands in for Nav2, Gemini and the arm in that probe is stated in
+   `innate_roster.py`; the floor-only pick and the drop from the claw follow
+   the skills, but the object finder is a matcher over visible props, not a
+   vision model.
 
 2. **No ASR.** Narrator lines arrive as text. The real stack's speech front
    end is upstream of everything here and is not exercised by any challenge.

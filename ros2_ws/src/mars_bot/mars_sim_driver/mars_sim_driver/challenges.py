@@ -64,6 +64,8 @@ CLOCK_REWIND_S = 0.5
 # Bound the final websocket send so Abort/Start cannot wait indefinitely.
 CHAT_WRITE_TIMEOUT_S = 2.0
 CHAT_OUTBOX_MAXLEN = 64
+# Sim seconds a challenge's setup drops get to land before its clock starts.
+SETUP_SETTLE_S = 1.0
 
 # Sender the brain routes to a voice instead of straight into the chat.
 ENVIRONMENT_SPEECH_SENDER = "environment_speech"
@@ -580,7 +582,8 @@ class Not(Predicate):
     medicine first, then the phone" judged as two ordered placements passed in
     either order: by the time the medicine landed, the phone was already
     waiting on the porch. AllOf(medicine there, Not(phone there)) only holds
-    if the medicine got there first.
+    if the medicine got there first -- judged when that goal's turn comes,
+    which is why the suite's order goals now use Before instead.
     """
 
     inner: Predicate
@@ -593,6 +596,45 @@ class Not(Predicate):
 
     def reset(self) -> None:
         self.inner.reset()
+
+
+@dataclass
+class Before(Predicate):
+    """`first` is true now, and it became true before `then` ever did.
+
+    The order words -- "the carton, then the jar", "when you've done that, the
+    blue one" -- used to be AllOf(first, Not(then)): first counts only while
+    then is not done yet. That is judged when the goal's turn comes, not when
+    the things happened. In pantry_stocktake a robot that gave a wrong count,
+    delivered the carton and then the jar in the right order, and then
+    corrected the count, could never pass: by the time the carton goal was
+    judged the jar was on its mat. This watches every tick through observe(),
+    which the engine runs for every goal whether it is current or not, and
+    remembers which came first.
+    """
+
+    first: Predicate
+    then: Predicate
+    _first_now: bool = field(default=False, repr=False)
+    _first_won: bool = field(default=False, repr=False)
+    _then_seen: bool = field(default=False, repr=False)
+
+    def observe(self, state: WorldState, events: list[dict]) -> None:
+        self.first.observe(state, events)
+        self.then.observe(state, events)
+        then_now = self.then.update(state, events)
+        self._first_now = self.first.update(state, events)
+        if self._first_now and not then_now and not self._then_seen:
+            self._first_won = True
+        self._then_seen = self._then_seen or then_now
+
+    def update(self, state: WorldState, events: list[dict]) -> bool:
+        return self._first_won and self._first_now
+
+    def reset(self) -> None:
+        self._first_now = self._first_won = self._then_seen = False
+        self.first.reset()
+        self.then.reset()
 
 
 # --- challenge definition ---
@@ -1032,6 +1074,13 @@ class ChallengeEngine:
                     height = {"z": drop.z} if drop.z is not None else {}
                     if not self.sim.drop_prop_at(drop.name, drop.x, drop.y, math.radians(drop.yaw_deg), **height):
                         missing.append(drop.name)
+                # Drops are released above their rest height, and the robot's
+                # first frame was taken the instant the clock started: the
+                # fallen person in household_take_orders hung horizontal at
+                # sofa-back height. The scene settles before the run begins.
+                if challenge.setup and not missing and hasattr(self.sim, "step"):
+                    self.sim.set_cmd_vel(0.0, 0.0)
+                    self.sim.step(SETUP_SETTLE_S)
                 started_t = float(self.sim.data.time)
                 epoch = self.world_epoch
             with self._mutex:
@@ -1337,6 +1386,17 @@ class ChallengeEngine:
                                     break
                                 self.goal_done[idx] = True
                                 progressed = True
+                                if any(
+                                    cue.after_goal == idx and i not in self._cues_fired
+                                    for i, cue in enumerate(challenge.script)
+                                ):
+                                    # A question gated on this goal has not been
+                                    # asked yet, and nothing said before it is
+                                    # asked answers it. counter_follow_up passed
+                                    # 2/2 on one sentence -- "three cups: red,
+                                    # blue and green" -- before its follow-up
+                                    # was ever spoken.
+                                    break
                                 continue
 
                             # Every open sibling in the phase sees the same events.

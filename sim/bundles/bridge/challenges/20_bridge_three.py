@@ -25,6 +25,6 @@ CHALLENGE = Challenge(
             InRect(target="robot", x0=-0.9, y0=1.11, x1=-0.24, y1=1.29),
         ]
     ),
-    fail_reason="went through the wrong door",
+    fail_reason="went through the wrong opening",
     category=2,
 )

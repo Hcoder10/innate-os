@@ -25,33 +25,32 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from innate_roster import STOP_SKILL, available, roster
+
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["action", "args"],
+    "required": ["say", "action", "args"],
     "properties": {
+        # Plain text is speech on the robot; "" says nothing.
+        "say": {"type": "string"},
         "action": {
             "type": "string",
-            "enum": ["turn", "forward", "pick", "place", "say", "answer", "look", "finish"],
+            # The tools the robot's brain declares (innate_roster.py), and the
+            # one it declares while a skill runs.
+            "enum": [t.name for t in available(roster())] + [STOP_SKILL],
         },
         # Closed-schema APIs reject a free-form object, and the arg shape
-        # differs per action. A JSON STRING sidesteps both without inventing a
+        # differs per tool. A JSON STRING sidesteps both without inventing a
         # union type the model then has to satisfy.
-        "args": {"type": "string", "description": 'JSON object, e.g. {"degrees": 45} or {}'},
+        "args": {"type": "string", "description": 'JSON object, e.g. {"x": 1.0, "y": 0.0, "local_frame": true} or {}'},
     },
 }
 
-SYSTEM = """You are a small mobile robot about 25 cm tall in a room, doing what
-a person asks. You act one step at a time and see the result of each step
-before choosing the next.
-
-Be efficient: every action costs a turn, and you have few. Drive in useful
-distances rather than 5 cm nudges. If you are asked for something you cannot
-do -- anything above about 30 cm is out of your arm's reach, and you cannot
-climb -- say so plainly instead of trying.
-
-Not everything you hear is addressed to you. People talk to each other in the
-same room. Act on what you were asked to do."""
+# The robot's instructions are its brain's own system prompt, which the menu
+# carries (innate_roster.menu). This only says how the two halves are laid out.
+SYSTEM = """You are the brain of a MARS robot running in a simulator. The status, events and
+tools below are what the robot's brain receives each update; reply as it would."""
 
 
 def _last_json_object(text: str) -> dict | None:
@@ -93,7 +92,10 @@ def _coerce(raw: dict) -> dict:
         # is why this check cannot live in the except branch above.
         m = re.search(r"-?\d+(\.\d+)?", str(args))
         args = {"degrees": float(m.group()), "metres": float(m.group())} if m else {}
-    return {"action": action, "args": args}
+    out = {"action": action, "args": args}
+    if raw.get("say"):
+        out["say"] = str(raw["say"])
+    return out
 
 
 class EchoBackend:
@@ -109,11 +111,10 @@ class EchoBackend:
     # purpose is exercising the agent loop without spending money -- crash on
     # startup. Enough steps to move the robot and produce turns.
     DEFAULT_SCRIPT = [
-        {"action": "look", "args": "{}"},
-        {"action": "forward", "args": '{"metres": 0.9}'},
-        {"action": "look", "args": "{}"},
-        {"action": "turn", "args": '{"degrees": 25}'},
-        {"action": "finish", "args": "{}"},
+        {"action": "wait", "args": "{}"},
+        {"action": "navigate_to_position", "args": '{"x": 0.9, "y": 0.0, "local_frame": true}'},
+        {"action": "wait", "args": "{}"},
+        {"action": "navigate_to_position", "args": '{"x": 0.0, "y": 0.0, "theta_degrees": 25, "local_frame": true}'},
     ]
 
     def __init__(self, script: list[dict] | None = None):
@@ -122,7 +123,7 @@ class EchoBackend:
 
     def decide(self, obs, menu):  # noqa: ARG002
         if self.i >= len(self.script):
-            return {"action": "finish", "args": {}}
+            return {"action": "wait", "args": {}}
         step = self.script[self.i]
         self.i += 1
         return _coerce(step)
@@ -230,9 +231,9 @@ class GeminiBackend:
         import urllib.request
 
         parts = [{"text": f"{obs.as_text()}\n\n{menu}"}]
-        if obs.image_path:
-            blob = base64.b64encode(Path(obs.image_path).read_bytes()).decode()
-            parts.insert(0, {"inline_data": {"mime_type": "image/jpeg", "data": blob}})
+        for i, image in enumerate(p for p in (obs.image_path, obs.wrist_image_path) if p):
+            blob = base64.b64encode(Path(image).read_bytes()).decode()
+            parts.insert(i, {"inline_data": {"mime_type": "image/jpeg", "data": blob}})
         body = {
             "system_instruction": {"parts": [{"text": SYSTEM}]},
             "contents": [{"role": "user", "parts": parts}],

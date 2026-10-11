@@ -1,10 +1,10 @@
 """The last permitted decision is driven, not just charged.
 
 `done` became true the moment the turn count reached max_turns, and act()
-returned on `done` before stepping the primitive that decision had queued. So
-an agent whose final turn was `forward` or `turn` paid for it and the robot
-never moved; run_episode then ended the episode. A budget bounds how often the
-model is asked, not whether the robot finishes what it was told.
+returned on `done` before stepping what that decision had started. So an
+agent whose final turn was a drive paid for it and the robot never moved;
+run_episode then ended the episode. A budget bounds how often the model is
+asked, not whether the robot finishes what it was told.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ if __name__ == "__main__":  # run directly: let pytest collect this file (confte
 import time
 from types import SimpleNamespace
 
+import innate_roster as R
 from backends import EchoBackend
 from brain_agent import BrainAgent
 
@@ -54,20 +55,28 @@ def _run(agent: BrainAgent, mars: StraightLine, ticks: int = 600, dt: float = 0.
     raise AssertionError("the agent never finished")
 
 
-def test_the_final_forward_is_driven_to_the_end() -> None:
-    agent = BrainAgent(EchoBackend([{"action": "forward", "args": '{"metres": 0.5}'}]), max_turns=1)
+def _drive(metres: float) -> dict:
+    return {"action": "navigate_to_position", "args": f'{{"x": {metres}, "y": 0.0, "local_frame": true}}'}
+
+
+def test_the_final_drive_is_driven_to_the_end() -> None:
+    agent = BrainAgent(EchoBackend([_drive(0.5)]), max_turns=1)
     mars = StraightLine()
     agent.reset(mars, SimpleNamespace(brief="drive"))
     _run(agent, mars)
     assert agent.turns == 1
-    assert mars.x >= 0.47, f"the robot stopped at {mars.x:.2f} m of the 0.5 m it was told"
-    assert mars.commands[-1] == (0.0, 0.0), "the primitive did not finish cleanly"
+    # Nav2's goal checker accepts within its xy tolerance of the goal.
+    assert mars.x >= 0.5 - R.NAV_XY_TOL_M, f"the robot stopped at {mars.x:.2f} m of the 0.5 m it was told"
+    assert mars.commands[-1] == (0.0, 0.0), "the skill did not finish cleanly"
 
 
 def test_no_further_model_call_after_the_budget() -> None:
-    """The budget still binds: once the last primitive is done the agent is
+    """The budget still binds: once the last skill is done the agent is
     done, and the second script step is never asked for."""
-    script = [{"action": "forward", "args": '{"metres": 0.2}'}, {"action": "turn", "args": '{"degrees": 90}'}]
+    script = [
+        _drive(0.2),
+        {"action": "navigate_to_position", "args": '{"x": 0, "y": 0, "theta_degrees": 90, "local_frame": true}'},
+    ]
     backend = EchoBackend(script)
     agent = BrainAgent(backend, max_turns=1)
     mars = StraightLine()

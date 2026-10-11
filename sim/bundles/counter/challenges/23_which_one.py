@@ -16,7 +16,7 @@ CHALLENGE = Challenge(
         Drop(name="counter_cup_blue", x=0.0, y=-0.7, z=0.037),
         Drop(name="counter_cup_green", x=0.6, y=-0.7, z=0.037),
         # "I'm at the middle seat": the speaker, behind that stool.
-        Drop(name="cafe_customer", x=0.0, y=0.78, yaw_deg=0),
+        Drop(name="cafe_customer", x=0.17, y=0.74, yaw_deg=0),
     ],
     goals=[
         Goal(

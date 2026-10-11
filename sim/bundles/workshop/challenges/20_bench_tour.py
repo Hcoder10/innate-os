@@ -5,7 +5,7 @@ from mars_sim_driver.challenges import Challenge, Drop, Goal, Near
 CHALLENGE = Challenge(
     id="workshop_bench_tour",
     title="Bench tour",
-    brief="Five workbenches hold matching blue paint cans. Visit the benches from lowest to highest, stopping within half a metre of each can.",
+    brief="Five workbenches hold matching blue paint cans. Visit the benches from lowest to highest, stopping within 60 cm of each can.",
     setup=[
         Drop(name="workshop_target_06", x=-3.0, y=2.3),
         Drop(name="workshop_target_12", x=-1.5, y=2.3),

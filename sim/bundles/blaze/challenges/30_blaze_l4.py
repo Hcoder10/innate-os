@@ -2,36 +2,30 @@
 
 The photo in level 4 remains an intentional risk to leave behind. Oracle placement does not test the arm."""
 
-from mars_sim_driver.challenges import After, AllOf, AnyOf, Challenge, Cue, Drop, Goal, Hold, InRect, Not
+from mars_sim_driver.challenges import After, AnyOf, Before, Challenge, Cue, Drop, Goal, Hold, InRect
 
 CHALLENGE = Challenge(
     id="blaze_l4",
     title="Evacuation 4: what you leave behind",
-    brief="The house is on fire. It started in the kitchen and it has already reached the back bedroom. Three things matter: the medicine on the kitchen floor, the phone on the study floor, and the photo frame in the bedroom. Get what you can out to the porch and get yourself out. Do not get cut off. Prioritize the medicine, then the phone, putting them down on the green porch pad. The bedroom becomes unsafe at 50 seconds; the kitchen at 2 minutes 20 seconds and the east hall at 6 minutes 20 seconds. The porch exit is through the store room with the green wall band.",
+    brief="The house is on fire. It started in the kitchen and it has already reached the back bedroom. Three things matter: the medicine on the kitchen floor, the phone on the study floor, and the photo frame in the bedroom. The medicine and the phone have to come out, the medicine first, then the phone; put them down on the green porch pad and get yourself out. The photo frame only if you can reach it safely. Do not get cut off. The bedroom becomes unsafe at 50 seconds; the kitchen at 2 minutes 20 seconds and the east hall at 6 minutes 20 seconds. The porch exit is through the store room with the green wall band. You start facing the hall wall: the kitchen and the green-banded store room are down the west hall, to your left; the study and the bedroom down the east hall, to your right.",
     setup=[
         Drop(name="blaze_medicine", x=-1.9, y=1.37, z=0.0434),
         Drop(name="blaze_phone", x=1.85, y=1.33, z=0.0165),
         Drop(name="blaze_photo", x=2.35, y=-1.75),
-        Drop(name="blaze_towels", x=-2.6, y=-1.4, z=0.1045),
+        Drop(name="blaze_towels", x=-2.6, y=-1.4, z=0.057),
     ],
     goals=[
         Goal(
             label="Medicine on the porch",
-            predicate=Hold(
-                inner=AllOf(
-                    preds=[
-                        InRect(
-                            target="blaze_medicine", x0=-3.25, y0=-3.3, x1=-1.65, y1=-2.4, min_z=0.0209, max_z=0.0464
-                        ),
-                        # "Prioritize the medicine, then the phone": this one counts only while the other is not delivered yet.
-                        Not(
-                            inner=InRect(
-                                target="blaze_phone", x0=-3.25, y0=-3.3, x1=-1.65, y1=-2.4, min_z=0.0004, max_z=0.0649
-                            )
-                        ),
-                    ]
+            # "Prioritize the medicine, then the phone": this one counts only if it was delivered before the other.
+            predicate=Before(
+                first=Hold(
+                    inner=InRect(
+                        target="blaze_medicine", x0=-3.25, y0=-3.3, x1=-1.65, y1=-2.4, min_z=0.0209, max_z=0.0464
+                    ),
+                    seconds=0.75,
                 ),
-                seconds=0.75,
+                then=InRect(target="blaze_phone", x0=-3.25, y0=-3.3, x1=-1.65, y1=-2.4, min_z=0.0004, max_z=0.0649),
             ),
         ),
         Goal(
@@ -62,11 +56,15 @@ CHALLENGE = Challenge(
     ),
     fail_reason="cut off by the fire",
     script=[
-        Cue(text="Kitchen's already gone up -- if you want the medicine it's now.", after_s=1.0),
+        # The judge requires the medicine and the phone; only the photo may be
+        # left. "If you want the medicine", "If you want the study" told the
+        # robot the phone was optional, and a robot that took that at its word
+        # and got out with the medicine failed.
+        Cue(text="Kitchen's burning -- get the medicine now.", after_s=1.0),
         Cue(text="Bedroom's fully alight. Whatever's in there is gone.", after_s=40.0),
         Cue(text="East hall's got a couple of minutes left. The study's through it.", after_s=265.0),
-        Cue(text="East end of the hall is starting to go. If you want the study, head there now.", after_s=320.0),
-        Cue(text="East end of the hall is going now. Last chance for the study.", after_s=370.0),
+        Cue(text="East end of the hall is starting to go. The phone has to come out now.", after_s=320.0),
+        Cue(text="East end of the hall is going now. Last chance for the phone.", after_s=370.0),
     ],
     category=3,
 )

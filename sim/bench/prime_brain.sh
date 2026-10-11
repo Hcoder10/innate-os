@@ -127,12 +127,16 @@ print("activate:", run(["ros2", "service", "call", "/brain/set_brain_active",
                         "std_srvs/srv/SetBool", "{data: true}"])[-120:])
 time.sleep(2)
 
+# The default agent's roster on main (workspace/innate_agents/intro_agent.py,
+# the agent the brain initialiser picks), less the two gated above -- the same
+# tools the in-process probe offers (innate_roster.py). move_straight is gone
+# from main, and turn_in_place and arm_rest_position are not intro_agent's:
+# the robot turns with navigate_to_position (x=0, y=0, theta_degrees=...).
 SKILLS = [
     $EXTRA_SKILLS
-    "innate-os/navigate_to_position",
-    "innate-os/move_straight", "innate-os/turn_in_place",
+    "innate-os/navigate_to_position", "innate-os/wave",
     "innate-os/open_gripper", "innate-os/close_gripper",
-    "innate-os/arm_rest_position", "innate-os/head_emotion",
+    "innate-os/head_emotion",
 ]
 payload = json.dumps({"agent_id": "empty_directive", "skills": SKILLS})
 run(["ros2", "topic", "pub", "--once", "/brain/set_active_skills",

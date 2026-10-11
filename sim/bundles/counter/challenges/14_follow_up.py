@@ -52,7 +52,8 @@ CHALLENGE = Challenge(
     ],
     goals=[
         Goal("Report the count", Answered(["3", "three"])),
-        Goal("Answer the follow-up", Answered(["blue"])),
+        # The same cup counter_which_colour asks about, so the same names count.
+        Goal("Answer the follow-up", Answered(["blue", "cobalt"])),
     ],
     time_limit_s=300,
 )

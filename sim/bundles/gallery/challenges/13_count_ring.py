@@ -18,8 +18,8 @@ CHALLENGE = Challenge(
     # to the far side. The walk is a fine anti-guess requirement; hiding it
     # in an unstated goal made a correct count score zero.
     brief=(
-        "Blue cans are placed all around this room. First, go within one "
-        "metre of the blue can straight ahead of your starting position. "
+        "Blue cans are placed all around this room. First, go within 1.2 m "
+        "of the blue can straight ahead of your starting position. "
         "Then look around the whole ring and tell me how many blue cans "
         "there are in total. Count only the cans, not the red mugs."
     ),

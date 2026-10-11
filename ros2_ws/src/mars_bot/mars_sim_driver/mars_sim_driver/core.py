@@ -696,7 +696,15 @@ class VirtualMars:
             # bodies) DO carry their own floor geoms, so a world that has them
             # is rasterized from those floors below.
             raise RuntimeError("navigation-map export requires the authored apartment_visual room meshes")
-        geom_ids = [i for i in range(self.model.ngeom) if self.model.geom_bodyid[i] in static_bodies]
+        # A room's sky (scene_details names it "sky", statics.py emits
+        # "<room>_sky_<i>") is a backdrop for the camera, metres outside the
+        # building: bounding it would grow the map by its own size in every
+        # direction.
+        geom_ids = [
+            i
+            for i in range(self.model.ngeom)
+            if self.model.geom_bodyid[i] in static_bodies and "_sky_" not in (self.model.geom(i).name or "")
+        ]
         if not geom_ids:
             raise RuntimeError("occupancy_grid: no static world geometry to bound")
         mujoco.mj_forward(self.model, self.data)

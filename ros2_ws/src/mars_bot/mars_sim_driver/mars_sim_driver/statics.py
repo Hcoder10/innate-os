@@ -23,7 +23,10 @@ and a room built from primitives is its own visual). A decor geom -- floor
 seams, skirting -- has contacts disabled as well, so it is drawn but never
 touched. A geom named "ceiling" is a lid the robot's camera sees instead of
 black sky; the observer's 3D view leaves it out (sim/viewer/src/rooms.ts), the
-way the apartment's inward-facing shell gives that view its cutaway.
+way the apartment's inward-facing shell gives that view its cutaway. A geom
+named "sky" is a backdrop outside the building, for the same camera: the
+observer's view leaves it out too, and so do the nav map's bounds
+(core.occupancy_grid).
 """
 
 from dataclasses import dataclass, field

@@ -2,35 +2,29 @@
 
 The photo in level 4 remains an intentional risk to leave behind. Oracle placement does not test the arm."""
 
-from mars_sim_driver.challenges import After, AllOf, AnyOf, Challenge, Cue, Drop, Goal, Hold, InRect, Not
+from mars_sim_driver.challenges import After, AnyOf, Before, Challenge, Cue, Drop, Goal, Hold, InRect
 
 CHALLENGE = Challenge(
     id="blaze_l2",
     title="Evacuation 2: in the right order",
-    brief="The house is on fire and it started in the kitchen. Get the medicine from the kitchen floor and the phone from the floor in front of the study desk out to the porch, then get yourself out. Save the medicine first, then the phone, putting each down on the green porch pad. Leave the kitchen before 2 minutes 30 seconds and clear the east hall before 6 minutes 20 seconds. The porch exit is through the store room with the green wall band.",
+    brief="The house is on fire and it started in the kitchen. Get the medicine from the kitchen floor and the phone from the floor in front of the study desk out to the porch, then get yourself out. Save the medicine first, then the phone, putting each down on the green porch pad. Leave the kitchen before 2 minutes 30 seconds and clear the east hall before 6 minutes 20 seconds. The porch exit is through the store room with the green wall band. You start facing the hall wall: the kitchen and the green-banded store room are down the west hall, to your left; the study and the bedroom down the east hall, to your right.",
     setup=[
         Drop(name="blaze_medicine", x=-1.9, y=1.37, z=0.0434),
         Drop(name="blaze_phone", x=1.85, y=1.33, z=0.0165),
-        Drop(name="blaze_towels", x=-2.6, y=-1.4, z=0.1045),
+        Drop(name="blaze_towels", x=-2.6, y=-1.4, z=0.057),
     ],
     goals=[
         Goal(
             label="Medicine on the porch",
-            predicate=Hold(
-                inner=AllOf(
-                    preds=[
-                        InRect(
-                            target="blaze_medicine", x0=-3.25, y0=-3.3, x1=-1.65, y1=-2.4, min_z=0.0209, max_z=0.0464
-                        ),
-                        # "Save the medicine first, then the phone": this one counts only while the other is not delivered yet.
-                        Not(
-                            inner=InRect(
-                                target="blaze_phone", x0=-3.25, y0=-3.3, x1=-1.65, y1=-2.4, min_z=0.0004, max_z=0.0649
-                            )
-                        ),
-                    ]
+            # "Save the medicine first, then the phone": this one counts only if it was delivered before the other.
+            predicate=Before(
+                first=Hold(
+                    inner=InRect(
+                        target="blaze_medicine", x0=-3.25, y0=-3.3, x1=-1.65, y1=-2.4, min_z=0.0209, max_z=0.0464
+                    ),
+                    seconds=0.75,
                 ),
-                seconds=0.75,
+                then=InRect(target="blaze_phone", x0=-3.25, y0=-3.3, x1=-1.65, y1=-2.4, min_z=0.0004, max_z=0.0649),
             ),
         ),
         Goal(
@@ -65,7 +59,8 @@ CHALLENGE = Challenge(
         Cue(text="You've got about a minute in that kitchen.", after_s=90.0),
         Cue(text="Kitchen's gone.", after_s=148.0),
         Cue(text="East hall's got a couple of minutes left. The study's through it.", after_s=265.0),
-        Cue(text="East end of the hall is starting to go. If the phone matters, now.", after_s=320.0),
+        # The phone is required here; "if the phone matters" offered it as optional.
+        Cue(text="East end of the hall is starting to go. Get the phone now.", after_s=320.0),
     ],
     category=2,
 )

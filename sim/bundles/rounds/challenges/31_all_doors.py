@@ -5,7 +5,7 @@ from mars_sim_driver.challenges import Challenge, Goal, InRect
 CHALLENGE = Challenge(
     id="rounds_all_doors",
     title="Every door",
-    brief="Four rooms open off the corridor: red, blue, green, yellow. Enter each one in that order.",
+    brief="Four rooms with coloured door frames open off the corridor: red, blue, green, yellow. Enter each one in that order.",
     setup=[],
     goals=[
         Goal(label="Red room (0.45 m)", predicate=InRect(target="robot", x0=-5.8, y0=-3.6, x1=-3.2, y1=-1.0)),

@@ -11,7 +11,7 @@ CHALLENGE = Challenge(
         "Eight blue cans form a ring. Visit the four cans aligned with the "
         "middle of each wall, skipping the diagonal cans. Start with the can "
         "straight ahead of your starting position, then continue clockwise "
-        "around the ring, getting within half a metre of each can."
+        "around the ring, getting within 60 cm of each can."
     ),
     setup=[
         Drop("gallery_can_180", 0.0, 2.6),

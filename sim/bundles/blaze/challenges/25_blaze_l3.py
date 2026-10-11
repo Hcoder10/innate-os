@@ -2,41 +2,37 @@
 
 The photo in level 4 remains an intentional risk to leave behind. Oracle placement does not test the arm."""
 
-from mars_sim_driver.challenges import After, AllOf, AnyOf, Challenge, Cue, Drop, Goal, Hold, InRect, Not
+from mars_sim_driver.challenges import After, AnyOf, Before, Challenge, Cue, Drop, Goal, Hold, InRect
 
 CHALLENGE = Challenge(
     id="blaze_l3",
     title="Evacuation 3: save both essentials",
-    brief="Fire in the kitchen. Two things in there matter: the medicine on the kitchen floor and the document box on the floor beside the kitchen shelf. Get them both out to the porch and then get yourself out. Bring the medicine out first, then the document box; put each down on the green porch pad. Leave the kitchen before 5 minutes 30 seconds. The porch exit is through the store room with the green wall band.",
+    brief="Fire in the kitchen. Two things in there matter: the medicine on the kitchen floor and the document box on the floor beside the kitchen shelf. Get them both out to the porch and then get yourself out. Bring the medicine out first, then the document box; put each down on the green porch pad. Leave the kitchen before 5 minutes 30 seconds. The porch exit is through the store room with the green wall band. You start facing the hall wall: the kitchen and the green-banded store room are down the west hall, to your left; the study and the bedroom down the east hall, to your right.",
     setup=[
         Drop(name="blaze_medicine", x=-1.9, y=1.37, z=0.0434),
         Drop(name="blaze_documents", x=-2.55, y=1.2, z=0.1045),
-        Drop(name="blaze_towels", x=-2.6, y=-1.4, z=0.1045),
+        Drop(name="blaze_towels", x=-2.6, y=-1.4, z=0.057),
     ],
     goals=[
         Goal(
             label="Medicine on the porch",
-            predicate=Hold(
-                inner=AllOf(
-                    preds=[
-                        InRect(
-                            target="blaze_medicine", x0=-3.25, y0=-3.3, x1=-1.65, y1=-2.4, min_z=0.0209, max_z=0.0464
-                        ),
-                        # "Bring the medicine out first, then the document box": this one counts only while the other is not delivered yet.
-                        Not(
-                            inner=InRect(
-                                target="blaze_documents",
-                                x0=-3.25,
-                                y0=-3.3,
-                                x1=-1.65,
-                                y1=-2.4,
-                                min_z=0.0209,
-                                max_z=0.1075,
-                            )
-                        ),
-                    ]
+            # "Bring the medicine out first, then the document box": this one counts only if it was delivered before the other.
+            predicate=Before(
+                first=Hold(
+                    inner=InRect(
+                        target="blaze_medicine", x0=-3.25, y0=-3.3, x1=-1.65, y1=-2.4, min_z=0.0209, max_z=0.0464
+                    ),
+                    seconds=0.75,
                 ),
-                seconds=0.75,
+                then=InRect(
+                    target="blaze_documents",
+                    x0=-3.25,
+                    y0=-3.3,
+                    x1=-1.65,
+                    y1=-2.4,
+                    min_z=0.0209,
+                    max_z=0.1075,
+                ),
             ),
         ),
         Goal(

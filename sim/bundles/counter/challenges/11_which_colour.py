@@ -1,14 +1,14 @@
 """CATEGORY 1 -- easy observation and conversation.
 
 Same room, but the question is now about a PROPERTY of one object rather than a
-count, and the object is identified by its position in a row ("the one nearest
-the till"). That distinction matters: counting can be done by a detector that
+count, and the object is identified by its position in a row ("the middle
+one"). That distinction matters: counting can be done by a detector that
 never resolves what any single object is, whereas answering "what colour is the
 middle one" requires binding a spatial reference to a specific instance and
 then reading an attribute off it.
 
 The three cups are rust / cobalt / forest -- not three shades of one hue --
-because the camera is 160x120 and this is not meant to be a colour-acuity test.
+because this is not meant to be a colour-acuity test, even at 640x480.
 If the agent gets this wrong it is because it bound the reference to the wrong
 cup, which is the failure worth measuring.
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { geomRadius, isCeiling, isValidRoomGeom, roomBounds, type RoomInfo } from "../src/roomManifest.ts";
+import { geomRadius, isCeiling, isSky, isValidRoomGeom, roomBounds, type RoomInfo } from "../src/roomManifest.ts";
 
 const box = { type: "box", size: [1, 2, 0.5], pos: [10, 0, 0.5], quat: [1, 0, 0, 0], rgba: [1, 1, 1, 1], collide: true } as const;
 const lamp = { type: "cylinder", size: [0.025, 0.015], pos: [0, 5, 1.2], quat: [0, 0, 0, 1], rgba: [1, 1, 1, 1], collide: false } as const;
@@ -40,4 +40,16 @@ test("a ceiling is real in the sim but not drawn over the observer's view", () =
   assert.ok(isCeiling(lid));
   assert.ok(!isCeiling(box));
   assert.ok(!isCeiling({ ...box, name: "floor" }));
+});
+
+test("a sky is neither drawn nor framed", () => {
+  // Blaze's backdrop: panels metres outside the house. Framed, the observer
+  // zoomed out to fit the sky; drawn, the south panel walled off the view.
+  const sky = { ...box, name: "sky", collide: false, size: [4.6, 0.02, 2], pos: [0, -40, 1.4] } as const;
+  assert.ok(isSky(sky));
+  assert.ok(!isSky({ ...box, name: "ceiling" }));
+  assert.deepEqual(
+    roomBounds([{ name: "r", title: "R", geoms: [box, sky] }]),
+    roomBounds([{ name: "r", title: "R", geoms: [box] }]),
+  );
 });

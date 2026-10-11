@@ -142,6 +142,10 @@ def workshop(room):
 
 
 def pantry(room):
+    # The export's brass "deliverymark" strip ran under the bench and across the
+    # slate delivery pad; from the robot's height it read as a plank leaning on
+    # the pad, and no brief names it.
+    room.geoms[:] = [g for g in room.geoms if g.name != "deliverymark"]
     # Extend the grocery finish with category pictograms, never count answers.
     for name, pos, yaw, kind in (
         ("jar_sign", (-2.18, 0, 0.66), -90, "jar"),
@@ -293,6 +297,12 @@ def blaze(room):
     # porch. A collidable 0.45 m wall on the three open edges stops both the
     # robot and the lidar at the porch edge; the sky behind it is only seen
     # above it, by the camera.
+    #
+    # The sky is a closed box round house and porch, not one panel: a panel to
+    # the south left black over the porch's side walls and over the 1.3 m house
+    # walls, which the camera, looking up to 42 deg, sees from the porch. It is
+    # named "sky" so the observer viewer leaves it out (as it does "ceiling")
+    # and the nav map's bounds ignore it.
     for half, pos in (
         ((1.0, 0.03, 0.225), (-2.45, -3.37, 0.225)),
         ((0.03, 0.52, 0.225), (-3.42, -2.88, 0.225)),
@@ -300,7 +310,15 @@ def blaze(room):
     ):
         room.geoms.append(Geom("box", half, pos, rgba=WHITE, name="porch_wall"))
         box(room, "porch_wall_cap", (half[0] + 0.01, half[1] + 0.01, 0.012), (pos[0], pos[1], 0.462), OAK)
-    box(room, "sky", (3.05, 0.02, 2.0), (-2.45, -4.2, 1.4), (0.70, 0.82, 0.90, 1))
+    sky = (0.70, 0.82, 0.90, 1)
+    for half, pos in (
+        ((4.6, 0.02, 2.0), (0.0, -4.2, 1.4)),
+        ((4.6, 0.02, 2.0), (0.0, 3.4, 1.4)),
+        ((0.02, 3.8, 2.0), (-4.6, -0.4, 1.4)),
+        ((0.02, 3.8, 2.0), (4.6, -0.4, 1.4)),
+        ((4.6, 3.8, 0.02), (0.0, -0.4, 3.4)),
+    ):
+        box(room, "sky", half, pos, sky)
 
 
 def _floor(room, name, x0, y0, x1, y1, color, z=0.0025):
@@ -328,7 +346,11 @@ def household(room):
     # wall feature and furniture detail of its own. All of it is
     # non-colliding and clear of every route and door opening.
     recolor(room, (0.84, 0.81, 0.75, 1), (0.52, 0.47, 0.40, 1))
-    room.geoms[:] = [g for g in room.geoms if not g.name.startswith("seam")]
+    # The three 0.34 m station posts go: no brief names them, from the robot's
+    # camera a coloured plate with a pole read as an upturned pedestal table
+    # (Casey stood on one), and the kitchen one stood collidable in the
+    # walkway between three doorways. The flat pads stay.
+    room.geoms[:] = [g for g in room.geoms if not g.name.startswith("seam") and g.name != "post"]
     for g in room.geoms:
         # The sofa and duvet were the exact blue of the mug the robot is sent
         # to find; a fabric green and an indigo keep "the blue mug" unique.
@@ -348,6 +370,19 @@ def household(room):
     _grout(room, "bathroom_grout", -0.44, -2.14, 1.74, -0.06, 0.4, (0.55, 0.66, 0.67, 1))
     _floor(room, "utility_floor", 1.86, -3.94, 3.94, -0.06, (0.49, 0.49, 0.47, 1))
     _floor(room, "utility_floor", -0.44, -3.94, 1.74, -2.26, (0.49, 0.49, 0.47, 1))
+    # Thresholds. Each floor stops at its own wall face, so every doorway
+    # showed a 0.12 m strip of the pale base floor, and from the kitchen that
+    # strip under the brown living-room floor read as the riser of a raised
+    # slab. A wood threshold along every interior wall line; the walls hide it
+    # except in the openings.
+    for x0, y0, x1, y1 in (
+        (-4.44, -0.06, 3.94, 0.06),  # north rooms | south rooms
+        (-0.06, 0.06, 0.06, 3.44),  # living | kitchen
+        (-0.56, -3.94, -0.44, -0.06),  # bedroom | bathroom, utility
+        (1.74, -3.94, 1.86, -0.06),  # bathroom, utility | utility
+        (-0.44, -2.26, 1.74, -2.14),  # bathroom | utility
+    ):
+        _floor(room, "threshold", x0, y0, x1, y1, OAK)
 
     # A ceiling, so the robot's camera sees a room rather than black sky. Named
     # "ceiling" because the browser's overhead view leaves exactly that out.

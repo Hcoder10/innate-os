@@ -9,11 +9,11 @@ direction" -- it is a 1.7 m body on the floor, scenery for rescue scenarios.
 An earlier yaw laid it head-toward -y, straight across the approach to the
 living room pad, and the robot could not reach the waypoint at all.
 
-Goals are judged against the STATION PADS the map marks, not against the props.
-PropRegistry.center_xy rotates center_offset into xy, so a body that settles
-differently reports a centre up to 0.86 m from where it was dropped: a goal
-anchored to it moves when the scenery does, which measures the furniture rather
-than the agent.
+The person and dog goals are Near(robot, prop), with radii wide enough for how
+each body settles (the bedroom is a rect). PropRegistry.center_xy rotates center_offset into xy, so a body
+that settles differently reports a centre up to 0.86 m from where it was
+dropped; the radius has to cover that, or the goal measures the furniture
+rather than the agent.
 
 DRIFT AND REST HEIGHT ARE NOT ENOUGH TO VERIFY A DROP. A prior fix here checked
 only (a) horizontal distance from the drop point and (b) the settled z against
@@ -58,12 +58,9 @@ CHALLENGE = Challenge(
         # running the oracle distinguishes positions; on the scan this one
         # scores 3/3.
         #
-        # RESIDUAL, DISCLOSED IMPERFECTION: the final rest pose is still not a
-        # clean "flat on the back" silhouette. That is a property of
-        # collision="hull" on this mesh -- a convexified human has no flat
-        # resting face, since heels, shoulders and hips are all local high
-        # points -- rather than of any one drop position. Filed as a known
-        # limitation; see FINDINGS.md.
+        # The body is placed, not dropped (sim/props/20_human.py): as a free
+        # convex hull it settled tilted, and the robot driving into it levered
+        # the legs up to camera height.
         Drop("human", -2.0, 1.2, yaw_deg=0),
         Drop("labrador", 1.0, 1.65, yaw_deg=90),
     ],

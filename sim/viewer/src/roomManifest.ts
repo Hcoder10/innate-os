@@ -65,6 +65,14 @@ export function isCeiling(geom: RoomGeom): boolean {
   return geom.name === "ceiling";
 }
 
+/** A room's sky: a closed backdrop box metres outside the building, so the
+ * robot's camera sees sky past a porch instead of black. Never drawn here for
+ * the reason the lid is not, and never framed: the observer frames the
+ * building, not its backdrop (scene_details.py names it "sky"). */
+export function isSky(geom: RoomGeom): boolean {
+  return geom.name === "sky";
+}
+
 /** Radius of the sphere enclosing the geom in its own frame, so a bound built
  * from it holds in any orientation without a per-geom rotation. */
 export function geomRadius(geom: RoomGeom): number {
@@ -88,7 +96,7 @@ export function roomBounds(rooms: RoomInfo[]): Bounds | null {
   let bounds: Bounds | null = null;
   for (const room of rooms) {
     for (const geom of room.geoms) {
-      if (!isValidRoomGeom(geom)) continue;
+      if (!isValidRoomGeom(geom) || isSky(geom)) continue;
       const r = geomRadius(geom);
       const [x, y, z] = geom.pos;
       if (!bounds) {

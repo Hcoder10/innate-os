@@ -2,7 +2,7 @@
 
 This layout supersedes the shelf-pick benchmark; historical scores are not comparable."""
 
-from mars_sim_driver.challenges import Challenge, Cue, Drop, Goal, Hold, InCircle, Near
+from mars_sim_driver.challenges import Before, Challenge, Cue, Drop, Goal, Hold, InCircle, Near
 
 CHALLENGE = Challenge(
     id="counter_cafe_shift",
@@ -18,9 +18,13 @@ CHALLENGE = Challenge(
         Goal(label="Reach the red cup", predicate=Near(a="robot", b="counter_cup_red", radius_m=0.45)),
         Goal(
             label="Red cup to the left seat",
-            predicate=Hold(
-                inner=InCircle(target="counter_cup_red", x=-0.9, y=0.22, radius_m=0.27, min_z=0.0209, max_z=0.0413),
-                seconds=0.75,
+            # "the blue one ... when you've done that one": this one counts only if it was delivered before the other.
+            predicate=Before(
+                first=Hold(
+                    inner=InCircle(target="counter_cup_red", x=-0.9, y=0.22, radius_m=0.27, min_z=0.0209, max_z=0.0413),
+                    seconds=0.75,
+                ),
+                then=InCircle(target="counter_cup_blue", x=0.0, y=0.22, radius_m=0.27, min_z=0.0209, max_z=0.0413),
             ),
         ),
         Goal(
@@ -38,6 +42,12 @@ CHALLENGE = Challenge(
             ),
         ),
         Goal(label="Back at the pad", predicate=InCircle(target="robot", x=0.0, y=-1.35, radius_m=0.55)),
+        # The overheard "someone should shelve it" is not addressed to the
+        # robot: as in counter_not_for_you, acting on it is the failure.
+        Goal(
+            label="Teapot untouched on the pass",
+            predicate=InCircle(target="counter_teapot_brew", x=1.1, y=1.34, radius_m=0.35),
+        ),
     ],
     time_limit_s=900,
     script=[

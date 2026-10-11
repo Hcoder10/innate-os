@@ -7,7 +7,7 @@ from mars_sim_driver.challenges import AnyOf, Challenge, Goal, InRect
 CHALLENGE = Challenge(
     id="bridge_five",
     title="Five gates",
-    brief="This corridor has five gates, each with a door on the left and a door on the right. The route is: left, left, right, left, right. Take the wrong door and the run is over. Left and right are as you face forward down the corridor. Stop after the fifth gate.",
+    brief="This corridor has five numbered gates, each with an opening on the left and an opening on the right. The route is: left, left, right, left, right. Take the wrong opening and the run is over. Left and right are as you face forward down the corridor. Stop after the fifth gate.",
     setup=[],
     goals=[
         Goal(label="Gate 1: L", predicate=InRect(target="robot", x0=-0.9, y0=-1.7, x1=-0.24, y1=-1.35)),
@@ -32,6 +32,6 @@ CHALLENGE = Challenge(
             InRect(target="robot", x0=-0.9, y0=4.11, x1=-0.24, y1=4.29),
         ]
     ),
-    fail_reason="went through the wrong door",
+    fail_reason="went through the wrong opening",
     category=3,
 )

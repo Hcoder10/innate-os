@@ -1,10 +1,11 @@
-"""Observation.blocked_streak is the harness's own count of consecutive
-blocked primitives, and only a completed FORWARD resets it.
+"""A blocked drive ends, and says so in Nav2's own words.
 
-A completed turn proves the robot can rotate in place, not that the space
-ahead is clear; an earlier version that reset on any completed primitive was
-inert on the exact stuck-loop this exists to catch (blocked forward ->
-successful recovery turn -> blocked forward, FINDINGS.md T18).
+This file used to test Observation.blocked_streak, the harness's count of
+blocked turn/forward primitives. Those primitives are gone -- the robot's brain
+drives through navigate_to_position -- and so is the streak note, which the
+brain never had. What carries the failure now is what carries it on the
+robot: the skill's failed event, from Nav2's progress checker (0.5 m in 10 s,
+mars_nav/config/controller.yaml).
 """
 
 from __future__ import annotations
@@ -16,183 +17,101 @@ if __name__ == "__main__":  # run directly: let pytest collect this file (confte
 
     raise SystemExit(pytest.main([__file__] + sys.argv[1:]))
 
-import math
-
-import pytest
-from brain_agent import PRIMITIVE_TIMEOUT_S, BrainAgent, Observation
+import innate_roster as R
+from brain_agent import BrainAgent
 
 
-class FakeMars:
-    def __init__(self, pose=(0.0, 0.0, 0.0)):
-        self._pose = pose
+class Wall:
+    """A robot pressed against something: commands go out, it never moves."""
 
     def pose(self):
-        return self._pose
+        return (0.0, 0.0, 0.0)
 
     def set_cmd_vel(self, v, w):
         pass
 
 
-class FakeBackend:
+class Free:
+    def __init__(self):
+        self.x, self.v = 0.0, 0.0
+
+    def pose(self):
+        return (self.x, 0.0, 0.0)
+
+    def set_cmd_vel(self, v, w):
+        self.v = v
+
+
+class Quiet:
     wants_image = False
-    wants_pose = False
 
 
-class FakeChallenge:
-    brief = "test"
+def _drive(agent, mars, metres, seconds, dt=0.05, move=None):
+    agent._dispatch(mars, 0.0, "navigate_to_position", {"x": metres, "y": 0.0, "local_frame": True})
+    t = 0.0
+    while agent._skill is not None and t < seconds:
+        t += dt
+        if move:
+            move(dt)
+        agent._step_skill(mars, t)
+    return t
 
 
-@pytest.fixture
-def agent() -> BrainAgent:
-    return BrainAgent(FakeBackend())
+class Recorder(Wall):
+    def __init__(self):
+        self.commands = []
+
+    def set_cmd_vel(self, v, w):
+        self.commands.append(v)
 
 
-@pytest.fixture
-def mars() -> FakeMars:
-    return FakeMars()
+def test_a_drive_into_a_wall_backs_off_twice_then_fails():
+    """nav_to_pose.xml: on a stall Nav2 backs up 0.15 m and retries, twice."""
+    agent = BrainAgent(Quiet())
+    mars = Recorder()
+    took = _drive(agent, mars, 2.0, 120.0)
+    assert agent._skill is None
+    stalls = (R.NAV_RECOVERIES + 1) * R.NAV_PROGRESS_S
+    assert stalls <= took < stalls + 3.0
+    assert any(v < 0 for v in mars.commands), "it never backed up"
+    (event,) = agent._events
+    assert event.startswith("Skill navigate_to_position failed: Navigation to (2.0, 0.0, 0.0 deg, local frame) failed")
+    assert "Nav2 reported FAILED with 2.00m still to go after 2 recoveries" in event
 
 
-def blocked_forward(agent, mars, start_pose, moved_frac_target, target_m=1.5):
-    """Simulate a forward primitive that times out having covered only a
-    small fraction of its target -- matches the traced 'gave up ... probably
-    blocked' pattern."""
-    agent._prim = ("forward", target_m, 0.0, start_pose)
-    x, y, yaw = start_pose
-    mars._pose = (x + moved_frac_target * target_m, y, yaw)
-    return agent._step_primitive(mars, PRIMITIVE_TIMEOUT_S + 0.1)
+def test_a_moving_drive_is_not_failed():
+    agent = BrainAgent(Quiet())
+    mars = Free()
+
+    def move(dt):
+        mars.x += mars.v * dt
+
+    _drive(agent, mars, 2.0, 60.0, move=move)
+    (event,) = agent._events
+    assert event == "Skill navigate_to_position completed: Reached position (2.0, 0.0, 0.0 deg)"
+    assert mars.x >= 2.0 - R.NAV_XY_TOL_M
 
 
-def completed_turn(agent, mars, start_pose, degrees):
-    """Simulate a turn primitive that actually reaches its target heading."""
-    agent._prim = ("turn", math.radians(degrees), 0.0, start_pose)
-    x, y, yaw = start_pose
-    mars._pose = (x, y, yaw + math.radians(degrees))
-    return agent._step_primitive(mars, 1.0)
+class NoTurn(Free):
+    """Drives, but a jamb stops it turning."""
 
 
-def completed_forward(agent, mars, start_pose, metres):
-    agent._prim = ("forward", metres, 0.0, start_pose)
-    x, y, yaw = start_pose
-    mars._pose = (x + metres, y, yaw)
-    return agent._step_primitive(mars, 1.0)
+def test_a_blocked_turn_at_the_goal_fails_instead_of_settling_forever():
+    """blaze_l4: in the kitchen doorway the robot reached its goal point and
+    could not turn to the goal heading; the skill ran four minutes with no
+    event, because settling counted as progress whether or not it closed."""
+    agent = BrainAgent(Quiet())
+    mars = NoTurn()
 
+    def move(dt):
+        mars.x += mars.v * dt
 
-# 1. Basic increment on a blocked forward.
-
-
-def test_blocked_streak_increments_on_a_timed_out_forward(agent, mars) -> None:
-    blocked_forward(agent, mars, (0.0, 0.0, 0.0), 0.05)
-    assert agent._blocked_streak == 1
-
-
-# 2. THE MOTIVATING SCENARIO, replayed directly: blocked forward, a
-# SUCCESSFUL recovery turn, blocked forward again -- this is the exact
-# pattern a traced episode showed (see FINDINGS.md T18) and is what an
-# earlier version of this fix was inert against, because resetting on ANY
-# completed primitive (including the turn) wiped the count every cycle
-# and it could never climb past 1. This is the one test that would have
-# caught that before it shipped, not after.
-
-
-def test_a_completed_turn_does_not_reset_the_streak(agent, mars) -> None:
-    blocked_forward(agent, mars, (0.0, 0.0, math.radians(74)), 0.26)
-    assert agent._blocked_streak == 1
-    completed_turn(agent, mars, mars._pose, 75)
-    assert agent._blocked_streak == 1
-
-
-def test_streak_climbs_across_intervening_successful_turns(agent, mars) -> None:
-    blocked_forward(agent, mars, (0.0, 0.0, math.radians(74)), 0.26)
-    completed_turn(agent, mars, mars._pose, 75)
-    blocked_forward(agent, mars, mars._pose, 0.26)
-    assert agent._blocked_streak == 2
-    completed_turn(agent, mars, mars._pose, 75)
-    blocked_forward(agent, mars, mars._pose, 0.26)
-    assert agent._blocked_streak == 3  # matching the traced episode
-
-
-# 3. Only a completed FORWARD resets it -- proves the path was actually clear.
-
-
-def test_a_completed_forward_resets_the_streak_to_zero(agent, mars) -> None:
-    blocked_forward(agent, mars, (0.0, 0.0, 0.0), 0.26)
-    blocked_forward(agent, mars, mars._pose, 0.26)
-    assert agent._blocked_streak == 2
-    completed_forward(agent, mars, mars._pose, 1.5)
-    assert agent._blocked_streak == 0
-
-
-# 4. A blocked TURN also counts toward the streak (both primitive kinds can
-# discover the robot cannot move the way it just tried to).
-
-
-def test_a_timed_out_turn_also_increments_the_streak(agent, mars) -> None:
-    agent._prim = ("turn", math.radians(90), 0.0, (0.0, 0.0, 0.0))
-    mars._pose = (0.0, 0.0, math.radians(2))  # barely turned
-    agent._step_primitive(mars, PRIMITIVE_TIMEOUT_S + 0.1)
-    assert agent._blocked_streak == 1
-
-
-# 5. Non-movement actions go through the REAL _apply() dispatch (not a
-# hand-simulated result) for the actions that need no mars interaction --
-# look/say/answer/finish/unknown -- and must leave the streak untouched.
-# Static analysis (grep) shows _apply() never references _blocked_streak
-# anywhere, but this exercises that property through the actual code path
-# rather than trusting the grep alone.
-
-
-@pytest.mark.parametrize("action", ["look", "say", "answer", "finish", "totally_unknown_action"])
-def test_apply_non_movement_action_leaves_the_streak_untouched(agent, action) -> None:
-    agent._blocked_streak = 2
-    agent._apply(None, 0.0, {"action": action, "args": {}})
-    assert agent._blocked_streak == 2
-
-
-# 6. reset() clears the streak across episodes.
-
-
-def test_reset_clears_blocked_streak(agent, mars) -> None:
-    agent._blocked_streak = 3
-    agent.reset(mars, FakeChallenge())
-    assert agent._blocked_streak == 0
-
-
-# 7. End-to-end wiring: _observe() itself (not a hand-built Observation)
-# carries the real _blocked_streak into the Observation it returns, and
-# the warning threshold/content is driven by that real value.
-
-
-def test_observe_carries_the_real_blocked_streak_through(agent, mars) -> None:
-    agent._blocked_streak = 3
-    assert agent._observe(mars, 10.0).blocked_streak == 3
-
-
-def test_the_resulting_observation_text_includes_the_warning(agent, mars) -> None:
-    agent._blocked_streak = 3
-    text = agent._observe(mars, 10.0).as_text()
-    assert "NOTE:" in text and "3 times" in text
-
-
-def test_observe_at_streak_one_produces_no_warning(agent, mars) -> None:
-    agent._blocked_streak = 1
-    assert "NOTE:" not in agent._observe(mars, 10.0).as_text()
-
-
-# 8. Warning text does not assume "Last action" is the blocked one (it may
-# not be, if a non-movement action happened since) and does not prescribe
-# actions unavailable to a blind backend (no "look" recommendation baked
-# into shared text).
-
-WARN_TEXT = Observation(brief="x", elapsed_s=0.0, blocked_streak=3).as_text()
-
-
-def test_warning_does_not_hardcode_an_ordinal() -> None:
-    assert "4th" not in WARN_TEXT
-
-
-def test_warning_does_not_assume_last_action_is_the_blocked_one() -> None:
-    assert "see 'Last action'" not in WARN_TEXT
-
-
-def test_warning_does_not_prescribe_look() -> None:
-    assert "look first" not in WARN_TEXT.lower()
+    agent._dispatch(mars, 0.0, "navigate_to_position", {"x": 0.5, "y": 0.0, "theta_degrees": 90, "local_frame": True})
+    t = 0.0
+    while agent._skill is not None and t < 60.0:
+        t += 0.05
+        move(0.05)
+        agent._step_skill(mars, t)
+    assert t < 15.0, f"still settling after {t:.0f} s"
+    (event,) = agent._events
+    assert "short of its heading" in event

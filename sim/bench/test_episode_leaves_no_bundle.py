@@ -36,7 +36,7 @@ def test_an_episode_puts_the_bundle_binding_back():
     ep = run_episode(
         "counter",
         "counter_read_the_pass",
-        lambda ch: BrainAgent(EchoBackend([{"action": "finish", "args": "{}"}]), max_turns=1),
+        lambda ch: BrainAgent(EchoBackend([{"action": "wait", "args": "{}"}]), max_turns=1),
         max_sim_s=5.0,
         agent_name="brain:echo",
         render_wh=(64, 48),
@@ -69,7 +69,7 @@ def test_a_world_built_after_an_episode_is_not_furnished_from_it():
     run_episode(
         "counter",
         "counter_read_the_pass",
-        lambda ch: BrainAgent(EchoBackend([{"action": "finish", "args": "{}"}]), max_turns=1),
+        lambda ch: BrainAgent(EchoBackend([{"action": "wait", "args": "{}"}]), max_turns=1),
         max_sim_s=5.0,
         agent_name="brain:echo",
         render_wh=(64, 48),

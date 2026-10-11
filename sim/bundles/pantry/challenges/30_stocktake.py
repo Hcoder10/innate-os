@@ -2,7 +2,7 @@
 
 Movable tasks use floor staging mats; counts are owned by this exact setup."""
 
-from mars_sim_driver.challenges import AllOf, Answered, Challenge, Cue, Drop, Goal, Hold, InCircle, Not
+from mars_sim_driver.challenges import AllOf, Answered, Before, Challenge, Cue, Drop, Goal, Hold, InCircle
 
 CHALLENGE = Challenge(
     id="pantry_stocktake",
@@ -24,19 +24,13 @@ CHALLENGE = Challenge(
         Goal(label="Report the carton count", predicate=Answered(accept=["3", "three"])),
         Goal(
             label="Delivery on the blue box sorting mat",
-            predicate=Hold(
-                inner=AllOf(
-                    preds=[
-                        InCircle(target="pantry_carton_new", x=0, y=1.12, radius_m=0.24, min_z=0.0209, max_z=0.0613),
-                        # "in this order": the carton, then the jar: this one counts only while the other is not delivered yet.
-                        Not(
-                            inner=InCircle(
-                                target="pantry_jar_stray", x=-1.68, y=0.15, radius_m=0.24, min_z=0.0209, max_z=0.0464
-                            )
-                        ),
-                    ]
+            # "in this order": the carton, then the jar: this one counts only if it was delivered before the other.
+            predicate=Before(
+                first=Hold(
+                    inner=InCircle(target="pantry_carton_new", x=0, y=1.12, radius_m=0.24, min_z=0.0209, max_z=0.0613),
+                    seconds=0.75,
                 ),
-                seconds=0.75,
+                then=InCircle(target="pantry_jar_stray", x=-1.68, y=0.15, radius_m=0.24, min_z=0.0209, max_z=0.0464),
             ),
         ),
         Goal(
@@ -46,7 +40,19 @@ CHALLENGE = Challenge(
                 seconds=0.75,
             ),
         ),
-        Goal(label="Back at the door", predicate=InCircle(target="robot", x=0.0, y=-1.45, radius_m=0.55)),
+        # The deliveries are judged again here, at the end. Goals latch, and a
+        # probe's jar lay on its mat for the 0.75 s hold, then rolled off to
+        # the shelf kickboard -- and the run passed 5/5 with it there.
+        Goal(
+            label="Back at the door, both items still on their mats",
+            predicate=AllOf(
+                preds=[
+                    InCircle(target="robot", x=0.0, y=-1.45, radius_m=0.55),
+                    InCircle(target="pantry_carton_new", x=0, y=1.12, radius_m=0.24, min_z=0.0209, max_z=0.0613),
+                    InCircle(target="pantry_jar_stray", x=-1.68, y=0.15, radius_m=0.24, min_z=0.0209, max_z=0.0464),
+                ]
+            ),
+        ),
     ],
     time_limit_s=720,
     script=[Cue(text="Next, the delivery carton, the misplaced jar, and then back to the starting pad.", after_goal=1)],

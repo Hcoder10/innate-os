@@ -31,6 +31,7 @@ from mars_sim_driver.challenges import (  # noqa: E402
     AllOf,
     Answered,
     AnyOf,
+    Before,
     Challenge,
     Hold,
     InCircle,
@@ -78,6 +79,8 @@ def requirement(p: Predicate) -> str:
         return NAV_ONLY
     if isinstance(p, Not):
         return NAV_ONLY  # an order constraint: satisfied by not having done the later thing yet
+    if isinstance(p, Before):
+        return requirement(p.first)  # the order is kept by doing the goals in order
     if isinstance(p, Answered):
         return NAV_ONLY  # nothing has to move; the oracle just reports
     if isinstance(p, Said):
@@ -111,6 +114,11 @@ def steps_for_goal(p: Predicate) -> list[tuple] | None:
     """Steps that make one goal true, or None if this planner cannot."""
     p, dwell = _unwrap(p)
     tail: list[tuple] = [("wait", dwell + 0.5)] if dwell else []
+
+    if isinstance(p, Before):
+        # Goals are planned in order, so `first` is done before `then`.
+        s = steps_for_goal(p.first)
+        return None if s is None else s + tail
 
     if isinstance(p, AllOf):
         out: list[tuple] = []
@@ -164,9 +172,14 @@ def plan_for(ch: Challenge) -> list[tuple] | None:
     order -- and that ordering is exactly why a plan can be built at all.
     """
     out: list[tuple] = []
-    for g in ch.goals:
+    for i, g in enumerate(ch.goals):
         s = steps_for_goal(g.predicate)
         if s is None:
             return None
         out += s
+        if any(cue.after_goal == i for cue in ch.script):
+            # The engine judges nothing past this goal until the line it gates
+            # has been spoken (a question is not answered before it is asked).
+            # The oracle stays deaf; it gives the asker a moment instead.
+            out.append(("wait", 1.0))
     return out

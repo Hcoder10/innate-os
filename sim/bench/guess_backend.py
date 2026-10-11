@@ -54,12 +54,15 @@ class GuessBackend:
     def decide(self, obs, menu) -> dict:  # noqa: ARG002
         roll = self._r.random()
         if roll < self.SPEAK_P:
-            guess = self._r.choice(GUESSES)
-            # Both envelopes: a challenge should be no easier to guess through
-            # the structured answer channel than through speech.
-            if self._r.random() < 0.5:
-                return {"action": "answer", "args": {"value": guess}}
-            return {"action": "say", "args": {"text": guess}}
-        if roll < 0.7:
-            return {"action": "forward", "args": {"metres": round(self._r.uniform(0.1, 1.5), 2)}}
-        return {"action": "turn", "args": {"degrees": round(self._r.uniform(-180, 180), 1)}}
+            # Plain text is the robot's only voice, so a guess is speech.
+            return {"action": "wait", "args": {}, "say": self._r.choice(GUESSES)}
+        # Random motion through the robot's own tool: a local goal around it.
+        return {
+            "action": "navigate_to_position",
+            "args": {
+                "x": round(self._r.uniform(-0.5, 1.5), 2),
+                "y": round(self._r.uniform(-1.0, 1.0), 2),
+                "theta_degrees": round(self._r.uniform(-180, 180), 1),
+                "local_frame": True,
+            },
+        }

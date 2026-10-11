@@ -2,7 +2,7 @@
 
 This layout supersedes the shelf-pick benchmark; historical scores are not comparable."""
 
-from mars_sim_driver.challenges import Challenge, Cue, Drop, Goal, Hold, InCircle, Near
+from mars_sim_driver.challenges import Before, Challenge, Cue, Drop, Goal, Hold, InCircle, Near
 
 CHALLENGE = Challenge(
     id="counter_second_order",
@@ -17,9 +17,13 @@ CHALLENGE = Challenge(
         Goal(label="Reach the red cup", predicate=Near(a="robot", b="counter_cup_red", radius_m=0.45)),
         Goal(
             label="Red cup to the left seat",
-            predicate=Hold(
-                inner=InCircle(target="counter_cup_red", x=-0.9, y=0.22, radius_m=0.27, min_z=0.0209, max_z=0.0413),
-                seconds=0.75,
+            # "when you've done that, ... the blue one": this one counts only if it was delivered before the other.
+            predicate=Before(
+                first=Hold(
+                    inner=InCircle(target="counter_cup_red", x=-0.9, y=0.22, radius_m=0.27, min_z=0.0209, max_z=0.0413),
+                    seconds=0.75,
+                ),
+                then=InCircle(target="counter_cup_blue", x=0.9, y=0.22, radius_m=0.27, min_z=0.0209, max_z=0.0413),
             ),
         ),
         Goal(

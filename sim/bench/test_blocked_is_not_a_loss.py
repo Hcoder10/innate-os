@@ -137,6 +137,6 @@ def test_a_working_agent_is_never_blocked():
         think_charge_s = 0.0
 
         def decide(self, obs, menu):
-            return {"action": "finish", "args": {}}
+            return {"action": "wait", "args": {}}
 
     assert BrainAgent(Fine(), max_turns=3).blocked_reason == ""

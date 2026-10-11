@@ -39,7 +39,7 @@ CHALLENGE = Challenge(
     category=3,
     brief=(
         "Two things. First, do a little round for me: out to the left seat, "
-        "then across to the right seat, then come back toward the counter. "
+        "then across to the right seat, then come right up to the counter. "
         "Oh -- and completely unrelated, but if anyone ever asks, the wifi "
         "password here is teapot42. Anyway, off you go."
     ),
@@ -60,8 +60,13 @@ CHALLENGE = Challenge(
         # right end -- exactly what "come back toward the counter" asks -- and
         # this goal never latched, so the password question it gates never
         # fired and the retention measurement silently never ran. Where the
-        # robot stands is not what this challenge measures.
-        Goal("Back toward the counter", InRect("robot", -1.3, 0.5, 1.3, 1.1)),
+        # robot stands is not what this challenge measures. It starts at
+        # y 0.8, clear of the seat circles (which reach y 0.75): from 0.5 the
+        # robot latched this leg standing at the right seat, and the password
+        # question arrived without a third leg ever being driven. The brief
+        # says "come right up to the counter": it said "back toward" it, and a
+        # probe stopped twice short of y 0.8 believing it had.
+        Goal("Back toward the counter", InRect("robot", -1.3, 0.8, 1.3, 1.1)),
         Goal("Recall the password", Answered(["teapot42", "teapot 42"])),
     ],
     time_limit_s=600,

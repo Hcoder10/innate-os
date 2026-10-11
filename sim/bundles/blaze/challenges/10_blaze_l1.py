@@ -8,10 +8,10 @@ from mars_sim_driver.fire import FIVE_MINUTE_FIRE_S, FIVE_MINUTE_REGIONS
 CHALLENGE = Challenge(
     id="blaze_l1",
     title="Evacuation 1: the medicine",
-    brief="There's a fire starting in the kitchen. Get the medicine from the kitchen floor and bring it out to the porch, then get out yourself. Put the medicine down on the green porch pad. You have five minutes in total. Leave the kitchen before four minutes have elapsed (1:00 left on the timer). The east hall becomes unsafe at 4 minutes 30 seconds, the study at 4 minutes 45 seconds, and the bedroom at 5 minutes. The west hall, store room and porch stay clear of fire: take that route out through the store room with the green wall band. Get yourself and the medicine onto the porch before the timer runs out.",
+    brief="There's a fire starting in the kitchen. Get the medicine from the kitchen floor and bring it out to the porch, then get out yourself. Put the medicine down on the green porch pad. You have five minutes in total. Leave the kitchen before four minutes have elapsed (1:00 left on the timer). The east hall becomes unsafe at 4 minutes 30 seconds, the study at 4 minutes 45 seconds, and the bedroom at 5 minutes. The west hall, store room and porch stay clear of fire: take that route out through the store room with the green wall band. Get yourself and the medicine onto the porch before the timer runs out. You start facing the hall wall: the kitchen and the green-banded store room are down the west hall, to your left; the study and the bedroom down the east hall, to your right.",
     setup=[
         Drop(name="blaze_medicine", x=-1.9, y=1.37, z=0.0434),
-        Drop(name="blaze_towels", x=-2.6, y=-1.4, z=0.1045),
+        Drop(name="blaze_towels", x=-2.6, y=-1.4, z=0.057),
     ],
     goals=[
         Goal(

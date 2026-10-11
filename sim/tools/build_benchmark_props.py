@@ -87,11 +87,22 @@ def box_prop(prop, kind):
         for x, z in ((-hx * 0.3, hz * 0.2), (hx * 0.3, hz * 0.05)):
             block(m, (hx * 0.13, hy * 0.04, hz * 0.15), (x, -hy * 1.35, z), 5)
             block(m, (hx * 0.20, hy * 0.04, hz * 0.20), (x, -hy * 1.35, z - hz * 0.35), 4)
+    elif kind == "towels":
+        # Three folded towels in a low stack, each a slab with its rolled fold
+        # at the front. It was a labelled pack standing on end: at the robot's
+        # 640x480 the label panels read as glass blocks, and 0.185 m tall on a
+        # 0.06 m base it fell over at a touch.
+        t = hz / 3
+        for i, material in enumerate((0, 7, 1)):
+            z = -hz + t * (2 * i + 1)
+            dx = (-1, 1, 0)[i] * hx * 0.03
+            slab = (hx * 0.97, hy - t, t * 0.96)
+            block(m, slab, (dx, -t, z), material)
+            roll = trimesh.creation.cylinder(radius=t * 0.96, height=slab[0] * 2, sections=20)
+            roll.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, (0, 1, 0)))
+            m.surface(roll.vertices + (dx, hy - t, z), roll.faces, [((material + 0.5) / 8, 0.1)] * len(roll.vertices))
     else:
         m.box(prop.size)
-        if kind == "towels":
-            for z in (-hz * 0.5, 0, hz * 0.5):
-                block(m, (hx * 1.004, hy * 1.004, hz * 0.025), (0, 0, z), 7)
     return m
 
 

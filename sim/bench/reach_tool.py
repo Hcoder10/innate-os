@@ -27,7 +27,7 @@ Deliberately NOT a full inverse-kinematics solver. The harness's own judge
 does not check joint angles either -- it checks a horizontal distance and a
 height, because that is what the real arm's tucked-fold envelope reduces to
 for anything sitting on a shelf, counter or floor in front of the robot (see
-brain_agent.py's PICK_REACH_M / ARM_Z_MAX_M, and core.py's joint2_min_target
+innate_roster.py's GRASP_REACH_M / PICK_Z_MAX_M, and core.py's joint2_min_target
 for why a full-envelope model earns its keep only once tasks ask the arm to
 work *behind* or *beside* the robot, which none in this suite do). A closed-
 form envelope check is the elegant tool for the shape of task this suite
@@ -39,7 +39,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from brain_agent import ARM_Z_MAX_M, PICK_REACH_M
+from innate_roster import GRASP_REACH_M as PICK_REACH_M
+from innate_roster import PICK_Z_MAX_M as ARM_Z_MAX_M
 
 # How close the BASE CENTRE can get to a vertical obstacle (shelf front,
 # counter face) before the footprint itself is the limit, independent of arm

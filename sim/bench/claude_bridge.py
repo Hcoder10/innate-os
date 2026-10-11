@@ -27,10 +27,12 @@ server ports, no Gemini key, no Innate proxy. It can run beside the live
 evaluation without sharing anything but CPU cores.
 
 FIDELITY RULES, so the numbers mean something:
-  * The agent gets the standard menu, the standard 40-turn budget and the
-    challenge's own time limit -- not the live run's tighter wall caps,
-    because a probe for false negatives must not add ways to fail.
-  * Camera at the real 640x480.
+  * The agent gets the robot's own tools -- the skills of the agent innate's
+    sim runs by default, plus the brain's built-ins (innate_roster.py) --
+    the standard turn budget and the challenge's own time limit, not the
+    live run's tighter wall caps, because a probe for false negatives must
+    not add ways to fail.
+  * Head and wrist cameras at the real 640x480, as the brain gets them.
   * Nothing is added to the observation that the production brain would not
     have. The responder is instructed to read ONLY req/resp/frame files.
 
@@ -100,6 +102,7 @@ class ClaudeBridgeBackend:
             "turn_in_episode": self.turn_in_episode,
             "observation": obs.as_text(),
             "image": obs.image_path,
+            "wrist_image": obs.wrist_image_path,
             "menu": menu,
         }
         tmp = self.bridge / f".req_{n:05d}.tmp"
@@ -128,8 +131,9 @@ class ClaudeBridgeBackend:
         args = data.get("args") or {}
         if not isinstance(args, dict):
             args = {}
-        self._log("resp", {"n": n, "action": action, "args": args})
-        return {"action": action, "args": args}
+        say = str(data.get("say") or "")
+        self._log("resp", {"n": n, "action": action, "args": args, "say": say})
+        return {"action": action, "args": args, "say": say}
 
 
 def _run_one(map_name: str, cid: str, bridge: Path, out: Path) -> int:

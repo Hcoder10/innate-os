@@ -38,14 +38,17 @@ CHALLENGE = Challenge(
     title="The unspoken request",
     category=2,
     brief=(
-        "Hello? Is anyone -- oh! You. I've been sitting here at the middle "
+        "Hello? Is anyone -- oh! You. I've been waiting here at the middle "
         "seat waving for five minutes and not one person has come over. "
         "Honestly."
     ),
-    # The customer the brief is spoken by, behind the middle stool and facing
-    # the room. The stool was empty, so "sitting here at the middle seat"
-    # pointed at nobody.
-    setup=[Drop("cafe_customer", 0.0, 0.78, yaw_deg=0)],
+    # The customer the brief is spoken by, standing behind the middle stool
+    # and facing the room. The stool was empty, so "here at the middle seat"
+    # pointed at nobody; and the scan stands, so she says "waiting", not
+    # "sitting". Beside the stool rather than behind it: from the robot's
+    # height the stool stood in front of her legs, and a played run read her
+    # as standing inside it.
+    setup=[Drop("cafe_customer", 0.17, 0.74, yaw_deg=0)],
     # MEASURED GUESSING FLOOR: a baseline that blurts plausible answers and
     # never looks (`--agents brain:guess`) still passes this about 1 run in 3,
     # and lengthening the approach hold further starts failing the oracle
@@ -85,6 +88,12 @@ CHALLENGE = Challenge(
                             r"help you",
                             r"take your order",
                             r"sorry (for|about) the wait",
+                            # A probe at the customer said "Is there something
+                            # I can bring you?" and "Just tell me what you need
+                            # and I will take care of it", and neither counted.
+                            r"(anything|something) (that )?i can (get|bring|do)",
+                            r"can i (get|bring|fetch) you",
+                            r"what you(('d| would) like| need| want)",
                         ],
                         oracle_line="Sorry for the wait -- how can I help you?",
                     ),

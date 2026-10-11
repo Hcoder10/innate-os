@@ -1,9 +1,9 @@
 """Exercise every part of BrainAgent with a scripted backend and no network.
 
 This exists because the expensive way to discover that the agent loop is broken
-is halfway through a paid sweep. EchoBackend makes the turn loop, the motion
-primitives, pick/place and the speech channel all runnable offline, so a
-regression in any of them shows up in fifteen seconds.
+is halfway through a paid sweep. EchoBackend makes the turn loop, the robot's
+skills and the speech channel all runnable offline, so a regression in any of
+them shows up in fifteen seconds.
 
 One episode is run for the whole module (it builds a world); every test reads
 from that same episode.
@@ -24,14 +24,13 @@ from brain_agent import BrainAgent
 from runner import Episode, run_episode
 
 SCRIPT = [
-    {"action": "say", "args": '{"text": "On my way."}'},
-    {"action": "forward", "args": '{"metres": 1.2}'},
-    {"action": "turn", "args": '{"degrees": 30}'},
-    {"action": "forward", "args": '{"metres": 0.4}'},
-    {"action": "pick", "args": "{}"},
-    {"action": "place", "args": "{}"},
-    {"action": "say", "args": '{"text": "I cannot reach the top shelf."}'},
-    {"action": "finish", "args": "{}"},
+    {"action": "wait", "args": "{}", "say": "On my way."},
+    {"action": "navigate_to_position", "args": '{"x": 1.2, "y": 0.0, "local_frame": true}'},
+    {"action": "navigate_to_position", "args": '{"x": 0.0, "y": 0.0, "theta_degrees": 30, "local_frame": true}'},
+    {"action": "navigate_to_position", "args": '{"x": 0.4, "y": 0.0, "local_frame": true}'},
+    {"action": "pick_any_object", "args": '{"prompt": "the teapot"}'},
+    {"action": "open_gripper", "args": "{}"},
+    {"action": "wait", "args": "{}", "say": "I cannot reach the top shelf."},
 ]
 
 
@@ -40,7 +39,7 @@ def episode() -> tuple[Episode, BrainAgent]:
     held: dict = {}
 
     def make(ch):
-        agent = BrainAgent(EchoBackend(SCRIPT), max_turns=20)
+        agent = BrainAgent(EchoBackend(SCRIPT), max_turns=len(SCRIPT))
         agent.name = "brain:echo"
         held["agent"] = agent
         return agent
@@ -76,9 +75,15 @@ def test_every_turn_is_logged(episode) -> None:
 
 def test_args_parsed_from_json_strings(episode) -> None:
     _, agent = episode
-    assert agent.transcript()[1]["args"] == {"metres": 1.2}
+    assert agent.transcript()[1]["args"] == {"x": 1.2, "y": 0.0, "local_frame": True}
 
 
-def test_finish_ends_the_episode(episode) -> None:
+def test_a_shelf_item_is_not_picked_from_the_floor(episode) -> None:
+    """pick_any_object picks off the floor; the teapot is on a shelf."""
+    _, agent = episode
+    assert agent._carrying is None
+
+
+def test_the_budget_ends_the_episode(episode) -> None:
     ep, agent = episode
     assert (ep.reason and "plan" in ep.reason) or agent.done
