@@ -181,6 +181,24 @@ def test_a_real_ctrl_c_in_the_root_process_still_propagates():
         run_episode(MAP, CID, lambda ch: _Crashing(oracle_for(ch), exc=KeyboardInterrupt), agent_name="oracle")
 
 
+def test_a_ctrl_c_that_propagates_still_closes_the_world(monkeypatch):
+    """The direct caller's Ctrl-C was re-raised past the cleanup at the end of
+    run_episode: the world's renderers were left to garbage collection and the
+    process stayed pointed at the map's bundle (found by review)."""
+    import os
+
+    from mars_sim_driver import core
+
+    closed = []
+    close = core.VirtualMars.close
+    monkeypatch.setattr(core.VirtualMars, "close", lambda self: closed.append(self) or close(self))
+    before = os.environ.get("VIRTUAL_MARS_ASSETS"), core.ASSETS_DIR
+    with pytest.raises(KeyboardInterrupt):
+        run_episode(MAP, CID, lambda ch: _Crashing(oracle_for(ch), exc=KeyboardInterrupt), agent_name="oracle")
+    assert len(closed) == 1
+    assert (os.environ.get("VIRTUAL_MARS_ASSETS"), core.ASSETS_DIR) == before
+
+
 def test_a_ctrl_c_during_setup_also_propagates():
     """Setup is often the expensive part; an interrupt there is control flow,
     not a blocked episode."""

@@ -559,6 +559,8 @@ def run_episode(
         # only the agent can produce one, and in the main process it is the
         # user and must not be swallowed.
         if user_owns_interrupt and isinstance(exc, KeyboardInterrupt):
+            _restore()
+            _close_world(mars)
             raise
         crash = describe(exc)
         reason = reason or f"agent crashed: {crash}"
@@ -585,6 +587,8 @@ def run_episode(
             return fn()
         except BaseException as exc:  # noqa: BLE001
             if user_owns_interrupt and isinstance(exc, KeyboardInterrupt):
+                _restore()
+                _close_world(mars)
                 raise
             note = f"{what} failed: {describe(exc)}"
             crash = f"{crash}; also {note}" if crash else note
@@ -637,7 +641,9 @@ def run_episode(
     # The run is over and the episode is built from what it left behind, so
     # the process can stop pointing at this map's bundle. The two early
     # returns above restore it as well; the run loop's own failures are caught
-    # into `crash` rather than raised, so this line is reached either way.
+    # into `crash` rather than raised, so this line is reached either way --
+    # except a direct caller's Ctrl-C, which restores and closes before it
+    # propagates.
     _restore()
     # Everything above has been read out of the world; free its renderers.
     _close_world(mars)

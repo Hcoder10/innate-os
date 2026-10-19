@@ -60,6 +60,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -113,6 +114,16 @@ def allowed_networks(extra: str = "", docker: tuple = ()) -> tuple:
     return tuple(networks)
 
 
+def interfaces() -> frozenset | None:
+    """This host's interface names, or None where /sys/class/net does not
+    exist. A new Docker network is a new br-<id> here, so a change in this set
+    is the cheap sign that the bridges are worth reading again."""
+    try:
+        return frozenset(os.listdir("/sys/class/net"))
+    except OSError:
+        return None
+
+
 def trusted(client_ip: str, networks: tuple = TRUSTED_NETWORKS) -> bool:
     """Whether a request from client_ip may be relayed with the key injected."""
     try:
@@ -137,7 +148,9 @@ class Handler(BaseHTTPRequestHandler):
     networks = TRUSTED_NETWORKS
     extra = ""  # GEMINI_SHIM_ALLOW, kept for re-reading the bridges
     refreshed_at = float("-inf")
+    links: frozenset | None = None  # interfaces() at the last re-read
     REFRESH_S = 10.0
+    refresh_lock = threading.Lock()
     # HTTP/1.1 with CHUNKED framing, and this is not a style choice.
     #
     # Google serves the turn stream chunked, which is self-terminating: the
@@ -206,13 +219,22 @@ class Handler(BaseHTTPRequestHandler):
         stack: run_eval.sh starts it before `innate_up.sh` recreates the
         compose network, so on a fresh boot that bridge did not exist when
         the shim started, and a re-up can land on a new subnet. At most once
-        per REFRESH_S, so a LAN client cannot make it spawn `ip` per request."""
-        now = time.monotonic()
-        if now - cls.refreshed_at < cls.REFRESH_S:
-            return False
-        cls.refreshed_at = now
-        cls.networks = allowed_networks(cls.extra, docker_networks())
-        return trusted(client, cls.networks)
+        per REFRESH_S unless the host's interfaces changed, so a LAN client
+        cannot make it spawn `ip` per request, nor -- by asking just before a
+        bridge appears -- hold that bridge's first request off for REFRESH_S.
+
+        Under one lock: requests from a new bridge arrive together, and one
+        that found the timestamp already moved used to be refused against the
+        old list while the first was still reading the new one."""
+        with cls.refresh_lock:
+            if trusted(client, cls.networks):  # re-read while this one waited
+                return True
+            now, links = time.monotonic(), interfaces()
+            if links == cls.links and now - cls.refreshed_at < cls.REFRESH_S:
+                return False
+            cls.refreshed_at, cls.links = now, links
+            cls.networks = allowed_networks(cls.extra, docker_networks())
+            return trusted(client, cls.networks)
 
     def _relay(self, method: str) -> None:
         started = time.time()

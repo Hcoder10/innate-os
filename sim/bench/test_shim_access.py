@@ -77,12 +77,14 @@ def test_an_untrusted_client_is_refused_before_anything_goes_upstream() -> None:
     test's own connection is the intruder. Upstream is the discard port: had
     the request been relayed, the answer would be a 502, not a 403."""
     saved = gemini_shim.Handler.networks, gemini_shim.UPSTREAM, gemini_shim.Handler.api_key
-    saved_at = gemini_shim.Handler.refreshed_at
+    saved_at = gemini_shim.Handler.refreshed_at, gemini_shim.Handler.links
     server = ThreadingHTTPServer(("127.0.0.1", 0), gemini_shim.Handler)
     serving = threading.Thread(target=server.serve_forever, daemon=True)
     try:
         gemini_shim.Handler.networks = (ipaddress.ip_network("192.0.2.0/24"),)  # TEST-NET-1: nobody
-        gemini_shim.Handler.refreshed_at = time.monotonic()  # no re-read: it would restore loopback
+        # No re-read: it would restore loopback.
+        gemini_shim.Handler.refreshed_at = time.monotonic()
+        gemini_shim.Handler.links = gemini_shim.interfaces()
         gemini_shim.UPSTREAM = "http://127.0.0.1:9"
         gemini_shim.Handler.api_key = "test-key-not-real"
         serving.start()
@@ -93,15 +95,23 @@ def test_an_untrusted_client_is_refused_before_anything_goes_upstream() -> None:
         server.shutdown()
         server.server_close()
         gemini_shim.Handler.networks, gemini_shim.UPSTREAM, gemini_shim.Handler.api_key = saved
-        gemini_shim.Handler.refreshed_at = saved_at
+        gemini_shim.Handler.refreshed_at, gemini_shim.Handler.links = saved_at
+
+
+def _fresh(monkeypatch: pytest.MonkeyPatch, links: frozenset = frozenset({"lo", "eth0"})) -> type:
+    """The handler as at startup, on a host whose interfaces are `links`."""
+    h = gemini_shim.Handler
+    monkeypatch.setattr(h, "networks", gemini_shim.TRUSTED_NETWORKS)
+    monkeypatch.setattr(h, "refreshed_at", float("-inf"))
+    monkeypatch.setattr(h, "links", None)
+    monkeypatch.setattr(gemini_shim, "interfaces", lambda: links)
+    return h
 
 
 def test_a_bridge_created_after_startup_is_found(monkeypatch: pytest.MonkeyPatch) -> None:
     """run_eval.sh starts the shim before `innate_up.sh` recreates the
     compose network: the container's bridge may not exist yet at startup."""
-    h = gemini_shim.Handler
-    monkeypatch.setattr(h, "networks", gemini_shim.TRUSTED_NETWORKS)
-    monkeypatch.setattr(h, "refreshed_at", float("-inf"))
+    h = _fresh(monkeypatch)
     monkeypatch.setattr(gemini_shim, "docker_networks", lambda: (ipaddress.ip_network("172.18.0.0/16"),))
     assert h._refreshed_trusts("172.18.0.5")
     assert gemini_shim.trusted("172.18.0.5", h.networks)
@@ -109,12 +119,50 @@ def test_a_bridge_created_after_startup_is_found(monkeypatch: pytest.MonkeyPatch
 
 def test_refreshing_is_rate_limited(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = []
-    h = gemini_shim.Handler
-    monkeypatch.setattr(h, "networks", gemini_shim.TRUSTED_NETWORKS)
-    monkeypatch.setattr(h, "refreshed_at", float("-inf"))
+    h = _fresh(monkeypatch)
     monkeypatch.setattr(gemini_shim, "docker_networks", lambda: calls.append(1) or ())
     for _ in range(5):
         assert not h._refreshed_trusts("192.168.1.20")
+    assert len(calls) == 1
+
+
+def test_a_new_interface_is_read_inside_the_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A LAN client asking just before the bridge appears must not hold the
+    container's first request off for REFRESH_S (found by review)."""
+    links = [frozenset({"lo", "eth0"})]
+    bridges = [()]
+    h = _fresh(monkeypatch)
+    monkeypatch.setattr(gemini_shim, "interfaces", lambda: links[0])
+    monkeypatch.setattr(gemini_shim, "docker_networks", lambda: bridges[0])
+    assert not h._refreshed_trusts("192.168.1.20")
+    links[0] = frozenset({"lo", "eth0", "br-3f2a91c0d4e1"})
+    bridges[0] = (ipaddress.ip_network("172.18.0.0/16"),)
+    assert h._refreshed_trusts("172.18.0.5")
+
+
+def test_concurrent_requests_wait_for_the_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Requests from a new bridge arrive together. One that found the
+    timestamp already moved was refused against the old list while the first
+    was still reading the new one (found by review)."""
+    calls = []
+
+    def slow_bridges():
+        calls.append(1)
+        time.sleep(0.3)
+        return (ipaddress.ip_network("172.18.0.0/16"),)
+
+    h = _fresh(monkeypatch)
+    monkeypatch.setattr(gemini_shim, "docker_networks", slow_bridges)
+    answers = []
+    first = threading.Thread(target=lambda: answers.append(h._refreshed_trusts("172.18.0.5")))
+    first.start()
+    while not calls:
+        time.sleep(0.01)
+    second = threading.Thread(target=lambda: answers.append(h._refreshed_trusts("172.18.0.6")))
+    second.start()
+    first.join(5)
+    second.join(5)
+    assert answers == [True, True]
     assert len(calls) == 1
 
 
