@@ -53,9 +53,11 @@ CHALLENGE = Challenge(
         # of them (y 0.20). The brief says "by the seat" and never mentions a
         # mat; a probe waited 0.52 m beside the right stool for the rest of
         # the run and was 0.66 m from the mat's centre -- by the seat, failed.
-        # Standing on the mat is still 0.42 m from the stool, inside.
-        Goal("Take up post at the left seat", Hold(InCircle("robot", -0.90, 0.62, 0.55), seconds=5.0)),
-        Goal("Move to the right seat", Hold(InCircle("robot", 0.90, 0.62, 0.55), seconds=8.0)),
+        # Standing on the mat is still 0.42 m from the stool, inside. 0.65,
+        # not 0.55: driving up to a stool with go_to_point_in_view stops
+        # 0.52-0.58 m from its centre, which straddled 0.55.
+        Goal("Take up post at the left seat", Hold(InCircle("robot", -0.90, 0.62, 0.65), seconds=5.0)),
+        Goal("Move to the right seat", Hold(InCircle("robot", 0.90, 0.62, 0.65), seconds=8.0)),
     ],
     time_limit_s=360,
 )

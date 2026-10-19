@@ -57,19 +57,22 @@ CHALLENGE = Challenge(
         # Centred on the stools themselves, as in counter_route_change. These
         # circles used to sit on the mats in front of the stools, where a
         # robot waiting beside a stool was 0.58 m out and failed here while
-        # the same spot passed there.
-        Goal("Out to the left seat", Hold(InCircle("robot", -0.90, 0.62, 0.55), seconds=2.0)),
-        Goal("Across to the right seat", Hold(InCircle("robot", 0.90, 0.62, 0.55), seconds=2.0)),
+        # the same spot passed there. 0.65, not 0.55: driving up to a stool
+        # with go_to_point_in_view stops 0.52-0.58 m from its centre (six
+        # player runs), which straddled 0.55 -- a pass by millimetres or a
+        # fail by centimetres depending on the approach angle.
+        Goal("Out to the left seat", Hold(InCircle("robot", -0.90, 0.62, 0.65), seconds=2.0)),
+        Goal("Across to the right seat", Hold(InCircle("robot", 0.90, 0.62, 0.65), seconds=2.0)),
         # The green counter mat (0, 1.02), named in the brief. With the seats
-        # on the stools their circles reach y 1.17, so the old corridor along
+        # on the stools their circles reach y 1.27, so the old corridor along
         # the whole counter front (y 0.8-1.1) latched while the robot was
         # still standing at the right seat, and the password question came
         # with no third leg driven. The mat circle is 0.985 m from each seat
-        # centre against 0.90 of radii: the legs cannot overlap. A corridor
+        # centre against 0.95 of radii: the legs cannot overlap. A corridor
         # rather than a spot was chosen once because "come back toward the
         # counter" named no place, and a probe ended at the counter's right
         # end; the brief now names the mat.
-        Goal("Up to the counter", InCircle("robot", 0.0, 1.02, 0.35)),
+        Goal("Up to the counter", InCircle("robot", 0.0, 1.02, 0.30)),
         Goal("Recall the password", Answered(["teapot42", "teapot 42"])),
     ],
     time_limit_s=600,
