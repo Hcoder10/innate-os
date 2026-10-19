@@ -445,8 +445,8 @@ level was found unpassable. What they did find, all fixed:
   eight") negated the count; only the first mention of the number was
   checked; and "I think" counted as a hedge. Hit: read_the_pass,
   which_colour, follow_up, carried_detail, count_ring, count_doors, both
-  jar counts. Now whole words, the last three words of the clause, every
-  mention (`test_answer_semantics.py`).
+  jar counts. Now whole words and every mention, under the rules described
+  below (`test_answer_semantics.py`).
 - **Judges that passed the wrong thing.** `pantry_misfiled` accepted the bare
   word "jar", so "On my way to the jar shelves" -- or the brief read back --
   passed at t=0; it now needs the item named. `counter_which_one` took any
@@ -498,14 +498,50 @@ footprint is `rounds_narrow_door`'s deliberate control, and the players got
 through it with the robot's tools; the photo on blaze_l4's bedside table is
 the intended thing to leave behind (the brief now says where it is).
 
-Checked after the fixes: every world passed the validity gate again (the
+The PR's automated review and three rounds of adversarial review of these
+fixes then found what the fixes broke or missed, also fixed:
+
+- **One set of rules for "said it and meant it".** Patching each speech
+  judge's regexes in turn kept trading honest failures for dishonest passes
+  ("I don't think there are five" passed once negation was narrowed to the
+  last three words; "Three cups -- would you like one?" failed once questions
+  were). Answered, and Said where a level opts in, now share one rule set,
+  each rule with a reach: a plain negator in the last three words; phrases
+  that disown the rest of their clause ("I don't think", "not true", "I
+  doubt", "whether"); doubt that disowns the rest of the sentence ("maybe",
+  "my guess", "hard to tell"); a question in the token's own clause; and
+  negations about something else exempt ("not counting", "no problem", a
+  "no" that corrects the asker). Typographic apostrophes are normalised.
+  About 150 phrasings are pinned in `test_answer_semantics.py`,
+  `test_misfiled_phrasings.py` and `test_out_of_reach_phrasings.py`.
+- **`counter_carried_detail`'s last leg latched at the second seat**: the
+  stool-centred seat circles overlapped the counter corridor. The leg is now
+  the green counter mat, named in the brief, 0.085 m clear of both circles.
+- **`pantry_misfiled`** is judged where the stray was left (the correctly
+  shelved jam jar of the same red is 2.6 m away; near the stray itself, the
+  test moved with it to the amber mat) by the answer judge on "jar"/"jam",
+  after removing the places jars belong.
+- **Count levels** take the count where the brief says to give it
+  (`pantry_count_jars`, `workshop_count_benches`), still in one phase with
+  arriving.
+- **Harness**: the Gemini shim trusted all of 172.16/12 -- LANs, VPNs and
+  WSL's own NAT -- and now trusts only this host's Docker bridges, re-read
+  when the stack recreates them; the stack backend's search turned 0 degrees
+  forever after one lap, a null distance ended the episode, and the model
+  could overwrite the harness's release records; two cups shared one memory
+  key; two backends were told about a wrist image they were never sent;
+  speech during the last skill bought a model call past the turn budget;
+  and `run_episode` never freed the world's renderers.
+
+Checked after all of it: every world passed the validity gate again (the
 oracle solves each level, the random agent fails it; the café's three floor
-levels need the arm and rest on the probe), and the ten levels whose judge or
-scene changed in a way that could make them harder -- which_one,
+levels need the arm and rest on the probe), and the twelve levels whose judge
+or scene changed in a way that could make them harder -- which_one,
 not_for_you, cafe_shift, out_of_reach, unspoken_request, carried_detail,
-fetch_mug, misfiled, restock, fetch_gauge -- were each played again blind with
-the robot's own tools, and all ten passed. The probe's 45/45 above and the
-scores table were measured on the 10 Oct levels and were not re-run.
+fetch_mug, misfiled, restock, fetch_gauge, count_jars, count_benches -- were
+each played again blind with the robot's own tools, speaking naturally, and
+all twelve passed. The probe's 45/45 above and the scores table were measured
+on the 10 Oct levels and were not re-run.
 
 
 ## HARNESS or AGENT -- embodiment is a constraint, not a third verdict

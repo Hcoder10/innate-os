@@ -2,7 +2,9 @@
 
 Movable tasks use floor staging mats; counts are owned by this exact setup."""
 
-from mars_sim_driver.challenges import Answered, Challenge, Drop, Goal, InRect
+from mars_sim_driver.challenges import AllOf, Answered, Challenge, Drop, Goal, InRect
+
+_AT_THE_SHELVES = InRect(target="robot", x0=-2.1, y0=-1.2, x1=-0.9, y1=1.3)
 
 CHALLENGE = Challenge(
     id="pantry_count_jars",
@@ -22,14 +24,16 @@ CHALLENGE = Challenge(
     goals=[
         # The whole front of the jar shelves, not a 0.85 m circle on their
         # middle: a robot at the south end was at the shelves and outside it.
-        # One phase: a count spoken before arriving was discarded, and the
-        # brain is told never to repeat itself.
+        Goal(label="Look at the jar bay", predicate=_AT_THE_SHELVES, parallel_group="count"),
+        # Said at the shelves, as the brief asks ("go ..., then look along
+        # them and tell me"), but in one phase with arriving: as two ordered
+        # goals a count spoken on arrival, in the same tick, was discarded,
+        # and the brain is told never to repeat itself.
         Goal(
-            label="Look at the jar bay",
-            predicate=InRect(target="robot", x0=-2.1, y0=-1.2, x1=-0.9, y1=1.3),
+            label="Report the count",
+            predicate=AllOf([_AT_THE_SHELVES, Answered(accept=["5", "five"])]),
             parallel_group="count",
         ),
-        Goal(label="Report the count", predicate=Answered(accept=["5", "five"]), parallel_group="count"),
     ],
     time_limit_s=300,
     category=1,

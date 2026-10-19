@@ -339,9 +339,15 @@ class _TaskStack:
             self.goals = capped
 
     def _merge_facts(self, update: dict) -> None:
-        """Facts are a plain overlay: last writer wins, values stringified."""
+        """Facts are a plain overlay: last writer wins, values stringified --
+        except "released:" keys, which only note_released() writes. The prompt
+        tells the model to trust them as ground truth, so the model must not
+        be able to overwrite them: {"released:cup": "false"} would erase the
+        harness's own record of where it let go."""
         if isinstance(update.get("facts"), dict):
-            self.facts.update({k: str(v) for k, v in update["facts"].items()})
+            self.facts.update(
+                {str(k): str(v) for k, v in update["facts"].items() if not str(k).startswith("released:")}
+            )
 
     def _merge_constraints(self, update: dict) -> None:
         """Append-only and de-duplicated, with a re-mention refreshing
@@ -354,6 +360,15 @@ class _TaskStack:
 
 def _wrap_deg(a: float) -> float:
     return (a + 180.0) % 360.0 - 180.0
+
+
+def _num(v: object) -> float | None:
+    """A tool argument as a float, or None when it is missing or not a number."""
+    try:
+        f = float(v)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
 
 
 class NemotronStackBackend:
@@ -396,11 +411,15 @@ class NemotronStackBackend:
         self._last_carrying: str | None = None
 
     # -- the one external call shape, reused for both the core and vision calls
-    def _call(self, system: str, obs, extra_text: str, want_image: bool) -> dict:
+    def _call(self, system: str, obs, extra_text: str, want_image: bool, wrist: bool = False) -> dict:
+        """`wrist` adds the arm camera after the head frame, as GeminiBackend
+        sends both and obs.as_text() announces the second image. Off for
+        grounding, which locates a point in the head frame alone."""
         parts = [{"text": extra_text}]
-        if want_image and obs.image_path:
-            blob = base64.b64encode(Path(obs.image_path).read_bytes()).decode()
-            parts.insert(0, {"inline_data": {"mime_type": "image/jpeg", "data": blob}})
+        frames = (obs.image_path, obs.wrist_image_path if wrist else None) if want_image else ()
+        for i, image in enumerate(p for p in frames if p):
+            blob = base64.b64encode(Path(image).read_bytes()).decode()
+            parts.insert(i, {"inline_data": {"mime_type": "image/jpeg", "data": blob}})
         body = {
             "system_instruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": parts}],
@@ -499,30 +518,25 @@ class NemotronStackBackend:
         if self.stack.start_yaw is None:
             self.stack.start_yaw = yaw_deg
         rel = _wrap_deg(yaw_deg - self.stack.start_yaw)
-        # Snap to the nearest un-scanned 60-degree slice around the full
-        # circle -- a systematic pan-and-remember, not a lookup table.
+        # Around the full circle in 60-degree slices -- a systematic
+        # pan-and-remember, not a lookup table. The current view counts as
+        # seen first; then the least recently seen slice is next, nearest
+        # first among equals. Once every slice was seen, "closest to any
+        # previous scan" scored them all zero, so the first won forever and
+        # the robot was told to turn 0 degrees for the rest of the search.
         SLICE = 60.0
         candidates = [round(_wrap_deg(k * SLICE)) for k in range(int(360 / SLICE))]
-        unscanned = [
-            c for c in candidates if not any(abs(_wrap_deg(c - s)) < SLICE / 2 for s in self.stack.scanned_bearings)
-        ]
-        target = (
-            unscanned[0]
-            if unscanned
-            else min(
-                candidates,
-                key=lambda c: (
-                    min(abs(_wrap_deg(c - s)) for s in self.stack.scanned_bearings)
-                    if self.stack.scanned_bearings
-                    else 0
-                ),
-            )
-        )
-        self.stack.scanned_bearings.append(rel if unscanned else target)
-        turn_needed = _wrap_deg(target - rel)
+        scans = self.stack.scanned_bearings
+        scans.append(rel)
+
+        def last_seen(c: float) -> int:
+            return max((i for i, s in enumerate(scans) if abs(_wrap_deg(c - s)) < SLICE / 2), default=-1)
+
+        target = min(candidates, key=lambda c: (last_seen(c), abs(_wrap_deg(c - rel))))
+        unseen = sum(1 for c in candidates if last_seen(c) < 0 and c != target)
         return {
-            "turn_degrees": round(turn_needed, 1),
-            "note": f"{len(unscanned) - 1} of {len(candidates)} directions still unscanned after this",
+            "turn_degrees": round(_wrap_deg(target - rel), 1),
+            "note": f"{unseen} of {len(candidates)} directions still unscanned after this",
         }
 
     def decide(self, obs, menu) -> dict:
@@ -533,10 +547,14 @@ class NemotronStackBackend:
         # nothing can only mean _place just ran (the only way _carrying
         # clears), so it is recorded as a fact regardless of whether the
         # model itself said anything about it this turn.
-        prev_carrying, self._last_carrying = self._last_carrying, obs.carrying
-        if prev_carrying is not None and obs.carrying is None:
+        # Keyed on the per-object handle, not the kind: with the kind, the
+        # red cup's and the blue cup's records were one key, and picking the
+        # second deleted the first.
+        held = getattr(obs, "carrying_id", None) or obs.carrying
+        prev_carrying, self._last_carrying = self._last_carrying, held
+        if prev_carrying is not None and held is None:
             self.stack.note_released(prev_carrying, obs.robot_pose, obs.elapsed_s)
-        elif prev_carrying is None and obs.carrying is not None:
+        elif prev_carrying is None and held is not None:
             # The item just picked back up may be one this stack already
             # marked "released:" from an earlier pick/place -- that fact is
             # now stale (the gripper is holding it again, not "no longer
@@ -544,7 +562,7 @@ class NemotronStackBackend:
             # it next lets go. Left alone, a strengthened "don't re-litigate
             # a released item" prompt instruction would tell the model to
             # trust a fact that now contradicts obs.carrying itself.
-            self.stack.facts.pop(f"released:{obs.carrying}", None)
+            self.stack.facts.pop(f"released:{held}", None)
         extra = (
             f"TASK-STACK: {self.stack.as_text()}\n"
             + (f"TOOL RESULT (from your last request): {self._last_tool_result}\n" if self._last_tool_result else "")
@@ -554,7 +572,7 @@ class NemotronStackBackend:
             '"task_stack": {...} to update goals/facts/constraints.'
         )
         self._last_tool_result = None
-        reply = self._call(CONVERSATION_SYSTEM, obs, extra, want_image=True)
+        reply = self._call(CONVERSATION_SYSTEM, obs, extra, want_image=True, wrist=True)
         self.stack.apply(reply.get("task_stack"))
 
         if "tool" in reply and "action" not in reply:
@@ -565,11 +583,14 @@ class NemotronStackBackend:
             if name == "ground_object":
                 result = self._ground_object(obs, str(args.get("description", "")))
             elif name == "check_reach":
+                # The model carries unknowns forward as null; float(None)
+                # raised here and ended the episode as a backend error. An
+                # unknown distance is a tool error the agent can look again for.
                 result = self._check_reach(
                     obs,
-                    float(args.get("bearing_deg", 0.0)),
-                    float(args.get("distance_m", 0.0)),
-                    args.get("height_m"),
+                    _num(args.get("bearing_deg")) or 0.0,
+                    _num(args.get("distance_m")),
+                    _num(args.get("height_m")),
                 )
             elif name == "explore_frontier":
                 result = self._explore_frontier(obs)
@@ -582,7 +603,7 @@ class NemotronStackBackend:
                 f"{obs.as_text()}\n\n{menu}\n\n"
                 "Now give a real action -- no more tool requests this turn."
             )
-            reply = self._call(CONVERSATION_SYSTEM, obs, extra2, want_image=True)
+            reply = self._call(CONVERSATION_SYSTEM, obs, extra2, want_image=True, wrist=True)
             self.stack.apply(reply.get("task_stack"))
 
         return _coerce(reply)

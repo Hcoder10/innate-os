@@ -71,6 +71,11 @@ class Observation:
     # The harness's own gripper state. Not printed -- the brain has no such
     # line; it has the wrist camera -- but a backend may keep its own books.
     carrying: str | None = None
+    # A stable handle for the held object ("a cup #2"), numbered per episode
+    # in the order things were first picked. `carrying` is the object's kind
+    # and two cups share it; a backend keying memory on it lost the first
+    # cup's release record when it picked the second. No simulator names.
+    carrying_id: str | None = None
     # What the agent's last call returned (the brain's function response).
     last_result: str = ""
     turns_left: int = 0
@@ -141,6 +146,7 @@ class BrainAgent:
         self._heard: list[str] = []
         self._events: list[str] = []
         self._carrying: str | None = None
+        self._handles: dict[str, int] = {}
         self._last_result = ""
         self._done = False
         # A running skill: (tool name, generator, started_t).
@@ -180,6 +186,7 @@ class BrainAgent:
         self._heard = []
         self._events = []
         self._carrying = None
+        self._handles = {}
         self._last_result = ""
         self._done = False
         self._skill = None
@@ -239,7 +246,9 @@ class BrainAgent:
 
         if self._skill is not None:
             # The brain is woken mid-skill by speech; then its only tool is stop.
-            if self._heard:
+            # Not past the turn budget: the final skill still finishes, but a
+            # narrator line arriving during it used to buy one more paid call.
+            if self._heard and self.turns < self.max_turns:
                 self._start_call(mars, t)
             return
 
@@ -283,6 +292,11 @@ class BrainAgent:
             elapsed_s=t,
             heard=heard,
             carrying=_kind(self._carrying) if self._carrying else None,
+            carrying_id=(
+                f"{_kind(self._carrying)} #{self._handles.setdefault(self._carrying, len(self._handles) + 1)}"
+                if self._carrying
+                else None
+            ),
             last_result=last,
             turns_left=self.max_turns - self.turns,
             image_path=image,

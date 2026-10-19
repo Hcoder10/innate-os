@@ -42,10 +42,14 @@ WHO IT ANSWERS. It injects the developer's key into everything it relays, and
 Docker needs it listening on every interface (the container arrives through
 host.docker.internal, never loopback), so on a LAN-reachable host anyone who
 found port 8099 could bill that key. Requests are relayed only from loopback,
-Docker's default address pools (172.16/12) and Docker Desktop's host gateway
-(192.168.65/24); anything else gets 403 before a byte goes upstream.
-GEMINI_SHIM_ALLOW adds CIDRs (comma-separated) for a bridge network with its
-own subnet, and GEMINI_SHIM_BIND narrows the listener.
+the subnets of this host's actual Docker bridges (docker0 and the br-<id>
+networks compose creates, read from `ip` at startup and re-read when an
+unknown client arrives, at most every 10 s) and Docker Desktop's host
+gateway (192.168.65/24); anything else gets 403 before a byte goes upstream.
+Not all of 172.16/12, Docker's default pool: LANs, VPNs and WSL's own NAT
+(172.25.x here) live in it too. GEMINI_SHIM_ALLOW adds CIDRs
+(comma-separated) for a network `ip` does not show, and GEMINI_SHIM_BIND
+narrows the listener.
 """
 
 from __future__ import annotations
@@ -53,6 +57,8 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import os
+import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -70,16 +76,36 @@ CHUNK = 8192
 TRUSTED_NETWORKS = (
     ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("172.16.0.0/12"),  # Docker's default address pools
     ipaddress.ip_network("192.168.65.0/24"),  # Docker Desktop's host gateway
 )
 
 
-def allowed_networks(extra: str = "") -> tuple:
-    """TRUSTED_NETWORKS plus the comma-separated CIDRs in `extra`
-    (GEMINI_SHIM_ALLOW). Raises ValueError for a CIDR that is not one, at
-    startup rather than on the first request."""
-    networks = list(TRUSTED_NETWORKS)
+def docker_networks(ip_output: str | None = None) -> tuple:
+    """The subnets of this host's Docker bridges (docker0, br-<id>), from
+    `ip -o -f inet addr show`. Empty when `ip` is missing or there are none:
+    then only GEMINI_SHIM_ALLOW widens the set."""
+    if ip_output is None:
+        try:
+            ip_output = subprocess.run(
+                ["ip", "-o", "-f", "inet", "addr", "show"], capture_output=True, text=True, timeout=5
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            return ()
+    networks = []
+    for line in ip_output.splitlines():
+        parts = line.split()
+        # br-<12 hex> is Docker's naming for a user network; br-lan is a router's.
+        name = parts[1] if len(parts) > 1 else ""
+        if len(parts) >= 4 and parts[2] == "inet" and (name == "docker0" or re.fullmatch(r"br-[0-9a-f]{12}", name)):
+            networks.append(ipaddress.ip_network(parts[3], strict=False))
+    return tuple(networks)
+
+
+def allowed_networks(extra: str = "", docker: tuple = ()) -> tuple:
+    """TRUSTED_NETWORKS, the Docker bridge subnets in `docker`, and the
+    comma-separated CIDRs in `extra` (GEMINI_SHIM_ALLOW). Raises ValueError for
+    a CIDR that is not one, at startup rather than on the first request."""
+    networks = list(TRUSTED_NETWORKS) + list(docker)
     for cidr in extra.split(","):
         cidr = cidr.strip()
         if cidr:
@@ -109,6 +135,9 @@ FORWARD_RESPONSE_HEADERS = ("content-type",)
 class Handler(BaseHTTPRequestHandler):
     api_key = ""
     networks = TRUSTED_NETWORKS
+    extra = ""  # GEMINI_SHIM_ALLOW, kept for re-reading the bridges
+    refreshed_at = float("-inf")
+    REFRESH_S = 10.0
     # HTTP/1.1 with CHUNKED framing, and this is not a style choice.
     #
     # Google serves the turn stream chunked, which is self-terminating: the
@@ -171,6 +200,20 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             pass  # client already gone
 
+    @classmethod
+    def _refreshed_trusts(cls, client: str) -> bool:
+        """Re-read the Docker bridges, then ask again. The shim outlives the
+        stack: run_eval.sh starts it before `innate_up.sh` recreates the
+        compose network, so on a fresh boot that bridge did not exist when
+        the shim started, and a re-up can land on a new subnet. At most once
+        per REFRESH_S, so a LAN client cannot make it spawn `ip` per request."""
+        now = time.monotonic()
+        if now - cls.refreshed_at < cls.REFRESH_S:
+            return False
+        cls.refreshed_at = now
+        cls.networks = allowed_networks(cls.extra, docker_networks())
+        return trusted(client, cls.networks)
+
     def _relay(self, method: str) -> None:
         started = time.time()
         first_at: float | None = None  # when the first upstream byte was relayed
@@ -178,7 +221,7 @@ class Handler(BaseHTTPRequestHandler):
         # Before the body is read and before anything goes upstream: a client
         # off loopback and the Docker networks gets nothing but the refusal.
         client = self.client_address[0]
-        if not trusted(client, self.networks):
+        if not trusted(client, self.networks) and not self._refreshed_trusts(client):
             self._fail(403, b'{"error": "shim relays only for loopback and the Docker networks"}', False)
             print(f"{method} {self.path.split('?')[0]} -> 403 (client {client} is not trusted)", flush=True)
             return
@@ -300,7 +343,8 @@ def main() -> int:
     Handler.api_key = key
     extra = os.environ.get("GEMINI_SHIM_ALLOW", "")
     try:
-        Handler.networks = allowed_networks(extra)
+        Handler.networks = allowed_networks(extra, docker_networks())
+        Handler.extra = extra
     except ValueError:
         print(f"GEMINI_SHIM_ALLOW must be comma-separated CIDRs, not {extra!r}", file=sys.stderr)
         return 2

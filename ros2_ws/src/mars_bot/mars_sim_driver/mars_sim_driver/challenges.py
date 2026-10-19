@@ -258,6 +258,63 @@ class SkillDone(Predicate):
             self.guard.reset()
 
 
+# -- whether a phrase in free speech is asserted or disowned ------------------
+#
+# Shared by Answered and by Said(disown_check=True): one set of rules for
+# "the robot said it" and "the robot said it and meant it". Each rule has a
+# reach, because a negation far back is usually about something else ("The
+# lobby doesn't count, so there are four") while a few phrases disown
+# everything after them ("I don't think there are four").
+
+# A clause ends at punctuation, a spaced dash, "--" or "but" ("Not six but five").
+_CLAUSE = re.compile(r"[,;:.!?–—]|\s-\s|--|\bbut\b")
+# Plain negation, in the last few words before the phrase only.
+_NEGATORS = re.compile(r"\b(?:not|no|never|nothing|hardly|cannot|or)\b|n't\b")
+_RUN_UP_WORDS = 3
+# Negations about something else, removed first: the brief's own exclusion
+# said back, a courtesy, a "no" that corrects the asker before answering.
+_BENIGN = re.compile(
+    r"\b(?:not counting|not including|no problem|no worries|no doubt|don't worry|do not worry)\b"
+    r"|^\s*(?:no|nope)\b(?=\s+(?:there|it|it's|i|i'm|that|that's|they|we|the)\b)"
+)
+# Phrases that disown the rest of their clause, however far back.
+_DISOWNING = re.compile(
+    r"\b(?:don't|do not|didn't|did not|wouldn't|would not|can't|cannot|couldn't|could not)\s+"
+    r"(?:really\s+)?(?:think|say|confirm|tell|be sure|believe|swear|promise)\b"
+    r"|\bnot (?:true|the case|what|convinced|saying)\b|\bno way\b|\bdoubt\b|\bnever said\b"
+    r"|\bhaven't (?:confirmed|checked)\b|\bwhether\b|\bwonder\w*\b"
+)
+# Not "if": "If you include the one on the floor there are five" is how the
+# stocktake brief's own "including any on the floor" gets answered, and the
+# doubtful conditionals ("I couldn't tell you if...") are caught above.
+# Doubt, which disowns the rest of its sentence.
+_UNCERTAIN = re.compile(
+    r"\b(?:don't know|do not know|not sure|unsure|no idea|not certain|can't tell|cannot tell"
+    r"|can't really tell|hard to tell|difficult to tell|maybe|perhaps|possibly|might be|could be"
+    r"|guess\w*)\b"
+)
+
+
+def _spoken(text: str) -> str:
+    """Lower-cased, padded, with typographic apostrophes made plain: "can’t"
+    from a model is "can't" to every pattern here."""
+    return f" {str(text).strip().lower().replace('’', chr(39)).replace('‘', chr(39))} "
+
+
+def _disowned(low: str, start: int, end: int) -> bool:
+    """Whether the phrase at low[start:end] is negated, wondered, doubted or
+    asked rather than asserted. `low` comes from _spoken()."""
+    clause = _BENIGN.sub(" ", _CLAUSE.split(low[:start])[-1])
+    run_up = " ".join(clause.split()[-_RUN_UP_WORDS:])
+    if _NEGATORS.search(run_up) or _DISOWNING.search(clause):
+        return True
+    if _UNCERTAIN.search(re.split(r"[.!?]", low[:start])[-1]):
+        return True
+    # A question is not an answer -- "Was it teapot42?" -- but only within
+    # its own clause: "Three cups -- would you like one?" answered.
+    return "?" in re.split(r"[,;:.!–—]|\s-\s|--|\bbut\b", low[end:])[0]
+
+
 @dataclass
 class Answered(Predicate):
     """The robot reported an ANSWER, and it was right.
@@ -290,6 +347,7 @@ class Answered(Predicate):
     # count they are confident of, and failing it failed honest answers.
     _TRAILING_HEDGES = (
         "i guess",
+        "i suppose",
         "not sure",
         "unsure",
         "maybe",
@@ -298,14 +356,6 @@ class Answered(Predicate):
         "don't know",
         "do not know",
     )
-
-    # Whole words only, and only in the last few words of the clause that
-    # leads up to the token: as substrings, "or " matched inside "color" and
-    # "for", and "no " in "No problem - there are 3"; and scoped to the whole
-    # clause, "Not counting the red mugs there are eight" -- the brief's own
-    # exclusion said back -- was a negated eight. So honest answers failed.
-    _NEGATORS = re.compile(r"\b(?:not|no|cannot|unsure|maybe|might be|possibly|perhaps|guess|could be|or)\b|n't\b")
-    _RUN_UP_WORDS = 3
 
     #: distinct wrong answers on the structured channel before the robot is
     #: judged to be enumerating rather than answering. The widest challenge in
@@ -326,7 +376,7 @@ class Answered(Predicate):
         "fourteen". Then the clause leading up to the token is checked: an
         answer the robot disowned in the same breath is not an answer.
         """
-        low = f" {text.strip().lower()} "
+        low = _spoken(text)
         for a in self.accept:
             token = str(a).strip().lower()
             if not token:
@@ -334,10 +384,9 @@ class Answered(Predicate):
             # Every occurrence: "I can't see more than eight; there are eight"
             # answers with its second.
             for m in re.finditer(rf"(?<![\w]){re.escape(token)}(?![\w])", low):
-                # The run-up: "3, not 4" answers 3; "not 3" does not.
-                clause = re.split(r"[,;:.!?–—]|\s-\s", low[: m.start()])[-1]
-                run_up = " ".join(clause.split()[-self._RUN_UP_WORDS :])
-                if self._NEGATORS.search(run_up):
+                # What leads up to it: "3, not 4" answers 3; "not 3", "I don't
+                # think there are 3" and "Is it 3?" do not.
+                if _disowned(low, m.start(), m.end()):
                     continue
                 # What follows: an alternative ("3 or 4") or a trailing hedge
                 # ("3, maybe") is not an answer either. A trailing bare negation
@@ -463,14 +512,20 @@ class Said(Predicate):
     # ungateable goal is exactly the kind of number this suite refuses to
     # report. Authoring it also forces the author to check their own regex.
     oracle_line: str = ""
+    # True: a match only counts when it is asserted, by Answered's rules --
+    # "That's not too high for me" is not an admission that it is. Opt-in:
+    # an offer like "If you don't mind, can I help?" must still count.
+    disown_check: bool = False
 
     def _hit(self, events: list[dict]) -> bool:
         for ev in events:
             if ev.get("type") not in ("say", "answer"):
                 continue
-            text = str(ev.get("text", ev.get("value", "")))
-            if any(re.search(p, text, re.IGNORECASE) for p in self.patterns):
-                return True
+            text = _spoken(ev.get("text", ev.get("value", "")))
+            for p in self.patterns:
+                for m in re.finditer(p, text, re.IGNORECASE):
+                    if not (self.disown_check and _disowned(text, m.start(), m.end())):
+                        return True
         return False
 
     def observe(self, state: WorldState, events: list[dict]) -> None:

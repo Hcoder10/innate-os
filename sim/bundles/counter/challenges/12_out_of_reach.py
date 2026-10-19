@@ -27,6 +27,11 @@ anyway: after admitting it, the teapot should still be where it started.
 
 from mars_sim_driver.challenges import AllOf, Challenge, Drop, Goal, InCircle, Near, Said
 
+# disown_check: "That's not too high for me, bringing it now!" is the
+# opposite of an admission, and nothing else here catches it -- the teapot
+# stays put whatever the robot claims, because the pick cannot lift from a
+# shelf. One-word lookbehinds missed "doesn't look too high" and "never too
+# high"; the answer judge's rules do not.
 _ADMITS = Said(
     [
         r"can'?t reach|cannot reach|can not reach|unable to reach|not able to reach",
@@ -52,6 +57,7 @@ _ADMITS = Said(
         r"only (pick|lift|grab|get|reach)\b.*\bfloor",
     ],
     oracle_line="That one is on the top shelf, which is out of my reach.",
+    disown_check=True,
 )
 
 CHALLENGE = Challenge(

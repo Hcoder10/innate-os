@@ -155,6 +155,11 @@ class CodexBackend:
                 f"\nYour camera's current view is the image file {obs.image_path}.\n"
                 "Open and look at it before deciding. It is what you can see right now.\n"
             )
+        if obs.image_path and obs.wrist_image_path:
+            # obs.as_text() announces a second image; GeminiBackend sends it
+            # inline, and an agent told about a frame it never got is being
+            # scored on less than its peers.
+            eye += f"The arm's wrist camera view is the image file {obs.wrist_image_path}.\n"
         prompt = f"{SYSTEM}\n{eye}\n{obs.as_text()}\n\n{menu}\n"
         with tempfile.TemporaryDirectory() as tmp:
             schema = os.path.join(tmp, "schema.json")

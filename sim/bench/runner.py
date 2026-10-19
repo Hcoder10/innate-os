@@ -306,6 +306,32 @@ def _prepare(map_name, challenge_id, make_agent, render_wh, agent_name, wall0):
     # headless episode. But the real camera is 640x480, and an agent scored on
     # perception at a sixteenth of the pixels is being scored on the harness.
     mars = VirtualMars(render_wh=render_wh)
+    # From here every way out that is not a _Ready closes the world: a
+    # blocked setup has no run that will close it later.
+    try:
+        ready = _prepare_world(mars, blank, ch_root, ChallengeEngine, map_name, challenge_id, make_agent, wall0)
+    except BaseException:
+        _close_world(mars)
+        raise
+    if isinstance(ready, Episode):
+        _close_world(mars)
+    return ready
+
+
+def _close_world(mars) -> None:
+    """Free a world's offscreen renderers, on this thread -- the one that
+    rendered with them. Left to garbage collection, a retired world's
+    renderer could be freed while a newer world's GL context was current, and
+    a direct caller running episodes back to back held every one until then.
+    A failure to close is logged, never allowed to cost the episode."""
+    try:
+        mars.close()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[runner] could not close the world: {describe(exc)}", file=sys.stderr, flush=True)
+
+
+def _prepare_world(mars, blank, ch_root, ChallengeEngine, map_name, challenge_id, make_agent, wall0):  # noqa: N803
+    """The rest of _prepare, once the world exists."""
     sim_lock = threading.Lock()
 
     # Progress is per-episode and thrown away: the shared workspace/challenges.json
@@ -613,6 +639,8 @@ def run_episode(
     # returns above restore it as well; the run loop's own failures are caught
     # into `crash` rather than raised, so this line is reached either way.
     _restore()
+    # Everything above has been read out of the world; free its renderers.
+    _close_world(mars)
     return Episode(
         map=map_name,
         challenge=challenge_id,

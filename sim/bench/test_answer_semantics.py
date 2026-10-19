@@ -38,6 +38,25 @@ from mars_sim_driver.challenges import Answered
         "I can't see more than 3; there are 3",
         "3, I think",
         "I think there are 3",
+        # Doubt in an earlier clause about something else; a correction.
+        "I checked whether any were hidden behind the boxes, and there are 3.",
+        "No there are 3.",
+        "Not 6 but 3.",
+        "There are 3 cups, would you like one?",
+        "I count 3 blue cups on the counter.",
+        # An offer after a dash is not a question about the count.
+        "There are 3 cups on the counter -- would you like one?",
+        "There are 3 cups on the counter — want me to bring one over?",
+        "3 cups - anything else I can do?",
+        # A negation about something else, further back.
+        "The lobby entrance doesn't count so there are 3.",
+        "Ignoring the one with no colour there are 3.",
+        "I didn't miss any and there are 3.",
+        "There's no doubt there are 3 jars.",
+        "I can't see any more so the answer is 3.",
+        "If I count correctly, there are 3.",
+        # The stocktake brief's own "including any on the floor", said back.
+        "If you include the one on the floor there are 3 jars.",
     ],
 )
 def test_a_real_answer_counts(text: str) -> None:
@@ -63,10 +82,70 @@ def test_the_word_color_is_not_an_alternative() -> None:
         "I'm not sure, could be 3",
         "I don't think it's 3",
         "it isn't 3",
+        # Uncertainty said early in the sentence still disowns the token.
+        "I don't know whether there are 3 cups",
+        "I'm not sure, but I count 3",
+        "I wonder if there are 3",
+        "No idea if there are 3 or more",
+        "I'd guess there are 3",
+        # A negation further back than the words just before the token.
+        "I don't think there are 3 jars.",
+        "I wouldn't say there are 3.",
+        "It's not true that there are 3.",
+        "I can't confirm there are 3 jars.",
+        "I couldn't tell you if there are 3.",
+        # A question.
+        "Is it 3?",
+        "Are there 3 cups?",
+        # Guesses and doubt, however worded.
+        "My guess: 3.",
+        "Guess: 3.",
+        "Best guess -- 3.",
+        "I'm guessing 3.",
+        "Hard to tell, 3.",
+        "I can't really tell, 3 I suppose.",
+        # A typographic apostrophe.
+        "I don’t think there are 3.",
+        # A leading "no" that negates the value itself.
+        "No 3 doorways here; I count 2.",
+        # Doubt as a verb.
+        "I doubt there are 3.",
+        "I'm not convinced there are 3.",
+        "I'm not saying there are 3.",
+        "I never said there are 3.",
+        "I haven't confirmed that there are 3.",
     ],
 )
 def test_a_disowned_answer_does_not(text: str) -> None:
     assert Answered(["3"])._says_it(text) is False
+
+
+@pytest.mark.parametrize(
+    ("text", "counts"),
+    [
+        ("The wifi password is teapot42.", True),
+        ("It was teapot42", True),
+        ("Sure -- the password is teapot42.", True),
+        ("The wifi password is teapot42 -- anything else?", True),
+        ("It's teapot42 - want me to write it down?", True),
+        ("If I remember correctly it's teapot42.", True),
+        ("Don't worry it's teapot42.", True),
+        ("Sorry, I didn't catch a password -- was it teapot42?", False),
+        ("I don't remember. Teapot42?", False),
+        ("I don't know the password.", False),
+    ],
+)
+def test_recalling_the_password(text: str, counts: bool) -> None:
+    assert Answered(["teapot42", "teapot 42"])._says_it(text) is counts
+
+
+def test_a_colour_answer_survives_negation_elsewhere() -> None:
+    blue = Answered(["blue"])
+    assert blue._says_it("Not the red one -- the middle cup is blue.") is True
+    assert blue._says_it("The middle cup has no handle and is blue.") is True
+    assert blue._says_it("The middle cup is blue — would you like it?") is True
+    assert blue._says_it("That cup is not what I would call blue.") is False
+    assert blue._says_it("No blue cup in the middle, it's green.") is False
 
 
 def test_whole_word_only() -> None:

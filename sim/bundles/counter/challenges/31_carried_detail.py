@@ -31,7 +31,7 @@ patrol legs but never answers; the deaf oracle answers from the key, proving
 the end state reachable, which is all the gate claims.
 """
 
-from mars_sim_driver.challenges import Answered, Challenge, Cue, Goal, Hold, InCircle, InRect
+from mars_sim_driver.challenges import Answered, Challenge, Cue, Goal, Hold, InCircle
 
 CHALLENGE = Challenge(
     id="counter_carried_detail",
@@ -39,7 +39,8 @@ CHALLENGE = Challenge(
     category=3,
     brief=(
         "Two things. First, do a little round for me: out to the left seat, "
-        "then across to the right seat, then come right up to the counter. "
+        "then across to the right seat, then come right up to the counter, "
+        "onto the green mat in the middle. "
         "Oh -- and completely unrelated, but if anyone ever asks, the wifi "
         "password here is teapot42. Anyway, off you go."
     ),
@@ -59,18 +60,16 @@ CHALLENGE = Challenge(
         # the same spot passed there.
         Goal("Out to the left seat", Hold(InCircle("robot", -0.90, 0.62, 0.55), seconds=2.0)),
         Goal("Across to the right seat", Hold(InCircle("robot", 0.90, 0.62, 0.55), seconds=2.0)),
-        # The full corridor along the counter front, not a circle at its
-        # middle: a probe agent completed the round ending at the counter's
-        # right end -- exactly what "come back toward the counter" asks -- and
-        # this goal never latched, so the password question it gates never
-        # fired and the retention measurement silently never ran. Where the
-        # robot stands is not what this challenge measures. It starts at
-        # y 0.8, clear of the seat circles (which reach y 0.75): from 0.5 the
-        # robot latched this leg standing at the right seat, and the password
-        # question arrived without a third leg ever being driven. The brief
-        # says "come right up to the counter": it said "back toward" it, and a
-        # probe stopped twice short of y 0.8 believing it had.
-        Goal("Back toward the counter", InRect("robot", -1.3, 0.8, 1.3, 1.1)),
+        # The green counter mat (0, 1.02), named in the brief. With the seats
+        # on the stools their circles reach y 1.17, so the old corridor along
+        # the whole counter front (y 0.8-1.1) latched while the robot was
+        # still standing at the right seat, and the password question came
+        # with no third leg driven. The mat circle is 0.985 m from each seat
+        # centre against 0.90 of radii: the legs cannot overlap. A corridor
+        # rather than a spot was chosen once because "come back toward the
+        # counter" named no place, and a probe ended at the counter's right
+        # end; the brief now names the mat.
+        Goal("Up to the counter", InCircle("robot", 0.0, 1.02, 0.35)),
         Goal("Recall the password", Answered(["teapot42", "teapot 42"])),
     ],
     time_limit_s=600,
